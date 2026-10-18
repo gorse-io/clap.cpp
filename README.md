@@ -28,6 +28,11 @@ CLI11 is included as a submodule under `thirdparty/CLI11`, pinned to v2.7.2.
 The `clap` target links `CLI11::CLI11` so the command-line entry point can use
 its headers without a system installation.
 
+cpp-httplib is included as a submodule under `thirdparty/cpp-httplib`, pinned to
+v0.61.0. The `clap` target links `httplib::httplib` for HTTP server/client support.
+The `serve` subcommand remains a placeholder that prints `hello world`; it does
+not start an HTTP server yet.
+
 ## Build and test
 
 ```sh
