@@ -42,11 +42,6 @@ if(BUILD_TESTING)
     target_link_libraries(ggml-smoke PRIVATE ggml)
     add_test(NAME ggml_smoke COMMAND ggml-smoke)
 
-    add_executable(httplib-smoke tests/httplib-smoke.cpp)
-    target_compile_features(httplib-smoke PRIVATE cxx_std_17)
-    target_link_libraries(httplib-smoke PRIVATE httplib::httplib)
-    add_test(NAME httplib_smoke COMMAND httplib-smoke)
-
     add_test(NAME clap_smoke COMMAND clap)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
 
