@@ -7,6 +7,23 @@ Minimal C++17/CMake project scaffold. Model loading and inference are not implem
 - CMake 3.20 or newer
 - A C++17 compiler
 
+## Clone
+
+```sh
+git clone --recurse-submodules https://github.com/gorse-io/clap.cpp.git
+cd clap.cpp
+```
+
+For an existing checkout:
+
+```sh
+git submodule update --init --recursive
+```
+
+The `ggml/` submodule uses upstream `ggml-org/ggml`, pinned to a commit.
+Like stable-diffusion.cpp, it is built with `add_subdirectory` and linked via
+its `ggml` CMake target; no system ggml installation is required.
+
 ## Build and test
 
 ```sh
@@ -20,6 +37,11 @@ It is located at `build/clap` for single-configuration generators or
 `build/Release/clap.exe` for Visual Studio Release builds.
 
 To skip tests, configure with `-DBUILD_TESTING=OFF`.
+Tests include a ggml context/tensor smoke test to verify headers and linking.
+Dependencies are static by default. `GGML_NATIVE` defaults to `OFF` for portable
+builds; configure with `-DGGML_NATIVE=ON` to optimize for the build machine.
+Other backend options can be passed directly, for example `-DGGML_CUDA=ON`
+(requires the CUDA toolkit).
 
 ## Install
 
