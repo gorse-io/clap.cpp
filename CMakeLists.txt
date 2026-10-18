@@ -10,11 +10,17 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ggml/CMakeLists.txt")
         "ggml submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
-add_subdirectory(ggml EXCLUDE_FROM_ALL)
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/CLI11/CMakeLists.txt")
+    message(FATAL_ERROR
+        "CLI11 submodule is missing. Run: git submodule update --init --recursive")
+endif()
 
-add_executable(clap src/main.cpp)
+add_subdirectory(ggml EXCLUDE_FROM_ALL)
+add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
+
+add_executable(clap src/clap.cpp)
 target_compile_features(clap PRIVATE cxx_std_17)
-target_link_libraries(clap PRIVATE ggml)
+target_link_libraries(clap PRIVATE ggml CLI11::CLI11)
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)

@@ -1,3 +1,6 @@
 [submodule "ggml"]
 	path = ggml
 	url = https://github.com/ggml-org/ggml.git
+[submodule "thirdparty/CLI11"]
+	path = thirdparty/CLI11
+	url = https://github.com/cliutils/cli11
