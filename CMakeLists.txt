@@ -38,6 +38,9 @@ if(BUILD_TESTING)
 
     add_test(NAME clap_smoke COMMAND clap)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
+
+    add_test(NAME clap_serve COMMAND clap serve)
+    set_tests_properties(clap_serve PROPERTIES PASS_REGULAR_EXPRESSION "hello world")
 endif()
 
 install(TARGETS clap RUNTIME DESTINATION bin)

@@ -36,8 +36,14 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-The `clap` executable currently prints `clap.cpp` as a smoke test.
-It is located at `build/clap` for single-configuration generators or
+Run the `serve` subcommand to print `hello world`:
+
+```sh
+./build/clap serve
+```
+
+Running `clap` without a subcommand still prints `clap.cpp`.
+The executable is located at `build/clap` for single-configuration generators or
 `build/Release/clap.exe` for Visual Studio Release builds.
 
 To skip tests, configure with `-DBUILD_TESTING=OFF`.
