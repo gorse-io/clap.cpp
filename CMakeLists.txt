@@ -15,12 +15,24 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/CLI11/CMakeLists.txt")
         "CLI11 submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cpp-httplib/CMakeLists.txt")
+    message(FATAL_ERROR
+        "cpp-httplib submodule is missing. Run: git submodule update --init --recursive")
+endif()
+
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/json/CMakeLists.txt")
+    message(FATAL_ERROR
+        "json submodule is missing. Run: git submodule update --init --recursive")
+endif()
+
 add_subdirectory(ggml EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
+add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
+add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
-add_executable(clap src/clap.cpp)
+add_executable(clap src/clap.cpp src/server.cpp)
 target_compile_features(clap PRIVATE cxx_std_17)
-target_link_libraries(clap PRIVATE ggml CLI11::CLI11)
+target_link_libraries(clap PRIVATE ggml CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
 
 if(MSVC)
@@ -38,6 +50,11 @@ if(BUILD_TESTING)
 
     add_test(NAME clap_smoke COMMAND clap)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
+
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME clap_embeddings
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap>")
+    set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)
 endif()
 
 install(TARGETS clap RUNTIME DESTINATION bin)

@@ -4,3 +4,9 @@
 [submodule "thirdparty/CLI11"]
 	path = thirdparty/CLI11
 	url = https://github.com/cliutils/cli11
+[submodule "thirdparty/cpp-httplib"]
+	path = thirdparty/cpp-httplib
+	url = https://github.com/yhirose/cpp-httplib.git
+[submodule "thirdparty/json"]
+	path = thirdparty/json
+	url = https://github.com/nlohmann/json.git
