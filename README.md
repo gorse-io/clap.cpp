@@ -24,6 +24,10 @@ The `ggml/` submodule uses upstream `ggml-org/ggml`, pinned to a commit.
 Like stable-diffusion.cpp, it is built with `add_subdirectory` and linked via
 its `ggml` CMake target; no system ggml installation is required.
 
+CLI11 is included as a submodule under `thirdparty/CLI11`, pinned to v2.7.2.
+The `clap` target links `CLI11::CLI11` so the command-line entry point can use
+its headers without a system installation.
+
 ## Build and test
 
 ```sh
