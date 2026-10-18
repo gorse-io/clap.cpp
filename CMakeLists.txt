@@ -12,7 +12,7 @@ endif()
 
 add_subdirectory(ggml EXCLUDE_FROM_ALL)
 
-add_executable(clap src/main.cpp)
+add_executable(clap src/clap.cpp)
 target_compile_features(clap PRIVATE cxx_std_17)
 target_link_libraries(clap PRIVATE ggml)
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
