@@ -45,6 +45,37 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+## Native model layout
+
+The C++ organization follows `llama.cpp/src/models`: shared runtime services are
+separate from architecture-specific parameter/tensor loading and encoder code.
+
+| Path | Responsibility |
+| --- | --- |
+| `include/clap.h` | Public, dependency-light C++ API (`clap::Model`, `log_mel`) |
+| `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
+| `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
+| `src/model-ops.*` | Shared CPU ggml matrix operations and normalization |
+| `src/audio.cpp`, `src/vocab.*` | Native audio frontend and Unicode byte-level BPE |
+| `src/models/models.h`, `src/models/clap.cpp` | CLAP specialization: hyperparameters, tensor contract, HTSAT/RoBERTa encoders and projections |
+| `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
+| `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion; no Python at inference |
+
+Convert a local `laion/larger_clap_music` checkpoint containing `config.json`,
+`pytorch_model.bin`, `tokenizer.json` and `preprocessor_config.json`, then run:
+
+```sh
+python convert_hf_to_gguf.py checkpoint/ model.gguf
+./build/clap-model --model model.gguf --text 'A jazz quartet playing saxophone.'
+./build/clap-model --model model.gguf --audio music.wav
+```
+
+The native executable returns a normalized 512-dimensional JSON array. Audio
+must already be mono 48 kHz PCM16/float32 WAV. Inference is CPU-only; fusion CLAP,
+quantization and batching are not supported. The optional Transformers oracle
+suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
+`torch`, `transformers` and `numpy`. Existing dummy interfaces below are unchanged.
+
 ## Embedding command
 
 Generate dummy embeddings directly, without starting a server or loading a model:

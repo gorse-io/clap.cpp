@@ -64,7 +64,7 @@ mel = extractor(wave, sampling_rate=48000, return_tensors='np')['input_features'
 fixture = dict(text_cases=cases, features=features.reshape(-1).tolist(), frames=501,
                expected_audio=expected_audio, waveform=wave.tolist(), mel=mel.reshape(-1).tolist())
 (out / 'fixture.json').write_text(json.dumps(fixture))
-subprocess.run([sys.executable, str(ROOT / 'src/models/convert_clap.py'), str(out), str(out / 'model.gguf')], check=True)
+subprocess.run([sys.executable, str(ROOT / 'convert_hf_to_gguf.py'), str(out), str(out / 'model.gguf')], check=True)
 subprocess.run([str(build / 'clap-model-test'), str(out / 'model.gguf'), str(out / 'fixture.json')], check=True)
 # F16 storage parity against the same parameters rounded exactly as conversion.
 with torch.no_grad():
@@ -81,12 +81,12 @@ with torch.no_grad():
     pooled = m.audio_model(torch.from_numpy(features)).pooler_output
     rounded['expected_audio'] = torch.nn.functional.normalize(m.audio_projection(pooled), dim=-1)[0].tolist()
 (out / 'fixture-f16.json').write_text(json.dumps(rounded))
-subprocess.run([sys.executable, str(ROOT / 'src/models/convert_clap.py'), str(out), str(out / 'model-f16.gguf'), '--dtype', 'f16'], check=True)
+subprocess.run([sys.executable, str(ROOT / 'convert_hf_to_gguf.py'), str(out), str(out / 'model-f16.gguf'), '--dtype', 'f16'], check=True)
 subprocess.run([str(build / 'clap-model-test'), str(out / 'model-f16.gguf'), str(out / 'fixture-f16.json')], check=True)
 # Converter must reject unsupported variants rather than silently misinterpret them.
 c.audio_config.enable_fusion = True
 (out / 'config.json').write_text(c.to_json_string())
-p = subprocess.run([sys.executable, str(ROOT / 'src/models/convert_clap.py'), str(out), str(out / 'invalid.gguf')], capture_output=True, text=True)
+p = subprocess.run([sys.executable, str(ROOT / 'convert_hf_to_gguf.py'), str(out), str(out / 'invalid.gguf')], capture_output=True, text=True)
 assert p.returncode != 0 and 'fusion' in p.stderr.lower(), p.stderr
 assert not (out / 'invalid.gguf').exists()
 # The native loader must reject malformed/truncated containers and wrong shapes.

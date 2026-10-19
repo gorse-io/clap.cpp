@@ -1,41 +1,32 @@
 #pragma once
 
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <vector>
+#include "model.h"
+#include "model-loader.h"
+#include "model-ops.h"
+#include <nlohmann/json.hpp>
 
-namespace clap {
+namespace clap::detail {
 
-// 48 kHz mono float PCM -> [1001, 64] Slaney log-power mel features.
-// HF repeatpad: repeat whole short clips, then zero-pad the remainder.
-// Long clips use an explicit crop offset (default: first 10 s), making inference
-// reproducible rather than depending on NumPy's random state.
-std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
-                           std::size_t crop_offset = 0);
-
-// Unfused HTSAT + RoBERTa CLAP. Weights are memory-mapped on POSIX platforms.
-// Each call embeds one item; methods on the same instance are not thread-safe.
-// Returns unit-normalized projection vectors, as HF get_*_features does.
-class Model {
+// Per-architecture declarations belong here, following llama.cpp/src/models.
+// GGUF I/O, tokenizer ownership, generic tensor operations and the public Model
+// facade are implemented in the core src/ files, not in this specialization.
+class ClapModel final : public ModelArchitecture {
 public:
-    explicit Model(const std::string &gguf_path, int threads = 0);
-    ~Model();
-    Model(Model &&) noexcept;
-    Model &operator=(Model &&) noexcept;
-    Model(const Model &) = delete;
-    Model &operator=(const Model &) = delete;
-
-    std::vector<int> tokenize(const std::string &utf8, std::size_t max_length = 512) const;
-    std::vector<float> text(const std::vector<int> &token_ids);
-    std::vector<float> text(const std::string &utf8);
-    // Feature layout [frames, audio_config.num_mel_bins], channel count = 1.
-    std::vector<float> audio_features(const std::vector<float> &features, int frames);
-    std::vector<float> audio(const std::vector<float> &pcm, int sample_rate = 48000,
-                              std::size_t crop_offset = 0);
-    int projection_dimension() const;
+    ClapModel(const ModelLoader &loader, int threads);
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
+    TextParameters text_parameters() const override;
+    int projection_dimension() const override;
+    int mel_bins() const override;
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    Matrix attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
+                     const std::vector<int> *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
+    std::vector<float> project(const Matrix &pooled, const std::string &prefix) const;
+
+    const ModelLoader &loader;
+    TensorOps ops;
+    nlohmann::json config, a, t;
 };
-} // namespace clap
+} // namespace clap::detail

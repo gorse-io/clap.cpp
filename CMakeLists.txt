@@ -31,16 +31,25 @@ add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
 find_package(ICU REQUIRED COMPONENTS uc i18n)
-add_library(clap-models src/models/clap.cpp)
+add_library(clap-models
+    include/clap.h
+    src/model.cpp
+    src/model-loader.cpp
+    src/model-ops.cpp
+    src/audio.cpp
+    src/vocab.cpp
+    src/models/clap.cpp)
 target_compile_features(clap-models PUBLIC cxx_std_17)
-target_include_directories(clap-models PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_include_directories(clap-models
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(clap-models PUBLIC ggml PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
 set_target_properties(clap-models PROPERTIES CXX_EXTENSIONS OFF)
 if(NOT MSVC)
     target_compile_options(clap-models PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_executable(clap-model src/models/infer.cpp)
+add_executable(clap-model examples/embedding/embedding.cpp)
 target_link_libraries(clap-model PRIVATE clap-models CLI11::CLI11 nlohmann_json::nlohmann_json)
 set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
 
