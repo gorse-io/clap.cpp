@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            asset: clap-macos-arm64
+            binary: build/clap
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+          - os: windows-2022
+            asset: clap-windows-amd64-cpu.exe
+            binary: build/Release/clap.exe
+            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+          - os: windows-11-arm
+            asset: clap-windows-arm64-cpu.exe
+            binary: build/Release/clap.exe
+            cmake_args: -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+          - os: ubuntu-22.04
+            asset: clap-linux-amd64-cpu
+            binary: build/clap
+            cmake_args: -DGGML_METAL=OFF
+          - os: ubuntu-22.04-arm
+            asset: clap-linux-arm64-cpu
+            binary: build/clap
+            cmake_args: -DGGML_METAL=OFF
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=OFF
+          -DBUILD_SHARED_LIBS=OFF
+          -DGGML_NATIVE=OFF
+          -DGGML_BACKEND_DL=OFF
+          -DGGML_OPENMP=OFF
+          -DHTTPLIB_USE_OPENSSL_IF_AVAILABLE=OFF
+          -DHTTPLIB_USE_ZLIB_IF_AVAILABLE=OFF
+          -DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF
+          -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF
+          ${{ matrix.cmake_args }}
+      - name: Build
+        run: cmake --build build --config Release --target clap-cli --parallel
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mv "$BINARY" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber
