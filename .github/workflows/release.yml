@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            asset: clap-macos-arm64
+            binary: build/clap
+            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+          - os: windows-2022
+            asset: clap-windows-amd64-cpu
+            binary: build/Release/clap.exe
+            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+          - os: ubuntu-22.04
+            asset: clap-linux-amd64-cpu
+            binary: build/clap
+            cmake_args: -DGGML_METAL=OFF
+          - os: ubuntu-22.04-arm
+            asset: clap-linux-arm64-cpu
+            binary: build/clap
+            cmake_args: -DGGML_METAL=OFF
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=OFF
+          -DBUILD_SHARED_LIBS=OFF
+          -DGGML_NATIVE=OFF
+          -DGGML_BACKEND_DL=OFF
+          -DGGML_OPENMP=OFF
+          -DHTTPLIB_USE_OPENSSL_IF_AVAILABLE=OFF
+          -DHTTPLIB_USE_ZLIB_IF_AVAILABLE=OFF
+          -DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF
+          -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF
+          ${{ matrix.cmake_args }}
+      - name: Build
+        run: cmake --build build --config Release --target clap-cli --parallel
+      - name: Smoke test
+        env:
+          BINARY: ${{ matrix.binary }}
+        run: |
+          "$BINARY" --help
+          "$BINARY" embedding -p "Hello World!"
+      - name: Prepare executable
+        env:
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mkdir -p dist
+          cp "$BINARY" "dist/$ASSET"
+      - name: Verify macOS architecture
+        if: runner.os == 'macOS'
+        run: lipo -verify_arch arm64 dist/clap-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  upload-release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clap-*
+          merge-multiple: true
+          path: dist
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          chmod +x dist/clap-*
+          gh release upload "$RELEASE_TAG" dist/clap-* --clobber
