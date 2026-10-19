@@ -26,9 +26,10 @@ with tempfile.TemporaryDirectory(prefix='clap q8 ') as tmp:
         except (OSError, NotImplementedError) as error:
             print(f'Symlink creation unavailable: {error}')
             sys.exit(77)
+        link_target = result.readlink()
         p = subprocess.run([str(quantizer), 'quantize', str(source), str(result)], capture_output=True)
         assert p.returncode != 0, 'quantizer replaced a dangling destination symlink'
-        assert result.is_symlink() and result.readlink() == target
+        assert result.is_symlink() and result.readlink() == link_target
         assert not target.exists()
         assert not list(out.glob('*.tmp-*')), 'temporary output leaked'
         print('Dangling destination symlink preserved')
