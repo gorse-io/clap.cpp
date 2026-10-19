@@ -8,7 +8,7 @@ command and HTTP server intentionally retain their dummy behavior.
 
 - CMake 3.20 or newer
 - A C++17 compiler
-- ICU development headers and libraries (`libicu-dev` on Debian/Ubuntu)
+- ICU source submodule (included by recursive checkout; no system ICU installation required)
 - Python 3 (only when building tests; conversion/oracle tests additionally need torch, transformers, numpy)
 
 ## Clone
@@ -36,6 +36,18 @@ cpp-httplib is included as a submodule under `thirdparty/cpp-httplib`, pinned to
 v0.61.0. The `clap` target links `httplib::httplib` for HTTP server/client support.
 nlohmann/json is included as a submodule under `thirdparty/json`, pinned to
 v3.12.0. Request parsing and response serialization use `nlohmann_json::nlohmann_json`.
+
+ICU is pinned to 78.3 (`21d1eb0f306e1141c10931e914dfc038c06121da`) under
+`thirdparty/icu`. By default `cmake/icu.cmake` builds a static Unicode/regex-only
+subset directly with CMake, without Autotools, MSBuild project files or generated
+locale packages. Unicode property/case tables are compiled from ICU's checked-in
+data headers; no ICU shared library or external `.dat` file is needed at runtime.
+Unused conversion, normalization, collation, formatting and locale services are
+disabled: this is the tokenizer's ICU subset, not a general-purpose ICU SDK.
+
+To use an installed full ICU instead, configure with `-DCLAP_USE_SYSTEM_ICU=ON`
+(requires the `uc`/`i18n` development libraries, e.g. `libicu-dev` on Debian/Ubuntu).
+The bundled targets stay static even when `BUILD_SHARED_LIBS=ON`.
 
 ## Build and test
 

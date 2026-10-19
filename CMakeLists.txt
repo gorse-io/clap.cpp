@@ -30,7 +30,7 @@ add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
-find_package(ICU REQUIRED COMPONENTS uc i18n)
+include(cmake/icu.cmake)
 add_library(clap-models
     include/clap.h
     src/model.cpp
@@ -66,6 +66,10 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(clap-icu-test tests/icu-regex.cpp)
+    target_link_libraries(clap-icu-test PRIVATE ICU::i18n ICU::uc)
+    target_compile_features(clap-icu-test PRIVATE cxx_std_17)
+    add_test(NAME clap_icu_regex COMMAND clap-icu-test)
     add_executable(clap-model-test tests/models/model-test.cpp)
     target_link_libraries(clap-model-test PRIVATE clap-models nlohmann_json::nlohmann_json)
     add_test(NAME clap_model_unit COMMAND clap-model-test)
@@ -78,6 +82,15 @@ if(BUILD_TESTING)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    if(NOT CLAP_USE_SYSTEM_ICU)
+        add_test(NAME clap_icu_source_configure
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/icu_source.py" "${CMAKE_COMMAND}")
+        set_tests_properties(clap_icu_source_configure PROPERTIES TIMEOUT 120)
+        if(UNIX)
+            add_test(NAME clap_icu_static_link
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/icu_link.py" "$<TARGET_FILE:clap-model>")
+        endif()
+    endif()
     add_test(NAME clap_embeddings
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap>")
     set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)
