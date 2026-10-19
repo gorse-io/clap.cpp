@@ -1,6 +1,7 @@
 #include "model-loader.h"
 #include "impl.h"
 #include "quantize-output.h"
+#include "quantize.h"
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
@@ -82,12 +83,7 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     std::cout << "Quantized " << count << " tensors to Q8_0; ineligible tensors kept unchanged\n";
 }
 } // namespace
-int main(int argc, char **argv) {
-    if (argc == 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
-        std::cout << "Usage: clap-quantize INPUT.gguf OUTPUT.gguf\nConvert CLAP/CLaMP3 F32/F16 GGUF to mixed Q8_0. Output must not exist.\n";
-        return 0;
-    }
-    if (argc != 3) { std::cerr << "Usage: clap-quantize INPUT.gguf OUTPUT.gguf\n"; return 1; }
-    try { quantize(argv[1], argv[2]); return 0; }
+int run_quantize(const std::string &input, const std::string &output) {
+    try { quantize(input, output); return 0; }
     catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <fcntl.h>
 #include <sys/stat.h>

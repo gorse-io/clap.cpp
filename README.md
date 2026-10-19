@@ -101,13 +101,13 @@ resampled 48 kHz waveform.
 
 ### Q8_0 quantization (CLAP and CLaMP3)
 
-Builds include the native `clap-quantize` executable. First convert the checkpoint
+Builds include the native `clap quantize` subcommand. First convert the checkpoint
 with the existing Python converter (F32 recommended to avoid double rounding),
 then quantize locally with upstream ggml's canonical `ggml_quantize_chunk`:
 
 ```sh
 python convert_hf_to_gguf.py checkpoint/ model-f32.gguf --dtype f32
-./build/clap-quantize model-f32.gguf model-q8_0.gguf
+./build/clap quantize model-f32.gguf model-q8_0.gguf
 ./build/clap-model --model model-q8_0.gguf --text 'A jazz quartet.'
 ./build/clap-model --model model-q8_0.gguf --audio music.wav
 # The same quantizer accepts CLaMP3 F32/F16 GGUF; use --audio-features for CLaMP3.

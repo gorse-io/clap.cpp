@@ -90,7 +90,7 @@ from convert_hf_to_gguf import clap_tensor_name
 for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8')]:
     target = out / f'model-{suffix}.gguf'
     if target.exists(): target.unlink()
-    subprocess.run([str(build / 'clap-quantize'), str(out / source), str(target)], check=True)
+    subprocess.run([str(build / 'clap'), 'quantize', str(out / source), str(target)], check=True)
     count = load_storage(m, target, clap_tensor_name)
     quantized_fixture = json.loads(json.dumps(fixture))
     # Block packing is discontinuous: small interpolation/normalization rounding

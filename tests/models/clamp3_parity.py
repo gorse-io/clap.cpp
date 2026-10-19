@@ -188,7 +188,7 @@ sys.path.insert(0, str(root))
 from convert_hf_to_gguf import clamp3_tensor_name
 for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8')]:
     target = out / f'model-{suffix}.gguf'
-    subprocess.run([str(build / 'clap-quantize'), str(out / source), str(target)], check=True)
+    subprocess.run([str(build / 'clap'), 'quantize', str(out / source), str(target)], check=True)
     count = load_storage(model, target, clamp3_tensor_name)
     quantized_fixture = json.loads(json.dumps(fixture))
     quantized_fixture['embedding_tolerance'] = 2e-3

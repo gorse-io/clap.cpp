@@ -40,18 +40,13 @@ add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 include(cmake/icu.cmake)
 add_subdirectory(src)
 
-add_executable(clap-quantize src/quantize.cpp)
-target_compile_features(clap-quantize PRIVATE cxx_std_17)
-target_link_libraries(clap-quantize PRIVATE clap)
-set_target_properties(clap-quantize PROPERTIES CXX_EXTENSIONS OFF)
-
 add_executable(clap-model examples/embedding/embedding.cpp)
 target_link_libraries(clap-model PRIVATE clap CLI11::CLI11 nlohmann_json::nlohmann_json)
 set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
 
 # The CLI target differs from the core library target, while its executable
 # keeps the existing "clap" name and command-line behavior.
-add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp)
+add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
 target_compile_features(clap-cli PRIVATE cxx_std_17)
 target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
 set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
@@ -94,14 +89,17 @@ if(BUILD_TESTING)
     add_executable(clap-q8-test tests/q8-test.cpp)
     target_include_directories(clap-q8-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(clap-q8-test PRIVATE clap)
+    add_test(NAME clap_quantize_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize_cli.py" "$<TARGET_FILE:clap-cli>")
+    set_tests_properties(clap_quantize_cli PROPERTIES TIMEOUT 30)
     add_test(NAME clap_quantize
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
-                "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-quantize>")
+                "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_quantize PROPERTIES TIMEOUT 60)
     foreach(regression alignment symlink)
         add_test(NAME clap_quantize_${regression}
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
-                    "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-quantize>" "${regression}")
+                    "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>" "${regression}")
         set_tests_properties(clap_quantize_${regression} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
     endforeach()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -109,7 +107,7 @@ if(BUILD_TESTING)
         target_link_libraries(clap-quantize-race PRIVATE ${CMAKE_DL_LIBS})
         add_test(NAME clap_quantize_concurrent
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
-                    "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-quantize>" concurrent
+                    "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>" concurrent
                     "$<TARGET_FILE:clap-quantize-race>")
         set_tests_properties(clap_quantize_concurrent PROPERTIES TIMEOUT 60)
     endif()
@@ -181,4 +179,4 @@ if(BUILD_TESTING)
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
 endif()
 
-install(TARGETS clap-cli clap-model clap-quantize RUNTIME DESTINATION bin)
+install(TARGETS clap-cli clap-model RUNTIME DESTINATION bin)
