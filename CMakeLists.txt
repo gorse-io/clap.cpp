@@ -30,7 +30,7 @@ add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
-add_executable(clap src/clap.cpp src/server.cpp)
+add_executable(clap src/clap.cpp src/embedding.cpp src/server.cpp)
 target_compile_features(clap PRIVATE cxx_std_17)
 target_link_libraries(clap PRIVATE ggml CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
@@ -55,6 +55,9 @@ if(BUILD_TESTING)
     add_test(NAME clap_embeddings
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap>")
     set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)
+    add_test(NAME clap_embedding_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap>")
+    set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
 endif()
 
 install(TARGETS clap RUNTIME DESTINATION bin)

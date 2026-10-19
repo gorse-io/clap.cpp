@@ -42,6 +42,36 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+## Embedding command
+
+Generate dummy embeddings directly, without starting a server or loading a model:
+
+```sh
+./build/clap embedding -p "Hello World!"
+# 1.0000000 0.0000000 0.0000000
+
+./build/clap embedding -f prompts.txt --embd-output-format json
+./build/clap embedding -p 'hello<#sep#>world' \
+  --embd-separator '<#sep#>' --embd-output-format array
+# [[1.0,0.0,0.0],[1.0,0.0,0.0]]
+```
+
+The input and output options follow llama.cpp's `llama-embedding` example:
+
+- Exactly one of `-p/--prompt` or `-f/--file` is required. Input must not be empty.
+- `--embd-separator` splits input into prompts (default: an actual newline).
+  Empty segments, including a trailing segment, each receive an embedding.
+  The separator must not be empty.
+- `--embd-output-format` accepts `raw` (default, one space-separated vector per
+  line), `array` (an array of vectors), `json` (`object: "list"` with indexed
+  embedding objects), or `json+` (also includes `cosineSimilarity` for multiple
+  prompts). Structured output is written to stdout; errors go to stderr.
+
+Every prompt receives the fixed vector `[1.0, 0.0, 0.0]`, just like the server.
+All cosine similarities are therefore `1.0`. This is only a subset of the
+llama.cpp CLI: model loading, tokenization, inference, pooling, and normalization
+options are not implemented. No model argument is needed.
+
 ## Embeddings server
 
 Start the server (defaults to `127.0.0.1:8080`):
