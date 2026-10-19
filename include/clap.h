@@ -7,6 +7,15 @@
 
 namespace clap {
 
+struct Audio {
+    std::vector<float> samples; // Mono float PCM; channels are averaged when decoding.
+    int sample_rate = 0;
+};
+
+// Decode WAV, MP3 or FLAC by file contents. Preserves the source sample rate
+// (no resampling); throws on unsupported, empty or invalid audio.
+Audio decode_audio(const std::string &path);
+
 // 48 kHz mono float PCM -> [1001, 64] Slaney log-power mel features.
 // HF repeatpad: repeat whole short clips, then zero-pad the remainder.
 // Long clips use an explicit crop offset (default: first 10 s), making inference
