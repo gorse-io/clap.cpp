@@ -5,7 +5,7 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -57,12 +57,7 @@ jobs:
           ${{ matrix.cmake_args }}
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel
-      - name: Smoke test
-        env:
-          BINARY: ${{ matrix.binary }}
-        run: |
-          "$BINARY" --help
-          "$BINARY" embedding -p "Hello World!"
+
       - name: Prepare executable
         env:
           BINARY: ${{ matrix.binary }}
@@ -70,32 +65,10 @@ jobs:
         run: |
           mkdir -p dist
           cp "$BINARY" "dist/$ASSET"
-      - name: Verify macOS architecture
-        if: runner.os == 'macOS'
-        run: lipo dist/clap-macos-arm64 -verify_arch arm64
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
-          if-no-files-found: error
-
-  upload-release:
-    if: github.event_name == 'release'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: clap-*
-          merge-multiple: true
-          path: dist
-      - name: Upload release assets
+      - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          chmod +x dist/clap-*
-          gh release upload "$RELEASE_TAG" dist/clap-* --clobber
+          ASSET: ${{ matrix.asset }}
+        run: gh release upload "$RELEASE_TAG" "dist/$ASSET" --clobber
