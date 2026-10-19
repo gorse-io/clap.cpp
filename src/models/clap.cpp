@@ -1,4 +1,4 @@
-#include "clap_model.h"
+#include "models.h"
 
 #include <ggml.h>
 #include <ggml-cpu.h>

@@ -49,7 +49,7 @@ copies, then zero-pad the remainder. Empty/non-finite input is rejected.
 
 ## C++ API
 
-Link the CMake target `clap-models`, include `models/clap_model.h`, construct
+Link the CMake target `clap-models`, include `models/models.h`, construct
 `clap::Model` with a GGUF filename, and call `text(utf8)` or `audio(pcm, 48000)`.
 `tokenize` returns RoBERTa byte-level BPE IDs including BOS/EOS, truncating to 512
 tokens by default. Unicode pre-tokenization uses ICU. `text(token_ids)` accepts

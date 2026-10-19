@@ -31,7 +31,7 @@ add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
 find_package(ICU REQUIRED COMPONENTS uc i18n)
-add_library(clap-models src/models/clap_model.cpp)
+add_library(clap-models src/models/clap.cpp)
 target_compile_features(clap-models PUBLIC cxx_std_17)
 target_include_directories(clap-models PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(clap-models PUBLIC ggml PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)

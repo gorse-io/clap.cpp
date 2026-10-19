@@ -1,4 +1,4 @@
-#include "clap_model.h"
+#include "models.h"
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
 #include <cstdint>
