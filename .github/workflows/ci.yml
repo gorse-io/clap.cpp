@@ -21,8 +21,6 @@ jobs:
           submodules: recursive
       - name: Install FFmpeg for test fixtures
         uses: AnimMouse/setup-ffmpeg@v1
-      - name: Verify FFmpeg
-        run: ffmpeg -version
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
