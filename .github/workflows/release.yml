@@ -22,6 +22,10 @@ jobs:
             asset: clap-windows-amd64-cpu
             binary: build/Release/clap.exe
             cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+          - os: windows-11-arm
+            asset: clap-windows-arm64-cpu
+            binary: build/Release/clap.exe
+            cmake_args: -A ARM64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cpu
             binary: build/clap
@@ -69,7 +73,7 @@ jobs:
           cp "$BINARY" "dist/$ASSET"
       - name: Verify macOS architecture
         if: runner.os == 'macOS'
-        run: lipo -verify_arch arm64 dist/clap-macos-arm64
+        run: lipo dist/clap-macos-arm64 -verify_arch arm64
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
