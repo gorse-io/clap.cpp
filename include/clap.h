@@ -16,6 +16,11 @@ struct Audio {
 // (no resampling); throws on unsupported, empty or invalid audio.
 Audio decode_audio(const std::string &path);
 
+// Band-limited mono resampling, with anti-alias filtering when downsampling.
+// Output length is ceil(input length * target rate / source rate); no delay is
+// added. Both rates must be positive; empty/non-finite or >1 GiB PCM is rejected.
+Audio resample_audio(const Audio &audio, int sample_rate = 48000);
+
 // 48 kHz mono float PCM -> [1001, 64] Slaney log-power mel features.
 // HF repeatpad: repeat whole short clips, then zero-pad the remainder.
 // Long clips use an explicit crop offset (default: first 10 s), making inference

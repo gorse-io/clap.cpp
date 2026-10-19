@@ -8,6 +8,7 @@ set(CLAP_CORE_SOURCES
     model-ops.cpp
     audio.cpp
     audio-decoder.cpp
+    resample.cpp
     vocab.cpp)
 
 add_library(clap

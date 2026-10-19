@@ -12,10 +12,10 @@ int main(int argc, char **argv) {
     size_t crop = 0;
     app.add_option("-m,--model", path, "Converted CLAP GGUF")->required()->check(CLI::ExistingFile);
     auto *text_option = app.add_option("-p,--text", text, "UTF-8 text to embed");
-    auto *audio_option = app.add_option("-a,--audio", audio, "48 kHz WAV, MP3 or FLAC (automatically downmixed to mono)")->check(CLI::ExistingFile);
+    auto *audio_option = app.add_option("-a,--audio", audio, "WAV, MP3 or FLAC (automatically converted to mono 48 kHz)")->check(CLI::ExistingFile);
     text_option->excludes(audio_option);
     app.add_option("-t,--threads", threads, "ggml CPU threads (0: automatic)")->check(CLI::NonNegativeNumber);
-    app.add_option("--crop-offset", crop, "Sample offset into audio longer than ten seconds");
+    app.add_option("--crop-offset", crop, "Sample offset at 48 kHz into audio longer than ten seconds");
     CLI11_PARSE(app, argc, argv);
     try {
         if (text_option->count() + audio_option->count() != 1)
@@ -25,8 +25,7 @@ int main(int argc, char **argv) {
         std::vector<float> pcm;
         if (audio_option->count()) {
             auto decoded = clap::decode_audio(audio);
-            if (decoded.sample_rate != 48000)
-                throw std::runtime_error("Audio must be 48000 Hz; resample before inference");
+            if (decoded.sample_rate != 48000) decoded = clap::resample_audio(decoded);
             pcm = std::move(decoded.samples);
         }
         clap::Model model(path, threads);

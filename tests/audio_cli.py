@@ -20,7 +20,7 @@ for name in ["mono.wav", "stereo.wav", "mono.mp3", "stereo.mp3", "mono.flac", "s
     result = run("--audio", str(fixtures / name))
     assert result.returncode != 0 and result.stderr == baseline.stderr, (name, result.stderr)
 result = run("--audio", str(fixtures / "44100.flac"))
-assert result.returncode != 0 and "48000" in result.stderr, result.stderr
+assert result.returncode != 0 and result.stderr == baseline.stderr, result.stderr
 for name in ["empty.wav", "invalid.bin"]:
     result = run("--audio", str(fixtures / name))
     assert result.returncode != 0 and result.stderr != baseline.stderr, (name, result.stderr)
