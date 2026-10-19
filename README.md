@@ -10,6 +10,7 @@ command and HTTP server intentionally retain their dummy behavior.
 - A C++17 compiler
 - ICU source submodule (included by recursive checkout; no system ICU installation required)
 - Python 3 (only when building tests; conversion/oracle tests additionally need torch, transformers, numpy)
+- FFmpeg with libmp3lame (only when building tests, to generate WAV/MP3/FLAC fixtures)
 
 ## Clone
 
@@ -51,7 +52,8 @@ The bundled targets stay static even when `BUILD_SHARED_LIBS=ON`.
 
 dr_libs is pinned as a submodule under `thirdparty/dr_libs`. The core library
 compiles `dr_wav`, `dr_mp3` and `dr_flac` directly; audio decoding requires no
-FFmpeg executable or system codec libraries at build time or runtime.
+FFmpeg executable or system codec libraries to build or run the library and
+executables. Only the test fixture generation step uses FFmpeg.
 
 ## Build and test
 
@@ -104,9 +106,11 @@ mono PCM (default: 48 kHz) using a centered Hann-windowed sinc filter with
 anti-alias filtering for downsampling. Duration is rounded up to the next output
 sample, and same-rate input is unchanged. Neither operation requires an external
 codec/resampling library. Empty/unsupported inputs and non-finite samples are rejected;
-decoded output is limited to 1 GiB. Synthetic codec fixtures are checked in under
-`tests/audio`, so tests do not require FFmpeg; `tests/audio/generate.py` can
-regenerate them when FFmpeg with libmp3lame is available.
+decoded output is limited to 1 GiB. Synthetic codec fixtures are not stored in
+the repository. When tests are enabled, the build runs `tests/audio/generate.py`
+with FFmpeg to generate them under `build/tests/audio` before CTest runs.
+The build regenerates missing or outdated fixtures automatically. Configure
+with `-DBUILD_TESTING=OFF` to build without Python or FFmpeg test dependencies.
 
 Inference is CPU-only; fusion CLAP,
 quantization and batching are not supported. The optional Transformers oracle

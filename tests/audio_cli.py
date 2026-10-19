@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 cli = sys.argv[1]
-fixtures = Path(__file__).resolve().parent / "audio"
+fixtures = Path(sys.argv[2])
 # The intentionally invalid model lets us check audio is decoded before loading.
 model = fixtures / "invalid.bin"
 

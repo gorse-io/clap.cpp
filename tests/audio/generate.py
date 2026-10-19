@@ -1,4 +1,5 @@
-"""Regenerate synthetic audio fixtures (requires ffmpeg, not needed to run tests)."""
+"""Generate synthetic codec fixtures into a build directory (requires FFmpeg)."""
+import argparse
 import math
 from pathlib import Path
 import shutil
@@ -6,11 +7,16 @@ import struct
 import subprocess
 import wave
 
-ROOT = Path(__file__).resolve().parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("output", type=Path, help="Directory for generated audio fixtures")
+parser.add_argument("--ffmpeg", default="ffmpeg", help="FFmpeg executable with libmp3lame support")
+options = parser.parse_args()
+ROOT = options.output.resolve()
+ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def ffmpeg(source, destination, *args):
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(ROOT / source),
+    subprocess.run([options.ffmpeg, "-v", "error", "-y", "-i", str(ROOT / source),
                     *args, str(ROOT / destination)], check=True)
 
 
