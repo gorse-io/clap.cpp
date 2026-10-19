@@ -1,12 +1,15 @@
 # clap.cpp
 
-Minimal C++17/CMake project scaffold. Model loading and inference are not implemented yet.
+C++17/ggml implementation of HuggingFace `laion/larger_clap_music`, with native
+text and audio inference through `clap-model`. The original `clap` embedding
+command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
 
 - CMake 3.20 or newer
 - A C++17 compiler
-- Python 3 (only when building tests)
+- ICU source submodule (included by recursive checkout; no system ICU installation required)
+- Python 3 (only when building tests; conversion/oracle tests additionally need torch, transformers, numpy)
 
 ## Clone
 
@@ -26,13 +29,25 @@ Like stable-diffusion.cpp, it is built with `add_subdirectory` and linked via
 its `ggml` CMake target; no system ggml installation is required.
 
 CLI11 is included as a submodule under `thirdparty/CLI11`, pinned to v2.7.2.
-The `clap` target links `CLI11::CLI11` so the command-line entry point can use
-its headers without a system installation.
+The `clap-cli` target (executable name `clap`) links `CLI11::CLI11` so the
+command-line entry point can use its headers without a system installation.
 
 cpp-httplib is included as a submodule under `thirdparty/cpp-httplib`, pinned to
-v0.61.0. The `clap` target links `httplib::httplib` for HTTP server/client support.
+v0.61.0. The `clap-cli` target links `httplib::httplib` for HTTP server/client support.
 nlohmann/json is included as a submodule under `thirdparty/json`, pinned to
 v3.12.0. Request parsing and response serialization use `nlohmann_json::nlohmann_json`.
+
+ICU is pinned to 78.3 (`21d1eb0f306e1141c10931e914dfc038c06121da`) under
+`thirdparty/icu`. By default `cmake/icu.cmake` builds a static Unicode/regex-only
+subset directly with CMake, without Autotools, MSBuild project files or generated
+locale packages. Unicode property/case tables are compiled from ICU's checked-in
+data headers; no ICU shared library or external `.dat` file is needed at runtime.
+Unused conversion, normalization, collation, formatting and locale services are
+disabled: this is the tokenizer's ICU subset, not a general-purpose ICU SDK.
+
+To use an installed full ICU instead, configure with `-DCLAP_USE_SYSTEM_ICU=ON`
+(requires the `uc`/`i18n` development libraries, e.g. `libicu-dev` on Debian/Ubuntu).
+The bundled targets stay static even when `BUILD_SHARED_LIBS=ON`.
 
 ## Build and test
 
@@ -41,6 +56,42 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
+
+## Native model layout
+
+The C++ organization follows `llama.cpp/src/models`: shared runtime services are
+separate from architecture-specific parameter/tensor loading and encoder code.
+
+`src/CMakeLists.txt` builds one `clap` core library from `CLAP_CORE_SOURCES` and
+`models/*.cpp`. Both executables and the model tests link this same core library;
+there is no separate models library. The `clap-cli` target keeps its executable
+name `clap`, while native model inference uses `clap-model` as before.
+
+| Path | Responsibility |
+| --- | --- |
+| `include/clap.h` | Public, dependency-light C++ API (`clap::Model`, `log_mel`) |
+| `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
+| `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
+| `src/model-ops.*` | Shared CPU ggml matrix operations and normalization |
+| `src/audio.cpp`, `src/vocab.*` | Native audio frontend and Unicode byte-level BPE |
+| `src/models/models.h`, `src/models/clap.cpp` | CLAP specialization: hyperparameters, tensor contract, HTSAT/RoBERTa encoders and projections |
+| `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
+| `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion; no Python at inference |
+
+Convert a local `laion/larger_clap_music` checkpoint containing `config.json`,
+`pytorch_model.bin`, `tokenizer.json` and `preprocessor_config.json`, then run:
+
+```sh
+python convert_hf_to_gguf.py checkpoint/ model.gguf
+./build/clap-model --model model.gguf --text 'A jazz quartet playing saxophone.'
+./build/clap-model --model model.gguf --audio music.wav
+```
+
+The native executable returns a normalized 512-dimensional JSON array. Audio
+must already be mono 48 kHz PCM16/float32 WAV. Inference is CPU-only; fusion CLAP,
+quantization and batching are not supported. The optional Transformers oracle
+suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
+`torch`, `transformers` and `numpy`. Existing dummy interfaces below are unchanged.
 
 ## Embedding command
 

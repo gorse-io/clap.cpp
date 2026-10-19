@@ -10,3 +10,7 @@
 [submodule "thirdparty/json"]
 	path = thirdparty/json
 	url = https://github.com/nlohmann/json.git
+[submodule "thirdparty/icu"]
+	path = thirdparty/icu
+	url = https://github.com/unicode-org/icu.git
+	shallow = true
