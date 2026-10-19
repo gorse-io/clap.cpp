@@ -110,6 +110,40 @@ if(BUILD_TESTING)
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
         set_tests_properties(clap_model_cli PROPERTIES DEPENDS clap_model_parity TIMEOUT 60)
     endif()
+    option(CLAMP3_MODEL_PARITY "Run optional CLaMP3 Transformers oracle tests (torch/transformers/numpy/tokenizers required)" OFF)
+    if(CLAMP3_MODEL_PARITY)
+        add_executable(clamp3-model-test tests/models/clamp3-model-test.cpp)
+        target_link_libraries(clamp3-model-test PRIVATE clap nlohmann_json::nlohmann_json)
+        add_executable(clap-unigram-test tests/models/unigram-test.cpp)
+        target_include_directories(clap-unigram-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        target_link_libraries(clap-unigram-test PRIVATE clap nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
+        add_test(NAME clamp3_tokenizer
+            COMMAND clap-unigram-test "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/tokenizer.json"
+                    "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/tokenizer-cases.json")
+        set_tests_properties(clamp3_tokenizer PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
+        add_test(NAME clamp3_model_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_parity.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+        set_tests_properties(clamp3_model_parity PROPERTIES TIMEOUT 300)
+        add_test(NAME clamp3_model_native
+            COMMAND clamp3-model-test
+                    "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/model.gguf"
+                    "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/fixture.json")
+        set_tests_properties(clamp3_model_native PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
+        add_test(NAME clamp3_model_native_f16
+            COMMAND clamp3-model-test
+                    "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/model-f16.gguf"
+                    "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/fixture-f16.json")
+        set_tests_properties(clamp3_model_native_f16 PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
+        add_test(NAME clamp3_model_cli
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_cli.py"
+                    "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+        set_tests_properties(clamp3_model_cli PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
+        add_test(NAME clamp3_invalid_metadata
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_invalid.py"
+                    "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+        set_tests_properties(clamp3_invalid_metadata PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
+    endif()
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)

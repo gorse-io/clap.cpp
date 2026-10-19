@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -11,12 +12,18 @@
 
 namespace clap::detail {
 
+class Vocabulary {
+public:
+    virtual ~Vocabulary() = default;
+    virtual std::vector<int> tokenize(const std::string &text, size_t max_length) const = 0;
+};
+
 // Shared RoBERTa/GPT-2 byte-level BPE implementation, independent of weight I/O
 // and encoder execution. ICU owns Unicode pre-tokenization only.
-class ByteBpeVocabulary {
+class ByteBpeVocabulary final : public Vocabulary {
 public:
     ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length);
-    std::vector<int> tokenize(const std::string &text, size_t max_length) const;
+    std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
 private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos;
@@ -26,5 +33,28 @@ private:
     std::vector<nlohmann::json> special;
     std::string byte_chars[256];
     std::unique_ptr<icu::RegexPattern> pattern;
+};
+
+// XLM-R's tokenizer.json is a SentencePiece Unigram model represented by the
+// Hugging Face fast-tokenizer format.  Inference stays self-contained: GGUF
+// carries that JSON and ICU supplies the Unicode normalization/whitespace pass.
+class UnigramVocabulary final : public Vocabulary {
+public:
+    UnigramVocabulary(const nlohmann::json &tokenizer, int bos, int eos, int unk,
+                      size_t context_length);
+    std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
+private:
+    struct Piece { int id; double score; };
+    void encode_word(const std::string &text, std::vector<int> &ids) const;
+    std::string normalize(const std::string &text) const;
+    bool transform(const std::string &text, std::string &result) const;
+    int bos, eos, unk;
+    size_t context_length;
+    size_t longest_piece = 0;
+    double unknown_score = 0;
+    std::vector<std::uint32_t> normalization_trie;
+    std::string normalization_replacements;
+    std::unordered_map<std::string, Piece> pieces;
+    std::unordered_map<std::string, int> special;
 };
 } // namespace clap::detail

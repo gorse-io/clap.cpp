@@ -11,17 +11,20 @@ struct Model::Impl {
     // Declaration order ensures the architecture is destroyed before its mapping.
     detail::ModelLoader loader;
     std::unique_ptr<detail::ModelArchitecture> architecture;
-    std::unique_ptr<detail::ByteBpeVocabulary> vocabulary;
+    std::unique_ptr<detail::Vocabulary> vocabulary;
 
     Impl(const std::string &path, int threads) {
         loader.load(path);
         const auto name = loader.metadata("general.architecture");
-        detail::check(name == "clap", "unsupported GGUF architecture");
-        architecture = std::make_unique<detail::ClapModel>(loader, threads);
+        if (name == "clap") architecture = std::make_unique<detail::ClapModel>(loader, threads);
+        else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
+        else detail::check(false, "unsupported GGUF architecture: " + name);
         const auto text = architecture->text_parameters();
-        vocabulary = std::make_unique<detail::ByteBpeVocabulary>(
-            nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str())),
-            text.bos, text.eos, text.context_length);
+        const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
+        if (name == "clamp3")
+            vocabulary = std::make_unique<detail::UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
+        else
+            vocabulary = std::make_unique<detail::ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
     }
 };
 
@@ -34,7 +37,9 @@ int Model::projection_dimension() const { return impl_->architecture->projection
 std::vector<int> Model::tokenize(const std::string &utf8, size_t max_length) const {
     return impl_->vocabulary->tokenize(utf8, max_length);
 }
-std::vector<float> Model::text(const std::string &utf8) { return text(tokenize(utf8)); }
+std::vector<float> Model::text(const std::string &utf8) {
+    return text(tokenize(utf8, impl_->architecture->text_parameters().context_length));
+}
 std::vector<float> Model::text(const std::vector<int> &ids) {
     return impl_->architecture->text(ids);
 }
@@ -42,6 +47,8 @@ std::vector<float> Model::audio_features(const std::vector<float> &features, int
     return impl_->architecture->audio_features(features, frames);
 }
 std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
+    detail::check(impl_->architecture->mel_bins() != 0,
+                  "CLaMP3 waveform input is unavailable; extract MERT-v1-95M features and use audio_features/--audio-features");
     detail::check(impl_->architecture->mel_bins() == 64, "waveform frontend requires 64 mel bins");
     return audio_features(log_mel(pcm, sample_rate, crop_offset), 1001);
 }
