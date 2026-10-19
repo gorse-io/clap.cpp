@@ -103,6 +103,12 @@ TextParameters ClapModel::text_parameters() const {
 }
 int ClapModel::projection_dimension() const { return config.at("projection_dim"); }
 int ClapModel::mel_bins() const { return a.at("num_mel_bins"); }
+int ClapModel::sample_rate() const { return 48000; }
+bool ClapModel::is_waveform_encoder() const { return false; }
+AudioFrames ClapModel::audio_frames(const std::vector<float> &) const {
+    check(false, "CLAP exposes one pooled audio projection, not frame representations");
+    return {};
+}
 
 Matrix ClapModel::attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
                  const std::vector<int> *mask, int window, int shift, int grid) const {

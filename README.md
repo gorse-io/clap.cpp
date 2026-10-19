@@ -1,8 +1,8 @@
 # clap.cpp
 
-C++17/ggml implementations of HuggingFace `laion/larger_clap_music` and CLaMP3,
-with native text and audio-feature inference through `clap-model`. The original `clap` embedding
-command and HTTP server intentionally retain their dummy behavior.
+C++17/ggml implementations of Hugging Face `laion/larger_clap_music`, CLaMP3,
+and `m-a-p/MERT-v2-FullSong`, with native inference through `clap-model`. The
+original `clap` embedding command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
 
@@ -80,7 +80,7 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
 | `src/model-ops.*` | Shared CPU ggml matrix operations and normalization |
 | `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
-| `src/models/models.h`, `src/models/*.cpp` | CLAP and CLaMP3 specializations: hyperparameters, tensor contracts, encoders and projections |
+| `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3 and MERT2 specializations: hyperparameters, tensor contracts, encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
 | `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion; no Python at inference |
 
@@ -127,6 +127,73 @@ Text longer than a chunk is processed in full rather than truncated at 128/512 t
 The converter safely memory-maps the checkpoint, reads a nested `model` state
 dictionary, omits the unsupported symbolic encoder, and supports `--dtype f32`
 and `--dtype f16`. Symbolic ABC/MTF/MusicXML/image input is not supported.
+
+### MERT-v2-FullSong
+
+The native MERT2 implementation follows the official custom configuration,
+model and preprocessor source at pinned Hugging Face revision
+[`7001f7657276238629e61c7746ce70735e0604c0`](https://huggingface.co/m-a-p/MERT-v2-FullSong/commit/7001f7657276238629e61c7746ce70735e0604c0).
+Review that source before loading it with `trust_remote_code`; conversion itself
+only parses JSON and safely reads `model.safetensors`.
+
+Download a local snapshot at that exact revision, then convert it while recording
+the full source SHA in GGUF metadata:
+
+```sh
+python convert_hf_to_gguf.py checkpoint/ mert-v2-fullsong-f16.gguf \
+  --dtype f16 --mert2-revision 7001f7657276238629e61c7746ce70735e0604c0
+./build/clap-model --model mert-v2-fullsong-f16.gguf --audio complete-song.flac
+./build/clap-model --model mert-v2-fullsong-f16.gguf --audio complete-song.flac --frames
+```
+
+Input is mixed to mono and resampled to the checkpoint's 24 kHz rate. The native
+frontend implements the checkpoint's centered 2048-point power spectrogram,
+128-bin mel projection, power-to-dB conversion and learned fixed normalization;
+inference then runs all three ConvNeXt subsampling stages and all 24 bidirectional
+rotary Conformer blocks. No Python or runtime network access is required.
+
+Without `--frames`, the CLI mean-pools all final frames and prints one
+1,024-dimensional recording embedding, matching the official model-card example.
+`--frames` instead prints an object with `frames`, `dimension`, and a flat
+time-major `values` array. In C++, `Model::audio_frames()` exposes the same
+sequence as `clap::AudioFrames`; `Model::audio()` returns its mean. At published
+settings the frame count is `floor(input_samples / 960)` (25 Hz).
+
+FullSong means the complete supplied waveform is processed. There is no implicit
+30-second slice, crop, window aggregation, or tail discard beyond the official
+frontend/frame-ratio semantics. The published checkpoint declares 360 seconds of
+training context; longer input is not silently shortened. Bidirectional attention
+has quadratic time/memory cost in the output frame count, so long CPU runs can be
+expensive. `--crop-offset` is intentionally rejected for MERT2.
+
+For F16 conversion, matrix and convolution weights use F16 storage while vector
+parameters and all official float32 frontend tensors remain F32. The converter
+streams safetensors one at a time rather than materializing the 632M-parameter
+checkpoint in RAM. Quantized GGUF types, batching, intermediate hidden-state
+output, GPU backends and the 30-second MERT2 variant are not supported.
+
+The deterministic tiny official-model suite covers the waveform frontend,
+ConvNeXt, Conformer, pooled/frame APIs, F32/F16 storage, CLI, and a 31.25-second
+no-truncation case:
+
+```sh
+cmake -S . -B build -DMERT2_MODEL_PARITY=ON \
+  -DMERT2_REFERENCE_SOURCE=/path/to/reviewed/7001f7657276238629e61c7746ce70735e0604c0
+cmake --build build --parallel
+ctest --test-dir build -R mert2 --output-on-failure
+```
+
+Those random tiny weights are not published-checkpoint evidence. After verifying
+`model.safetensors` against the official manifest SHA-256
+`e6dd2ab187d6dd62b6521cd7d8f932e237acf0c5757745a7232082e28391350d`, run the
+separate actual-weight oracle:
+
+```sh
+python tests/models/mert2_checkpoint_parity.py build checkpoint/ build/published-mert2
+# Reuse a prior F32 conversion:
+python tests/models/mert2_checkpoint_parity.py build checkpoint/ build/published-mert2 \
+  --gguf mert-v2-fullsong-f32.gguf
+```
 
 The public `clap::decode_audio(path)` API returns `clap::Audio` with mono float
 `samples` and the original `sample_rate`; decoding itself does not resample or

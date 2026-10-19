@@ -1,5 +1,6 @@
 #pragma once
 
+#include "clap.h"
 #include <cstddef>
 #include <vector>
 
@@ -18,9 +19,12 @@ public:
     virtual ~ModelArchitecture() = default;
     virtual std::vector<float> text(const std::vector<int> &ids) const = 0;
     virtual std::vector<float> audio_features(const std::vector<float> &features, int frames) const = 0;
+    virtual AudioFrames audio_frames(const std::vector<float> &pcm) const = 0;
     virtual TextParameters text_parameters() const = 0;
     virtual int projection_dimension() const = 0;
     virtual int mel_bins() const = 0;
+    virtual int sample_rate() const = 0;
+    virtual bool is_waveform_encoder() const = 0;
 protected:
     virtual void load_arch_hparams() = 0;
     virtual void load_arch_tensors() const = 0;

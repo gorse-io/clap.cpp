@@ -73,9 +73,10 @@ int main(int argc, char **argv) {
     std::string path, text, audio, audio_features;
     int threads = 0;
     size_t crop = 0;
-    app.add_option("-m,--model", path, "Converted CLAP/CLaMP3 GGUF")->required()->check(CLI::ExistingFile);
+    bool frames = false;
+    app.add_option("-m,--model", path, "Converted CLAP/CLaMP3/MERT2 GGUF")->required()->check(CLI::ExistingFile);
     auto *text_option = app.add_option("-p,--text", text, "UTF-8 text to embed");
-    auto *audio_option = app.add_option("-a,--audio", audio, "WAV, MP3 or FLAC (automatically converted to mono 48 kHz)")->check(CLI::ExistingFile);
+    auto *audio_option = app.add_option("-a,--audio", audio, "WAV, MP3 or FLAC (mixed to mono and resampled for the model)")->check(CLI::ExistingFile);
     auto *features_option = app.add_option("--audio-features", audio_features,
         "CLaMP3 MERT-v1-95M float32 .npy array ([T,768] or [1,T,768])")->check(CLI::ExistingFile);
     text_option->excludes(audio_option);
@@ -83,24 +84,39 @@ int main(int argc, char **argv) {
     audio_option->excludes(features_option);
     app.add_option("-t,--threads", threads, "ggml CPU threads (0: automatic)")->check(CLI::NonNegativeNumber);
     app.add_option("--crop-offset", crop, "Sample offset at 48 kHz into audio longer than ten seconds");
+    app.add_flag("--frames", frames, "Return MERT2 frame representations instead of mean pooling");
     CLI11_PARSE(app, argc, argv);
     try {
         if (text_option->count() + audio_option->count() + features_option->count() != 1)
             throw std::runtime_error("Specify exactly one of --text, --audio or --audio-features");
         if (crop && !audio_option->count()) throw std::runtime_error("--crop-offset requires --audio");
+        if (frames && !audio_option->count()) throw std::runtime_error("--frames requires --audio");
         // Validate/decode audio before paging model weights into memory.
         std::vector<float> pcm;
+        int pcm_rate = 0;
         if (audio_option->count()) {
             auto decoded = clap::decode_audio(audio);
-            if (decoded.sample_rate != 48000) decoded = clap::resample_audio(decoded);
+            pcm_rate = decoded.sample_rate;
             pcm = std::move(decoded.samples);
         }
         NpyFeatures mert;
         if (features_option->count()) mert = load_npy(audio_features);
         clap::Model model(path, threads);
+        if (audio_option->count() && model.audio_sample_rate() > 0 && pcm_rate != model.audio_sample_rate()) {
+            auto converted = clap::resample_audio({std::move(pcm), pcm_rate}, model.audio_sample_rate());
+            pcm = std::move(converted.samples);
+            pcm_rate = converted.sample_rate;
+        }
+        if (frames) {
+            const auto sequence = model.audio_frames(pcm, pcm_rate);
+            std::cout << nlohmann::json{{"frames", sequence.frames}, {"dimension", sequence.dimension},
+                                       {"values", sequence.values}}.dump() << '\n';
+            if (!std::cout) throw std::runtime_error("Failed to write frame representations");
+            return 0;
+        }
         const auto embedding = text_option->count() ? model.text(text) :
                                features_option->count() ? model.audio_features(mert.values, mert.frames) :
-                               model.audio(pcm, 48000, crop);
+                               model.audio(pcm, pcm_rate, crop);
         std::cout << nlohmann::json(embedding).dump() << '\n';
         if (!std::cout) throw std::runtime_error("Failed to write embedding");
         return 0;
