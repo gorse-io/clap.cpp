@@ -1,9 +1,8 @@
 # clap.cpp
 
 C++17/ggml implementation of HuggingFace `laion/larger_clap_music`, with native
-text and audio inference through `clap-model`. See [native model documentation](src/models/README.md)
-for conversion, usage, architecture, tests, and limitations. The original `clap`
-embedding command and HTTP server intentionally retain their dummy behavior.
+text and audio inference through `clap-model`. The original `clap` embedding
+command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
 
