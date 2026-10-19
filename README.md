@@ -99,6 +99,52 @@ contents rather than extension. Channels are averaged to mono, then automaticall
 resampled to 48 kHz for inference. `--crop-offset` is measured in samples of the
 resampled 48 kHz waveform.
 
+### Q8_0 quantization (CLAP and CLaMP3)
+
+Builds include the native `clap-quantize` executable. First convert the checkpoint
+with the existing Python converter (F32 recommended to avoid double rounding),
+then quantize locally with upstream ggml's canonical `ggml_quantize_chunk`:
+
+```sh
+python convert_hf_to_gguf.py checkpoint/ model-f32.gguf --dtype f32
+./build/clap-quantize model-f32.gguf model-q8_0.gguf
+./build/clap-model --model model-q8_0.gguf --text 'A jazz quartet.'
+./build/clap-model --model model-q8_0.gguf --audio music.wav
+# The same quantizer accepts CLaMP3 F32/F16 GGUF; use --audio-features for CLaMP3.
+```
+
+Q8_0 is **mixed precision**: tensors with ggml rank greater than one and a
+contiguous row width (`ne[0]`, the last PyTorch dimension) divisible by 32 are
+quantized. All other tensors retain their original F32/F16 bytes, including
+biases, normalization vectors and CLAP's 4x4 patch convolution. Embeddings and
+eligible relative-position tables are supported. Q8_0 stores 32 signed 8-bit
+values and one FP16 scale per block (34 bytes), not one raw byte per weight.
+
+The loader keeps Q8 weights mapped (Windows uses its existing file buffer);
+linear layers use native ggml quantized matrix multiplication. Scalar reads
+decode only the containing block; there is no whole-model dequantization.
+Graph execution allocates the actual planned scratch size, including activation
+packing for large F16/Q8 matrix operations. Quantization streams row chunks,
+preserves architecture/tokenizer metadata, and updates GGUF file-type and
+quantization-version metadata. `general.alignment` is intentionally normalized
+to the writer's 32-byte alignment, including for inputs using other alignments.
+It requires no new Python/runtime dependency.
+Only F32/F16 input is accepted: requantization is rejected. The output must not
+exist (including dangling symlinks). Temporary files are created exclusively
+beside the destination and published with an atomic, no-clobber hard link, so a
+concurrently created destination is preserved. The destination filesystem must
+support hard links; otherwise conversion fails safely without a rename fallback.
+Temporary files are removed on ordinary completion or error; abrupt process
+termination may leave one behind. Publication does not promise crash durability.
+
+`clap_quantize` (enabled with ordinary CTest) checks canonical bytes, mixed
+precision, metadata, scalar reads, native matmul, >2 MiB graph scratch and invalid
+inputs. Optional CLAP/CLaMP3 Transformers parity suites also exercise Q8 models
+from both F32 and F16 sources. Their independent test-only GGUF decoder and
+activation-packing oracle account for quantization; CLAP normalized-embedding
+absolute tolerance is 0.01 and CLaMP3 raw-projection tolerance is 0.002. These tiny
+synthetic checks are not a quantization-quality benchmark for published models.
+
 ### CLaMP3
 
 CLaMP3 conversion accepts its published nested `.pth` checkpoint. Keep the
@@ -141,12 +187,12 @@ with FFmpeg to generate them under `build/tests/audio` before CTest runs.
 The build regenerates missing or outdated fixtures automatically. Configure
 with `-DBUILD_TESTING=OFF` to build without Python or FFmpeg test dependencies.
 
-Inference is CPU-only; fusion CLAP, CLaMP3 symbolic input,
-quantization and batching are not supported. The optional CLAP Transformers oracle
+Inference is CPU-only; fusion CLAP, CLaMP3 symbolic input and batching are
+not supported. F32, F16 and mixed Q8_0 GGUF inference are supported. The optional CLAP Transformers oracle
 suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
 `torch`, `transformers` and `numpy`. The deterministic synthetic CLaMP3 oracle
 suite uses `-DCLAMP3_MODEL_PARITY=ON`; it checks short and overlapping-long text
-and MERT feature sequences in F32/F16 and is not evidence about a published
+and MERT feature sequences in F32/F16/Q8_0 and is not evidence about a published
 checkpoint. To compare an actual published checkpoint against Hugging Face
 XLM-R/BERT, place exactly one official `.pth` and the XLM-R config/tokenizer in
 `checkpoint/`, enable `CLAMP3_MODEL_PARITY`, then run:

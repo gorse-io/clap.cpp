@@ -17,7 +17,7 @@ out.mkdir(parents=True, exist_ok=True)
 torch.set_num_threads(2)
 torch.manual_seed(123)
 c = ClapConfig(
-    text_config=dict(hidden_size=16, intermediate_size=32, num_attention_heads=4,
+    text_config=dict(hidden_size=32, intermediate_size=64, num_attention_heads=4,
                      num_hidden_layers=2, vocab_size=50265, projection_dim=12),
     audio_config=dict(hidden_size=64, patch_embeds_hidden_size=8,
                       num_attention_heads=[1, 2, 4, 8], depths=[2, 2, 2, 2],
@@ -83,6 +83,32 @@ with torch.no_grad():
 (out / 'fixture-f16.json').write_text(json.dumps(rounded))
 subprocess.run([sys.executable, str(ROOT / 'convert_hf_to_gguf.py'), str(out), str(out / 'model-f16.gguf'), '--dtype', 'f16'], check=True)
 subprocess.run([str(build / 'clap-model-test'), str(out / 'model-f16.gguf'), str(out / 'fixture-f16.json')], check=True)
+# Q8 native inference against exact stored weights, not an unquantized oracle.
+from q8_reference import load_storage
+sys.path.insert(0, str(ROOT))
+from convert_hf_to_gguf import clap_tensor_name
+for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8')]:
+    target = out / f'model-{suffix}.gguf'
+    if target.exists(): target.unlink()
+    subprocess.run([str(build / 'clap-quantize'), str(out / source), str(target)], check=True)
+    count = load_storage(m, target, clap_tensor_name)
+    quantized_fixture = json.loads(json.dumps(fixture))
+    # Block packing is discontinuous: small interpolation/normalization rounding
+    # differences can move audio activations across Q8 bins. Allow 1% absolute
+    # normalized-embedding error; the C++ test independently checks exact bytes
+    # and native matmul against canonical dequantized weights.
+    quantized_fixture['embedding_tolerance'] = 1e-2
+    with torch.no_grad():
+        for case in quantized_fixture['text_cases']:
+            tokens = torch.tensor([case['padded_ids']])
+            pooled = m.text_model(input_ids=tokens, attention_mask=(tokens != 1)).pooler_output
+            case['expected'] = torch.nn.functional.normalize(m.text_projection(pooled), dim=-1)[0].tolist()
+        pooled = m.audio_model(torch.from_numpy(features)).pooler_output
+        quantized_fixture['expected_audio'] = torch.nn.functional.normalize(m.audio_projection(pooled), dim=-1)[0].tolist()
+    fixture_path = out / f'fixture-{suffix}.json'
+    fixture_path.write_text(json.dumps(quantized_fixture))
+    subprocess.run([str(build / 'clap-model-test'), str(target), str(fixture_path)], check=True)
+    print(f'CLAP {suffix}: {count} quantized parameters, text/audio storage-rounded parity passed')
 # Converter must reject unsupported variants rather than silently misinterpret them.
 c.audio_config.enable_fusion = True
 (out / 'config.json').write_text(c.to_json_string())
@@ -103,4 +129,4 @@ for name, data, error in corruptions:
     path.write_bytes(data)
     result = subprocess.run([str(build / 'clap-model'), '--model', str(path), '--text', 'hello'], capture_output=True, text=True)
     assert result.returncode == 1 and error in result.stderr.lower(), result.stderr
-print('Transformers F32/F16 parity, malformed GGUF and unsupported-config rejection passed')
+print('Transformers F32/F16/Q8_0 parity, malformed GGUF and unsupported-config rejection passed')

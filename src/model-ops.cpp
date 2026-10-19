@@ -20,7 +20,14 @@ void gelu(Matrix &x) {
 }
 float scalar(const ggml_tensor *t, size_t i) {
     if (t->type == GGML_TYPE_F32) return static_cast<const float *>(t->data)[i];
-    return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
+    if (t->type == GGML_TYPE_F16) return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
+    check(t->type == GGML_TYPE_Q8_0, "unsupported scalar tensor type");
+    // Decode only the containing block (embeddings, relative biases, or norms),
+    // never expand an entire mapped weight tensor/model.
+    float block[32];
+    const auto *data = static_cast<const uint8_t *>(t->data) + (i / 32) * ggml_type_size(t->type);
+    ggml_get_type_traits(t->type)->to_float(data, block, 32);
+    return block[i % 32];
 }
 TensorOps::TensorOps(const ModelLoader &source, int threads) : loader(source),
     n_threads(threads > 0 ? threads : static_cast<int>(std::max(1u, std::min(8u, std::thread::hardware_concurrency())))) {}
@@ -37,7 +44,10 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
     auto *output = ggml_mul_mat(ctx.get(), w, input);
     auto *graph = ggml_new_graph_custom(ctx.get(), 32, false);
     ggml_build_forward_expand(graph, output);
-    check(ggml_graph_compute_with_ctx(ctx.get(), graph, n_threads) == GGML_STATUS_SUCCESS, "ggml matrix multiply failed");
+    auto plan = ggml_graph_plan(graph, n_threads, nullptr);
+    std::vector<uint8_t> work(plan.work_size);
+    plan.work_data = work.data();
+    check(ggml_graph_compute(graph, &plan) == GGML_STATUS_SUCCESS, "ggml matrix multiply failed");
     std::memcpy(result.data.data(), output->data, result.data.size() * sizeof(float));
     if (bias) {
         const auto *b = loader.weight(name + ".bias");
