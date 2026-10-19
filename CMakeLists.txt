@@ -25,6 +25,13 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/json/CMakeLists.txt")
         "json submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
+foreach(header dr_wav.h dr_mp3.h dr_flac.h)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dr_libs/${header}")
+        message(FATAL_ERROR
+            "dr_libs submodule is missing. Run: git submodule update --init --recursive")
+    endif()
+endforeach()
+
 add_subdirectory(ggml EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
@@ -52,6 +59,28 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)
+    set(CLAP_AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/audio")
+    set(CLAP_AUDIO_FIXTURES
+        mono.wav stereo.wav mono.flac stereo.flac mono.mp3 stereo.mp3
+        pcm24.wav float.wav 44100.flac audio.dat invalid.bin empty.wav)
+    list(TRANSFORM CLAP_AUDIO_FIXTURES PREPEND "${CLAP_AUDIO_FIXTURE_DIR}/")
+    add_custom_command(
+        OUTPUT ${CLAP_AUDIO_FIXTURES}
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio/generate.py"
+                "${CLAP_AUDIO_FIXTURE_DIR}" --ffmpeg "${FFMPEG_EXECUTABLE}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio/generate.py"
+        COMMENT "Generating audio test fixtures"
+        VERBATIM)
+    add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
+    add_executable(clap-resample-test tests/resample-test.cpp)
+    target_link_libraries(clap-resample-test PRIVATE clap)
+    add_test(NAME clap_resample COMMAND clap-resample-test)
+    add_executable(clap-audio-test tests/audio-test.cpp)
+    target_link_libraries(clap-audio-test PRIVATE clap)
+    add_dependencies(clap-audio-test clap-audio-fixtures)
+    add_test(NAME clap_audio COMMAND clap-audio-test "${CLAP_AUDIO_FIXTURE_DIR}")
     add_executable(clap-model-test tests/models/model-test.cpp)
     target_link_libraries(clap-model-test PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME clap_model_unit COMMAND clap-model-test)
@@ -63,7 +92,10 @@ if(BUILD_TESTING)
     add_test(NAME clap_smoke COMMAND clap-cli)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
 
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME clap_audio_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_cli.py" "$<TARGET_FILE:clap-model>"
+                "${CLAP_AUDIO_FIXTURE_DIR}")
+    set_tests_properties(clap_audio_cli PROPERTIES TIMEOUT 30)
     add_test(NAME clap_embeddings
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)

@@ -10,6 +10,7 @@ command and HTTP server intentionally retain their dummy behavior.
 - A C++17 compiler
 - ICU source submodule (included by recursive checkout; no system ICU installation required)
 - Python 3 (only when building tests; conversion/oracle tests additionally need torch, transformers, numpy)
+- FFmpeg with libmp3lame (only when building tests, to generate WAV/MP3/FLAC fixtures)
 
 ## Clone
 
@@ -49,6 +50,11 @@ To use an installed full ICU instead, configure with `-DCLAP_USE_SYSTEM_ICU=ON`
 (requires the `uc`/`i18n` development libraries, e.g. `libicu-dev` on Debian/Ubuntu).
 The bundled targets stay static even when `BUILD_SHARED_LIBS=ON`.
 
+dr_libs is pinned as a submodule under `thirdparty/dr_libs`. The core library
+compiles `dr_wav`, `dr_mp3` and `dr_flac` directly; audio decoding requires no
+FFmpeg executable or system codec libraries to build or run the library and
+executables. Only the test fixture generation step uses FFmpeg.
+
 ## Build and test
 
 ```sh
@@ -69,11 +75,11 @@ name `clap`, while native model inference uses `clap-model` as before.
 
 | Path | Responsibility |
 | --- | --- |
-| `include/clap.h` | Public, dependency-light C++ API (`clap::Model`, `log_mel`) |
+| `include/clap.h` | Public, dependency-light C++ API (`clap::Model`, `decode_audio`, `resample_audio`, `log_mel`) |
 | `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
 | `src/model-ops.*` | Shared CPU ggml matrix operations and normalization |
-| `src/audio.cpp`, `src/vocab.*` | Native audio frontend and Unicode byte-level BPE |
+| `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend and Unicode byte-level BPE |
 | `src/models/models.h`, `src/models/clap.cpp` | CLAP specialization: hyperparameters, tensor contract, HTSAT/RoBERTa encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
 | `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion; no Python at inference |
@@ -88,7 +94,25 @@ python convert_hf_to_gguf.py checkpoint/ model.gguf
 ```
 
 The native executable returns a normalized 512-dimensional JSON array. Audio
-must already be mono 48 kHz PCM16/float32 WAV. Inference is CPU-only; fusion CLAP,
+accepts WAV (including PCM16, PCM24 and float32), MP3 and FLAC, detected by file
+contents rather than extension. Channels are averaged to mono, then automatically
+resampled to 48 kHz for inference. `--crop-offset` is measured in samples of the
+resampled 48 kHz waveform.
+
+The public `clap::decode_audio(path)` API returns `clap::Audio` with mono float
+`samples` and the original `sample_rate`; decoding itself does not resample or
+require 48 kHz. `clap::resample_audio(audio, target_rate)` separately resamples
+mono PCM (default: 48 kHz) using a centered Hann-windowed sinc filter with
+anti-alias filtering for downsampling. Duration is rounded up to the next output
+sample, and same-rate input is unchanged. Neither operation requires an external
+codec/resampling library. Empty/unsupported inputs and non-finite samples are rejected;
+decoded output is limited to 1 GiB. Synthetic codec fixtures are not stored in
+the repository. When tests are enabled, the build runs `tests/audio/generate.py`
+with FFmpeg to generate them under `build/tests/audio` before CTest runs.
+The build regenerates missing or outdated fixtures automatically. Configure
+with `-DBUILD_TESTING=OFF` to build without Python or FFmpeg test dependencies.
+
+Inference is CPU-only; fusion CLAP,
 quantization and batching are not supported. The optional Transformers oracle
 suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
 `torch`, `transformers` and `numpy`. Existing dummy interfaces below are unchanged.

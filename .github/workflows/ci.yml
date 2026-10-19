@@ -18,6 +18,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Install FFmpeg for test fixtures
+        shell: bash
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            exit 0
+          fi
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update && sudo apt-get install -y ffmpeg ;;
+            macOS) brew install ffmpeg ;;
+            Windows) choco install ffmpeg --yes --no-progress ;;
+          esac
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
