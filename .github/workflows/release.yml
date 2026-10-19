@@ -58,17 +58,13 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel
 
-      - name: Prepare executable
-        env:
-          BINARY: ${{ matrix.binary }}
-          ASSET: ${{ matrix.asset }}
-        run: |
-          mkdir -p dist
-          cp "$BINARY" "dist/$ASSET"
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BINARY: ${{ matrix.binary }}
           ASSET: ${{ matrix.asset }}
-        run: gh release upload "$RELEASE_TAG" "dist/$ASSET" --clobber
+        run: |
+          mv "$BINARY" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber
