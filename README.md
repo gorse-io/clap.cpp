@@ -29,11 +29,11 @@ Like stable-diffusion.cpp, it is built with `add_subdirectory` and linked via
 its `ggml` CMake target; no system ggml installation is required.
 
 CLI11 is included as a submodule under `thirdparty/CLI11`, pinned to v2.7.2.
-The `clap` target links `CLI11::CLI11` so the command-line entry point can use
-its headers without a system installation.
+The `clap-cli` target (executable name `clap`) links `CLI11::CLI11` so the
+command-line entry point can use its headers without a system installation.
 
 cpp-httplib is included as a submodule under `thirdparty/cpp-httplib`, pinned to
-v0.61.0. The `clap` target links `httplib::httplib` for HTTP server/client support.
+v0.61.0. The `clap-cli` target links `httplib::httplib` for HTTP server/client support.
 nlohmann/json is included as a submodule under `thirdparty/json`, pinned to
 v3.12.0. Request parsing and response serialization use `nlohmann_json::nlohmann_json`.
 
@@ -61,6 +61,11 @@ ctest --test-dir build -C Release --output-on-failure
 
 The C++ organization follows `llama.cpp/src/models`: shared runtime services are
 separate from architecture-specific parameter/tensor loading and encoder code.
+
+`src/CMakeLists.txt` builds one `clap` core library from `CLAP_CORE_SOURCES` and
+`models/*.cpp`. Both executables and the model tests link this same core library;
+there is no separate models library. The `clap-cli` target keeps its executable
+name `clap`, while native model inference uses `clap-model` as before.
 
 | Path | Responsibility |
 | --- | --- |

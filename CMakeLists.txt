@@ -31,55 +31,41 @@ add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
 include(cmake/icu.cmake)
-add_library(clap-models
-    include/clap.h
-    src/model.cpp
-    src/model-loader.cpp
-    src/model-ops.cpp
-    src/audio.cpp
-    src/vocab.cpp
-    src/models/clap.cpp)
-target_compile_features(clap-models PUBLIC cxx_std_17)
-target_include_directories(clap-models
-    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
-    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(clap-models PUBLIC ggml PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
-set_target_properties(clap-models PROPERTIES CXX_EXTENSIONS OFF)
-if(NOT MSVC)
-    target_compile_options(clap-models PRIVATE -Wall -Wextra -Wpedantic)
-endif()
+add_subdirectory(src)
 
 add_executable(clap-model examples/embedding/embedding.cpp)
-target_link_libraries(clap-model PRIVATE clap-models CLI11::CLI11 nlohmann_json::nlohmann_json)
+target_link_libraries(clap-model PRIVATE clap CLI11::CLI11 nlohmann_json::nlohmann_json)
 set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
 
-add_executable(clap src/clap.cpp src/embedding.cpp src/server.cpp)
-target_compile_features(clap PRIVATE cxx_std_17)
-target_link_libraries(clap PRIVATE ggml CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
-set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
+# The CLI target differs from the core library target, while its executable
+# keeps the existing "clap" name and command-line behavior.
+add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp)
+target_compile_features(clap-cli PRIVATE cxx_std_17)
+target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
+set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
 
 if(MSVC)
-    target_compile_options(clap PRIVATE /W4)
+    target_compile_options(clap-cli PRIVATE /W4)
 else()
-    target_compile_options(clap PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(clap-cli PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 include(CTest)
 if(BUILD_TESTING)
     add_executable(clap-model-test tests/models/model-test.cpp)
-    target_link_libraries(clap-model-test PRIVATE clap-models nlohmann_json::nlohmann_json)
+    target_link_libraries(clap-model-test PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME clap_model_unit COMMAND clap-model-test)
     add_executable(ggml-smoke tests/ggml-smoke.cpp)
     target_compile_features(ggml-smoke PRIVATE cxx_std_17)
     target_link_libraries(ggml-smoke PRIVATE ggml)
     add_test(NAME ggml_smoke COMMAND ggml-smoke)
 
-    add_test(NAME clap_smoke COMMAND clap)
+    add_test(NAME clap_smoke COMMAND clap-cli)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME clap_embeddings
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap>")
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)
     option(CLAP_MODEL_PARITY "Run optional Transformers oracle tests (torch/transformers/numpy required)" OFF)
     if(CLAP_MODEL_PARITY)
@@ -93,8 +79,8 @@ if(BUILD_TESTING)
         set_tests_properties(clap_model_cli PROPERTIES DEPENDS clap_model_parity TIMEOUT 60)
     endif()
     add_test(NAME clap_embedding_cli
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap>")
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
 endif()
 
-install(TARGETS clap clap-model RUNTIME DESTINATION bin)
+install(TARGETS clap-cli clap-model RUNTIME DESTINATION bin)
