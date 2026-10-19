@@ -30,6 +30,20 @@ add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
+find_package(ICU REQUIRED COMPONENTS uc i18n)
+add_library(clap-models src/models/clap_model.cpp)
+target_compile_features(clap-models PUBLIC cxx_std_17)
+target_include_directories(clap-models PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(clap-models PUBLIC ggml PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
+set_target_properties(clap-models PROPERTIES CXX_EXTENSIONS OFF)
+if(NOT MSVC)
+    target_compile_options(clap-models PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(clap-model src/models/infer.cpp)
+target_link_libraries(clap-model PRIVATE clap-models CLI11::CLI11 nlohmann_json::nlohmann_json)
+set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
+
 add_executable(clap src/clap.cpp src/embedding.cpp src/server.cpp)
 target_compile_features(clap PRIVATE cxx_std_17)
 target_link_libraries(clap PRIVATE ggml CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
@@ -43,6 +57,9 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(clap-model-test tests/models/model-test.cpp)
+    target_link_libraries(clap-model-test PRIVATE clap-models nlohmann_json::nlohmann_json)
+    add_test(NAME clap_model_unit COMMAND clap-model-test)
     add_executable(ggml-smoke tests/ggml-smoke.cpp)
     target_compile_features(ggml-smoke PRIVATE cxx_std_17)
     target_link_libraries(ggml-smoke PRIVATE ggml)
@@ -55,9 +72,20 @@ if(BUILD_TESTING)
     add_test(NAME clap_embeddings
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap>")
     set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)
+    option(CLAP_MODEL_PARITY "Run optional Transformers oracle tests (torch/transformers/numpy required)" OFF)
+    if(CLAP_MODEL_PARITY)
+        add_test(NAME clap_model_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/parity.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
+        set_tests_properties(clap_model_parity PROPERTIES TIMEOUT 180)
+        add_test(NAME clap_model_cli
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/cli.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
+        set_tests_properties(clap_model_cli PROPERTIES DEPENDS clap_model_parity TIMEOUT 60)
+    endif()
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
 endif()
 
-install(TARGETS clap RUNTIME DESTINATION bin)
+install(TARGETS clap clap-model RUNTIME DESTINATION bin)

@@ -1,12 +1,16 @@
 # clap.cpp
 
-Minimal C++17/CMake project scaffold. Model loading and inference are not implemented yet.
+C++17/ggml implementation of HuggingFace `laion/larger_clap_music`, with native
+text and audio inference through `clap-model`. See [native model documentation](src/models/README.md)
+for conversion, usage, architecture, tests, and limitations. The original `clap`
+embedding command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
 
 - CMake 3.20 or newer
 - A C++17 compiler
-- Python 3 (only when building tests)
+- ICU development headers and libraries (`libicu-dev` on Debian/Ubuntu)
+- Python 3 (only when building tests; conversion/oracle tests additionally need torch, transformers, numpy)
 
 ## Clone
 
