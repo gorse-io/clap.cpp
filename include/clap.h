@@ -28,9 +28,11 @@ Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
                            std::size_t crop_offset = 0);
 
-// Unfused HTSAT + RoBERTa CLAP. Weights are memory-mapped on POSIX platforms.
+// Native CLAP or CLaMP3, selected from GGUF architecture metadata. Weights are
+// memory-mapped on POSIX platforms.
 // Each call embeds one item; methods on the same instance are not thread-safe.
-// Returns unit-normalized projection vectors, as HF get_*_features does.
+// CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
+// pooled projections and accepts precomputed MERT-v1-95M audio features only.
 class Model {
 public:
     explicit Model(const std::string &gguf_path, int threads = 0);

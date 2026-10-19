@@ -1,7 +1,7 @@
 # clap.cpp
 
-C++17/ggml implementation of HuggingFace `laion/larger_clap_music`, with native
-text and audio inference through `clap-model`. The original `clap` embedding
+C++17/ggml implementations of HuggingFace `laion/larger_clap_music` and CLaMP3,
+with native text and audio-feature inference through `clap-model`. The original `clap` embedding
 command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
@@ -79,8 +79,8 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
 | `src/model-ops.*` | Shared CPU ggml matrix operations and normalization |
-| `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend and Unicode byte-level BPE |
-| `src/models/models.h`, `src/models/clap.cpp` | CLAP specialization: hyperparameters, tensor contract, HTSAT/RoBERTa encoders and projections |
+| `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
+| `src/models/models.h`, `src/models/*.cpp` | CLAP and CLaMP3 specializations: hyperparameters, tensor contracts, encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
 | `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion; no Python at inference |
 
@@ -93,11 +93,40 @@ python convert_hf_to_gguf.py checkpoint/ model.gguf
 ./build/clap-model --model model.gguf --audio music.wav
 ```
 
-The native executable returns a normalized 512-dimensional JSON array. Audio
+For CLAP, the native executable returns a normalized 512-dimensional JSON array. Audio
 accepts WAV (including PCM16, PCM24 and float32), MP3 and FLAC, detected by file
 contents rather than extension. Channels are averaged to mono, then automatically
 resampled to 48 kHz for inference. `--crop-offset` is measured in samples of the
 resampled 48 kHz waveform.
+
+### CLaMP3
+
+CLaMP3 conversion accepts its published nested `.pth` checkpoint. Keep the
+XLM-R `config.json` and `tokenizer.json` beside it, or pass an explicit combined
+test/custom config with `--clamp3-config` and tokenizer with `--tokenizer`:
+
+```sh
+python convert_hf_to_gguf.py \
+  checkpoint/weights_clamp3_saas_h_size_768_t_model_FacebookAI_xlm-roberta-base_t_length_128_a_size_768_a_layers_12_a_length_128_s_size_768_s_layers_12_p_size_64_p_length_512.pth \
+  clamp3-f16.gguf --dtype f16
+./build/clap-model --model clamp3-f16.gguf --text 'A piano sonata.'
+./build/clap-model --model clamp3-f16.gguf --audio-features mert.npy
+```
+
+`mert.npy` must be a C-contiguous little-endian float32 NumPy array shaped
+`[frames, 768]` or `[1, frames, 768]`, produced by the official MERT-v1-95M
+preprocessing. CLaMP3 does not accept raw waveform input: this project does not
+embed a MERT extractor, and `--audio` reports that limitation. The runtime adds
+the official leading/trailing zero vectors, uses overlapping final 128-frame
+chunks, masked mean pooling, remainder-weighted chunk aggregation, and a linear
+projection. Unlike CLAP output, CLaMP3 returns a **768-dimensional**, non-L2-normalized
+projection. Text uses the XLM-R Unigram vocabulary and its serialized Precompiled
+normalizer, with the tokenizer embedded in GGUF and no runtime network access.
+Text longer than a chunk is processed in full rather than truncated at 128/512 tokens.
+
+The converter safely memory-maps the checkpoint, reads a nested `model` state
+dictionary, omits the unsupported symbolic encoder, and supports `--dtype f32`
+and `--dtype f16`. Symbolic ABC/MTF/MusicXML/image input is not supported.
 
 The public `clap::decode_audio(path)` API returns `clap::Audio` with mono float
 `samples` and the original `sample_rate`; decoding itself does not resample or
@@ -112,10 +141,27 @@ with FFmpeg to generate them under `build/tests/audio` before CTest runs.
 The build regenerates missing or outdated fixtures automatically. Configure
 with `-DBUILD_TESTING=OFF` to build without Python or FFmpeg test dependencies.
 
-Inference is CPU-only; fusion CLAP,
-quantization and batching are not supported. The optional Transformers oracle
+Inference is CPU-only; fusion CLAP, CLaMP3 symbolic input,
+quantization and batching are not supported. The optional CLAP Transformers oracle
 suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
-`torch`, `transformers` and `numpy`. Existing dummy interfaces below are unchanged.
+`torch`, `transformers` and `numpy`. The deterministic synthetic CLaMP3 oracle
+suite uses `-DCLAMP3_MODEL_PARITY=ON`; it checks short and overlapping-long text
+and MERT feature sequences in F32/F16 and is not evidence about a published
+checkpoint. To compare an actual published checkpoint against Hugging Face
+XLM-R/BERT, place exactly one official `.pth` and the XLM-R config/tokenizer in
+`checkpoint/`, enable `CLAMP3_MODEL_PARITY`, then run:
+
+```sh
+python tests/models/clamp3_checkpoint_parity.py build checkpoint/ build/published-clamp3 --dtype f32
+# Reuse an existing conversion instead of writing a second GGUF:
+python tests/models/clamp3_checkpoint_parity.py build checkpoint/ build/published-clamp3-f16 \
+  --dtype f16 --gguf clamp3-f16.gguf
+```
+
+For raw music files, first run `preprocessing/audio/extract_mert.py` in the
+official `sanderwood/clamp3` checkout using `--model_path m-a-p/MERT-v1-95M`
+and `--mean_features`; pass its resulting `.npy` to `--audio-features`.
+Existing dummy interfaces below are unchanged.
 
 ## Embedding command
 
