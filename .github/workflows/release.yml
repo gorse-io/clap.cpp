@@ -66,9 +66,10 @@ jobs:
           non-cuda-sub-packages: '["libcublas-dev"]'
       - name: Install Vulkan build dependencies
         if: matrix.vulkan
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvulkan-dev glslc spirv-headers
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libvulkan-dev glslc spirv-headers
+          version: vulkan-${{ matrix.os }}-${{ runner.arch }}-v1
       - name: Configure
         run: >-
           cmake -S . -B build
