@@ -135,7 +135,28 @@ void gelu(Matrix &x) {
 }
 float scalar(const ggml_tensor *t, size_t i) {
     if (t->type == GGML_TYPE_F32) return static_cast<const float *>(t->data)[i];
-    return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
+    if (t->type == GGML_TYPE_F16) return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
+    check(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q6_K,
+          "unsupported scalar tensor type");
+    // Decode only the containing block (embeddings, relative biases, or norms),
+    // never expand an entire mapped weight tensor/model.
+    float block[256];
+    const size_t width = static_cast<size_t>(ggml_blck_size(t->type));
+    const auto *data = static_cast<const uint8_t *>(t->data) + (i / width) * ggml_type_size(t->type);
+    ggml_get_type_traits(t->type)->to_float(data, block, width);
+    return block[i % width];
+}
+void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
+    check(row >= 0 && row < ggml_nrows(t), "embedding row out of range");
+    const auto *data = static_cast<const uint8_t *>(t->data) + row * t->nb[1];
+    if (t->type == GGML_TYPE_F32) std::copy_n(reinterpret_cast<const float *>(data), t->ne[0], output);
+    else if (t->type == GGML_TYPE_F16)
+        ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data), output, t->ne[0]);
+    else {
+        const auto *traits = ggml_get_type_traits(t->type);
+        check(traits && traits->to_float, "unsupported embedding tensor type");
+        traits->to_float(data, output, t->ne[0]);
+    }
 }
 TensorOps::TensorOps(const ModelLoader &source, int threads) : loader(source),
     n_threads(threads > 0 ? threads : static_cast<int>(std::max(1u, std::min(8u, std::thread::hardware_concurrency())))) {
@@ -169,7 +190,10 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
         auto *output = ggml_mul_mat(ctx.get(), w, input);
         auto *graph = ggml_new_graph_custom(ctx.get(), 32, false);
         ggml_build_forward_expand(graph, output);
-        check(ggml_graph_compute_with_ctx(ctx.get(), graph, n_threads) == GGML_STATUS_SUCCESS, "ggml matrix multiply failed");
+        auto plan = ggml_graph_plan(graph, n_threads, nullptr);
+        std::vector<uint8_t> work(plan.work_size);
+        plan.work_data = work.data();
+        check(ggml_graph_compute(graph, &plan) == GGML_STATUS_SUCCESS, "ggml matrix multiply failed");
         std::memcpy(result.data.data(), output->data, result.data.size() * sizeof(float));
     }
     if (bias) {

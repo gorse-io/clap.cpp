@@ -147,6 +147,107 @@ contents rather than extension. Channels are averaged to mono, then automaticall
 resampled to 48 kHz for inference. `--crop-offset` is measured in samples of the
 resampled 48 kHz waveform.
 
+### Q8_0 and Q4_K_M quantization (CLAP and CLaMP3)
+
+Builds include the native `clap quantize` subcommand. First convert the checkpoint
+with the existing Python converter (F32 recommended to avoid double rounding),
+then quantize locally with upstream ggml's canonical `ggml_quantize_chunk`:
+
+```sh
+python convert_hf_to_gguf.py checkpoint/ model-f32.gguf --dtype f32
+./build/clap quantize model-f32.gguf model-q8_0.gguf  # default remains Q8_0
+./build/clap quantize --type Q4_K_M model-f32.gguf model-q4_k_m.gguf
+# --type Q8_0 is also accepted; preset names are case-insensitive.
+./build/clap-model --model model-q8_0.gguf --text 'A jazz quartet.'
+./build/clap-model --model model-q8_0.gguf --audio music.wav
+# The same quantizer accepts CLaMP3 F32/F16 GGUF; use --audio-features for CLaMP3.
+```
+
+Q8_0 is **mixed precision**: tensors with ggml rank greater than one and a
+contiguous row width (`ne[0]`, the last PyTorch dimension) divisible by 32 are
+quantized. All other tensors retain their original F32/F16 bytes, including
+biases, normalization vectors and CLAP's 4x4 patch convolution. Embeddings and
+eligible relative-position tables are supported. Q8_0 stores 32 signed 8-bit
+values and one FP16 scale per block (34 bytes), not one raw byte per weight.
+
+**Q4_K_M** is a mixed **model preset**, not a tensor type. Eligible tensors
+have rank greater than one and contiguous row width divisible by **256**.
+The deterministic encoder policy `q4_k_m-v1-all-v-ffn-down-projection-q6_k` is:
+
+- Use canonical **Q6_K** for every eligible attention value matrix
+  (`*.attention.self.value.weight`) and FFN down/output matrix
+  (`*.output.dense.weight`, excluding `*.attention.output.dense.weight`).
+- Also use Q6_K for CLAP's `text_proj.linear{1,2}.weight` and
+  `audio_proj.linear{1,2}.weight`, and CLaMP3's `text_proj.weight` and
+  `audio_proj.weight`.
+- Use canonical **Q4_K** for all other eligible matrices, including attention
+  query/key/output, FFN intermediate/up, embeddings and patch merging.
+- Preserve original F32/F16 bytes for vectors and all incompatible row widths;
+  CLAP's 4x4 convolution is unchanged. There is **no Q8 fallback** for K-ineligible
+  tensors. Models without any K-compatible matrices fail rather than silently
+  producing a Q8 model. Actual tensor mixtures depend on model dimensions.
+
+This adapts the sensitive value/FFN-down roles in the official
+[llama.cpp quantization policy](https://github.com/ggml-org/llama.cpp/blob/master/src/llama-quant.cpp),
+not an exact implementation of its decoder policy. Upstream's `use_more_bits`
+selects the first/last eighth and every third middle layer for Q6_K, with
+architecture-specific exceptions. Here **all** value/down layers and final
+embedding projections are protected, without decoder layer numbering, MoE/GQA
+rules or an importance matrix. Q4_K uses 144 bytes per 256 weights (4.5 bits/weight)
+and Q6_K uses 210 bytes (6.5625 bits/weight); neither is a raw four/six-bit array.
+GGUF records model-file type **15** (`LLAMA_FTYPE_MOSTLY_Q4_K_M` in
+[llama.h](https://github.com/ggml-org/llama.cpp/blob/master/include/llama.h)) and
+the policy string above in `clap.quantization_policy`. The pinned standalone
+ggml enum has no `GGML_FTYPE_MOSTLY_Q4_K_M`; its `MOSTLY_Q4_K = 12` is **not**
+the interoperable mixed-model identifier.
+
+The loader keeps Q8/K weights mapped (Windows uses its existing file buffer);
+linear layers use native ggml quantized matrix multiplication. Scalar reads
+decode only the containing block; embedding hotpaths decode one row at a time,
+not a K block per channel. There is no whole-model dequantization.
+Graph execution allocates the actual planned scratch size, including activation
+packing for large F16/Q8/K matrix operations. Quantization streams row chunks,
+preserves architecture/tokenizer metadata, and updates GGUF file-type and
+quantization-version metadata. `general.alignment` is intentionally normalized
+to the writer's 32-byte alignment, including for inputs using other alignments.
+It requires no new Python/runtime dependency.
+Only F32/F16 input is accepted: requantization is rejected. The output must not
+exist (including dangling symlinks). Temporary files are created exclusively
+beside the destination and published with an atomic, no-clobber hard link, so a
+concurrently created destination is preserved. The destination filesystem must
+support hard links; otherwise conversion fails safely without a rename fallback.
+Temporary files are removed on ordinary completion or error; abrupt process
+termination may leave one behind. Publication does not promise crash durability.
+
+`clap_quantize` and `clap_quantize_k` (ordinary CTest) check canonical bytes
+against ggml reference routines, mixed precision, metadata, scalar/row reads,
+native Q4_K/Q6_K matmul, multi-chunk conversion, >2 MiB graph scratch and invalid
+inputs. Optional CLAP/CLaMP3 Transformers suites exercise Q8 and Q4_K_M models
+from both F32 and F16 sources, using 256-wide fixtures that really contain **both**
+K types. Q8 uses an independent Python decoder; K storage values come from a
+test-only C++ ggml traits exporter, separate from production scalar/row reads.
+The oracle also approximates native Q8_0/Q8_K activation packing; CLAP normalized
+embedding absolute tolerance is 0.01 and CLaMP3 raw-projection tolerance is 0.002.
+These storage-rounded checks isolate inference correctness from weight error;
+they are not quantization-quality benchmarks for published models.
+
+A local `laion/larger_clap_music` F32 smoke converted 180 matrices: the GGUF shrank
+from **777,060,800** to **128,926,752 bytes** (about 6.03x smaller). Against the
+original Transformers checkpoint, one text prompt gave cosine **0.995159**
+(max absolute error **0.013608**); one second of 440 Hz PCM audio gave cosine
+**0.989932** (max error **0.022304**). Both native outputs were finite, normalized
+512-vectors; the F32 baseline max error was below 6e-8. This measures only a
+single prompt/synthetic tone, **not retrieval accuracy or general audio quality**.
+Reproduce locally (torch/transformers/numpy required; no network access):
+
+```sh
+python tests/models/quantized_checkpoint_smoke.py build checkpoint/ model-f32.gguf \
+  model-q4_k_m.gguf build/q4-full-smoke.json
+```
+
+No full published CLaMP3 Q4 quality evaluation is claimed; its K inference tests
+use synthetic XLM-R/BERT text and MERT-feature fixtures.
+
 ### CLaMP3
 
 CLaMP3 conversion accepts its published nested `.pth` checkpoint. Keep the
@@ -189,12 +290,13 @@ with FFmpeg to generate them under `build/tests/audio` before CTest runs.
 The build regenerates missing or outdated fixtures automatically. Configure
 with `-DBUILD_TESTING=OFF` to build without Python or FFmpeg test dependencies.
 
-Inference defaults to CPU, with optional Vulkan linear layers; fusion CLAP, CLaMP3 symbolic input,
-quantization and batching are not supported. The optional CLAP Transformers oracle
+Inference uses CPU or optional Vulkan linear layers; fusion CLAP, CLaMP3 symbolic
+input and batching are not supported. F32, F16, mixed Q8_0 and mixed Q4_K_M GGUF
+inference are supported. The optional CLAP Transformers oracle
 suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
 `torch`, `transformers` and `numpy`. The deterministic synthetic CLaMP3 oracle
 suite uses `-DCLAMP3_MODEL_PARITY=ON`; it checks short and overlapping-long text
-and MERT feature sequences in F32/F16 and is not evidence about a published
+and MERT feature sequences in F32/F16/Q8_0/Q4_K_M and is not evidence about a published
 checkpoint. To compare an actual published checkpoint against Hugging Face
 XLM-R/BERT, place exactly one official `.pth` and the XLM-R config/tokenizer in
 `checkpoint/`, enable `CLAMP3_MODEL_PARITY`, then run:

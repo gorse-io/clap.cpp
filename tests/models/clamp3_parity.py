@@ -20,6 +20,7 @@ root = Path(__file__).resolve().parents[2]
 if out.exists():
     shutil.rmtree(out)
 out.mkdir(parents=True)
+torch.set_num_threads(2)
 torch.manual_seed(314159)
 
 vocab = [
@@ -63,16 +64,16 @@ tok.post_processor = processors.TemplateProcessing(
     single='<s> $A </s>', special_tokens=[('<s>', 0), ('</s>', 2)])
 tok.save(str(out / 'tokenizer.json'))
 
-hidden, projection, chunk = 8, 6, 128
+hidden, projection, chunk = 256, 6, 128
 text_config = XLMRobertaConfig(
     vocab_size=len(vocab), hidden_size=hidden, num_hidden_layers=2,
-    num_attention_heads=2, intermediate_size=19, max_position_embeddings=132,
+    num_attention_heads=2, intermediate_size=512, max_position_embeddings=132,
     type_vocab_size=1, pad_token_id=1, bos_token_id=0, eos_token_id=2,
     hidden_act='gelu', layer_norm_eps=1e-5,
     hidden_dropout_prob=0.0, attention_probs_dropout_prob=0.0)
 audio_config = BertConfig(
     vocab_size=1, hidden_size=hidden, num_hidden_layers=2,
-    num_attention_heads=2, intermediate_size=21, max_position_embeddings=chunk,
+    num_attention_heads=2, intermediate_size=512, max_position_embeddings=chunk,
     type_vocab_size=2, pad_token_id=0, hidden_act='gelu', layer_norm_eps=1e-12,
     hidden_dropout_prob=0.0, attention_probs_dropout_prob=0.0)
 
@@ -182,10 +183,32 @@ subprocess.run([sys.executable, str(converter), str(out / 'tiny-clamp3.pth'), st
 rounded = json.loads(json.dumps(fixture)); rounded['embedding_tolerance'] = 2e-3
 (out / 'fixture-f16.json').write_text(json.dumps(rounded))
 
+# Exercise the shared Q8 loader, embedding reads and native text/audio matmul.
+from q8_reference import load_storage
+sys.path.insert(0, str(root))
+from convert_hf_to_gguf import clamp3_tensor_name
+for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
+                       ('model.gguf', 'q4-k-m'), ('model-f16.gguf', 'f16-q4-k-m')]:
+    target = out / f'model-{suffix}.gguf'
+    subprocess.run([str(build / 'clap'), 'quantize', '--type',
+                    'Q4_K_M' if 'q4' in suffix else 'Q8_0', str(out / source), str(target)], check=True)
+    count = load_storage(model, target, clamp3_tensor_name, build / 'clap-q8-test' if 'q4' in suffix else None)
+    quantized_fixture = json.loads(json.dumps(fixture))
+    quantized_fixture['embedding_tolerance'] = 2e-3
+    for case in quantized_fixture['text_cases']:
+        case['expected'] = text_oracle(case['ids']).tolist()
+    for case in quantized_fixture['audio_cases']:
+        features = torch.tensor(case['features']).reshape(case['frames'], hidden)
+        case['expected'] = audio_oracle(features).tolist()
+    fixture_path = out / f'fixture-{suffix}.json'
+    fixture_path.write_text(json.dumps(quantized_fixture))
+    subprocess.run([str(build / 'clamp3-model-test'), str(target), str(fixture_path)], check=True)
+    print(f'CLaMP3 {suffix}: {count} quantized parameters, text/audio storage-rounded parity passed')
+
 # Corrupt the architecture string in-place without altering GGUF offsets.
 bad = bytearray((out / 'model.gguf').read_bytes())
 at = bad.find(b'clamp3')
 assert at >= 0
 bad[at:at + 6] = b'broken'
 (out / 'bad-architecture.gguf').write_bytes(bad)
-print('Synthetic HF CLaMP3 F32/F16 fixture generated')
+print('Synthetic HF CLaMP3 F32/F16/Q8_0/Q4_K_M fixtures and quantized native parity passed')

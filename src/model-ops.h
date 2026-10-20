@@ -3,6 +3,7 @@
 #include "model-loader.h"
 #include "impl.h"
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,6 +20,8 @@ struct Matrix {
 void add(Matrix &a, const Matrix &b);
 void gelu(Matrix &x);
 float scalar(const ggml_tensor *tensor, size_t index);
+// Decode a contiguous embedding row once, not once per channel.
+void tensor_row(const ggml_tensor *tensor, int64_t row, float *output);
 
 // Reusable ggml execution primitives (optional Vulkan linear, CPU fallback).
 // Architectural attention and projection

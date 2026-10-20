@@ -165,13 +165,17 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
                *type = loader.weight("text.embeddings.token_type_embeddings.weight");
     Matrix x(static_cast<int>(ids.size()), dim);
     std::vector<int> mask(ids.size());
+    std::vector<float> position_row(dim), type_row(dim);
+    tensor_row(type, 0, type_row.data());
     int counter = pad;
     for (int i = 0; i < x.rows; ++i) {
         check(ids[i] >= 0 && ids[i] < vocab, "token ID out of vocabulary");
         mask[i] = ids[i] != pad;
         const int pos = mask[i] ? ++counter : pad;
         check(pos < t.at("max_position_embeddings").get<int>(), "text positions overflow");
-        for (int c = 0; c < dim; ++c) x[i][c] = scalar(word, static_cast<size_t>(ids[i]) * dim + c) + scalar(position, static_cast<size_t>(pos) * dim + c) + scalar(type, c);
+        tensor_row(word, ids[i], x[i]);
+        tensor_row(position, pos, position_row.data());
+        for (int c = 0; c < dim; ++c) x[i][c] = x[i][c] + position_row[c] + type_row[c];
     }
     check(std::any_of(mask.begin(), mask.end(), [](int x) { return x; }), "text contains only padding");
     const float eps = t.at("layer_norm_eps");

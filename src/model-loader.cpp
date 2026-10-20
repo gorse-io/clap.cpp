@@ -65,7 +65,9 @@ void ModelLoader::load(const std::string &path) {
     check(data_offset <= mapping_size, "truncated GGUF data");
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         auto *w = weight(gguf_get_tensor_name(gguf, i));
-        check(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16, "only F32/F16 weights supported");
+        check(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_Q8_0 ||
+              w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K,
+              "only F32/F16/Q8_0/Q4_K/Q6_K weights supported");
         const size_t offset = gguf_get_tensor_offset(gguf, i);
         check(offset <= mapping_size - data_offset && ggml_nbytes(w) <= mapping_size - data_offset - offset, "truncated tensor data");
         w->data = static_cast<char *>(mapping) + data_offset + offset;

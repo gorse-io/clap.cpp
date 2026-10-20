@@ -46,7 +46,7 @@ set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
 
 # The CLI target differs from the core library target, while its executable
 # keeps the existing "clap" name and command-line behavior.
-add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp)
+add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
 target_compile_features(clap-cli PRIVATE cxx_std_17)
 target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
 set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
@@ -81,6 +81,36 @@ if(BUILD_TESTING)
     target_link_libraries(clap-audio-test PRIVATE clap)
     add_dependencies(clap-audio-test clap-audio-fixtures)
     add_test(NAME clap_audio COMMAND clap-audio-test "${CLAP_AUDIO_FIXTURE_DIR}")
+    add_executable(clap-quantize-output-test tests/quantize-output-test.cpp)
+    target_compile_features(clap-quantize-output-test PRIVATE cxx_std_17)
+    target_include_directories(clap-quantize-output-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_test(NAME clap_quantize_publication
+        COMMAND clap-quantize-output-test "${CMAKE_CURRENT_BINARY_DIR}/quantize-publication-fixture")
+    add_executable(clap-q8-test tests/q8-test.cpp)
+    target_include_directories(clap-q8-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(clap-q8-test PRIVATE clap)
+    add_test(NAME clap_quantize_cli
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize_cli.py" "$<TARGET_FILE:clap-cli>")
+    set_tests_properties(clap_quantize_cli PROPERTIES TIMEOUT 30)
+    add_test(NAME clap_quantize
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
+                "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>")
+    set_tests_properties(clap_quantize PROPERTIES TIMEOUT 60)
+    foreach(regression alignment symlink k)
+        add_test(NAME clap_quantize_${regression}
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
+                    "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>" "${regression}")
+        set_tests_properties(clap_quantize_${regression} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    endforeach()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(clap-quantize-race SHARED tests/quantize-race.cpp)
+        target_link_libraries(clap-quantize-race PRIVATE ${CMAKE_DL_LIBS})
+        add_test(NAME clap_quantize_concurrent
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
+                    "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>" concurrent
+                    "$<TARGET_FILE:clap-quantize-race>")
+        set_tests_properties(clap_quantize_concurrent PROPERTIES TIMEOUT 60)
+    endif()
     add_executable(clap-model-test tests/models/model-test.cpp)
     target_link_libraries(clap-model-test PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME clap_model_unit COMMAND clap-model-test)
@@ -123,7 +153,7 @@ if(BUILD_TESTING)
         add_test(NAME clap_model_parity
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/parity.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
-        set_tests_properties(clap_model_parity PROPERTIES TIMEOUT 180)
+        set_tests_properties(clap_model_parity PROPERTIES TIMEOUT 600)
         add_test(NAME clap_model_cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/cli.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
@@ -143,7 +173,7 @@ if(BUILD_TESTING)
         add_test(NAME clamp3_model_parity
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_parity.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
-        set_tests_properties(clamp3_model_parity PROPERTIES TIMEOUT 300)
+        set_tests_properties(clamp3_model_parity PROPERTIES TIMEOUT 600)
         add_test(NAME clamp3_model_native
             COMMAND clamp3-model-test
                     "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/model.gguf"

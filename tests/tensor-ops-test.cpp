@@ -16,26 +16,32 @@ static void require(bool condition, const char *message) {
 }
 
 static void run(const std::filesystem::path &path, bool strict, bool cpu) {
-    constexpr int in = 64;
+    const ggml_type types[] = {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_Q8_0,
+                               GGML_TYPE_Q4_K, GGML_TYPE_Q6_K};
     const int output_sizes[] = {31, 32, 33, 37, 41, 64, 65};
     const int batch_sizes[] = {1, 9, 1, 9, 7, 8, 17, 33, 65};
     auto *ctx = ggml_init({1024 * 1024, nullptr, false});
     auto *file = gguf_init_empty();
     require(ctx && file, "fixture allocation failed");
-    for (int out : output_sizes) for (auto type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+    for (int out : output_sizes) for (auto type : types) {
+        const bool quantized = ggml_is_quantized(type);
+        const int in = quantized ? 256 : 64;
         const std::string name = std::string(ggml_type_name(type)) + "." + std::to_string(out);
         auto *w = ggml_new_tensor_2d(ctx, type, in, out);
-        auto *b = ggml_new_tensor_1d(ctx, type, out);
+        auto *b = ggml_new_tensor_1d(ctx, quantized ? GGML_TYPE_F32 : type, out);
         ggml_set_name(w, (name + ".weight").c_str());
         ggml_set_name(b, (name + ".bias").c_str());
+        std::vector<float> values(in * out);
         for (int j = 0; j < in * out; ++j) {
             const float v = std::sin(float(j) * 0.17f) * 0.125f;
+            values[j] = v;
             if (type == GGML_TYPE_F32) static_cast<float *>(w->data)[j] = v;
-            else static_cast<ggml_fp16_t *>(w->data)[j] = ggml_fp32_to_fp16(v);
+            else if (type == GGML_TYPE_F16) static_cast<ggml_fp16_t *>(w->data)[j] = ggml_fp32_to_fp16(v);
         }
+        if (quantized) ggml_get_type_traits(type)->from_float_ref(values.data(), w->data, values.size());
         for (int j = 0; j < out; ++j) {
             const float v = float(j - 15) * 0.03125f;
-            if (type == GGML_TYPE_F32) static_cast<float *>(b->data)[j] = v;
+            if (b->type == GGML_TYPE_F32) static_cast<float *>(b->data)[j] = v;
             else static_cast<ggml_fp16_t *>(b->data)[j] = ggml_fp32_to_fp16(v);
         }
         gguf_add_tensor(file, w);
@@ -50,13 +56,18 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
     TensorOps ops(loader, 2);
     size_t expected_uploads = 0;
     bool parity = true;
-    for (int out : output_sizes) for (const std::string type : {"f32", "f16"}) {
-        const std::string name = type + "." + std::to_string(out);
+    for (int out : output_sizes) for (auto type : types) {
+        const bool quantized = ggml_is_quantized(type);
+        const int in = quantized ? 256 : 64;
+        const std::string name = std::string(ggml_type_name(type)) + "." + std::to_string(out);
         int call = 0;
         for (int rows : batch_sizes) {
             Matrix x(rows, in);
             for (size_t i = 0; i < x.data.size(); ++i)
-                x.data[i] = std::cos(float(i) * 0.13f + float(call)) * 0.5f;
+                // Exactly representable constant rows isolate weight decoding and
+                // tile padding from CPU activation-packing approximation.
+                x.data[i] = quantized ? (int(i / in) % 3 - 1) * 0.25f :
+                    std::cos(float(i) * 0.13f + float(call)) * 0.5f;
             const bool bias = call % 2 == 0;
             const auto result = ops.linear(x, name, bias);
             require(result.rows == x.rows && result.cols == out, "linear returned padded dimensions");
@@ -88,7 +99,7 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
         }
     }
     require(parity, "linear disagrees with scalar oracle");
-    std::cout << "F32/F16 scalar parity, bias/no-bias, repeated calls: PASS ("
+    std::cout << "F32/F16/Q8_0/Q4_K/Q6_K scalar parity, bias/no-bias, repeated calls: PASS ("
               << (ops.last_linear_used_vulkan() ? "Vulkan" : "CPU") << ")\n";
 }
 
