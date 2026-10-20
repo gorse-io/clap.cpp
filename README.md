@@ -80,9 +80,9 @@ The native model's linear layers use the first ggml Vulkan device, with weights
 cached on that device. Other operations remain on CPU. Missing devices or
 unsupported operations use CPU; set `CLAP_VULKAN=0` to force CPU execution.
 To require actual Vulkan execution in the tests rather than accept fallback,
-configure with `-DCLAP_VULKAN_TEST_REQUIRE_DEVICE=ON` as well. Linux CI exercises
-this path with Mesa's software Vulkan driver, including F32/F16 numerical parity,
-weight reuse, explicit CPU selection, and missing-driver fallback.
+configure with `-DCLAP_VULKAN_TEST_REQUIRE_DEVICE=ON` as well. Local validation used
+Mesa's software Vulkan driver to check F32/F16 numerical parity, weight reuse,
+explicit CPU selection, and missing-driver fallback.
 
 Published releases additionally build `clap-linux-amd64-vulkan` and
 `clap-linux-arm64-vulkan` on Ubuntu 24.04. They require the system Vulkan loader
