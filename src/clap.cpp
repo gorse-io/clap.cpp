@@ -1,4 +1,5 @@
 #include "embedding.h"
+#include "quantize.h"
 #include "server.h"
 
 #include <CLI/CLI.hpp>
@@ -30,7 +31,21 @@ int main(int argc, char **argv) {
     embedding->add_option("--embd-output-format", format, "Output format")
         ->check(CLI::IsMember({"raw", "array", "json", "json+"}))->capture_default_str();
 
+    std::string quantize_input;
+    std::string quantize_output;
+    std::string quantize_type = "Q8_0";
+    auto *quantize = app.add_subcommand("quantize", "Convert F32/F16 GGUF to Q8_0 or mixed Q4_K_M");
+    quantize->add_option("--type", quantize_type, "Quantization preset")
+        ->check(CLI::IsMember({"Q8_0", "Q4_K_M"}, CLI::ignore_case))
+        ->capture_default_str();
+    quantize->add_option("INPUT.gguf", quantize_input, "CLAP/CLaMP3 input model")->required();
+    quantize->add_option("OUTPUT.gguf", quantize_output, "Output model (must not exist)")->required();
+
     CLI11_PARSE(app, argc, argv);
+
+    if (*quantize) {
+        return run_quantize(quantize_input, quantize_output, quantize_type);
+    }
 
     if (*embedding) {
         if (separator.empty()) {
