@@ -37,7 +37,6 @@ jobs:
             asset: clap-linux-amd64-cuda12.9
             binary: build/clap
             cmake_args: -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
-            cuda: true
           - os: ubuntu-24.04
             asset: clap-linux-amd64-vulkan
             binary: build/clap
@@ -55,7 +54,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install CUDA 12.9 build dependencies
-        if: matrix.cuda
+        if: contains(matrix.asset, '-cuda')
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: '12.9.2'
@@ -83,7 +82,7 @@ jobs:
           -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF
           ${{ matrix.cmake_args }}
       - name: Build
-        run: cmake --build build --config Release --target clap-cli --parallel ${{ matrix.cuda && '1' || '' }}
+        run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
 
       - name: Upload release asset
         env:
