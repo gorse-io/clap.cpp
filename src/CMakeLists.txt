@@ -23,6 +23,10 @@ target_include_directories(clap
 target_include_directories(clap SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/dr_libs")
 target_link_libraries(clap PUBLIC ggml
     PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
+if(GGML_VULKAN)
+    target_link_libraries(clap PRIVATE ggml-vulkan)
+    target_compile_definitions(clap PRIVATE CLAP_USE_VULKAN)
+endif()
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
 if(NOT MSVC)
     target_compile_options(clap PRIVATE -Wall -Wextra -Wpedantic)
