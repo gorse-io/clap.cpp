@@ -58,14 +58,12 @@ jobs:
           submodules: recursive
       - name: Install CUDA 12.9 build dependencies
         if: matrix.cuda
-        run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/cuda-keyring.deb" \
-            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cuda-nvcc-12-9 libcublas-dev-12-9
-          echo "/usr/local/cuda-12.9/bin" >> "$GITHUB_PATH"
-          echo "CUDACXX=/usr/local/cuda-12.9/bin/nvcc" >> "$GITHUB_ENV"
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '12.9.2'
+          method: network
+          sub-packages: '["nvcc"]'
+          non-cuda-sub-packages: '["libcublas-dev"]'
       - name: Install Vulkan build dependencies
         if: matrix.vulkan
         run: |
