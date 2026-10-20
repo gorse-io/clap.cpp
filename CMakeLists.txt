@@ -84,6 +84,25 @@ if(BUILD_TESTING)
     add_executable(clap-model-test tests/models/model-test.cpp)
     target_link_libraries(clap-model-test PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME clap_model_unit COMMAND clap-model-test)
+    add_executable(tensor-ops-test tests/tensor-ops-test.cpp)
+    target_include_directories(tensor-ops-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(tensor-ops-test PRIVATE clap)
+    add_test(NAME clap_tensor_ops
+        COMMAND tensor-ops-test "${CMAKE_CURRENT_BINARY_DIR}/tensor-ops-auto.gguf")
+    add_test(NAME clap_tensor_ops_cpu
+        COMMAND tensor-ops-test "${CMAKE_CURRENT_BINARY_DIR}/tensor-ops-cpu.gguf" --require-cpu)
+    set_tests_properties(clap_tensor_ops_cpu PROPERTIES ENVIRONMENT "CLAP_VULKAN=0")
+    if(GGML_VULKAN)
+        add_test(NAME clap_tensor_ops_no_device
+            COMMAND tensor-ops-test "${CMAKE_CURRENT_BINARY_DIR}/tensor-ops-no-device.gguf" --require-cpu)
+        set_tests_properties(clap_tensor_ops_no_device PROPERTIES ENVIRONMENT
+            "VK_DRIVER_FILES=${CMAKE_CURRENT_BINARY_DIR}/missing-vulkan-icd.json;VK_ICD_FILENAMES=${CMAKE_CURRENT_BINARY_DIR}/missing-vulkan-icd.json")
+    endif()
+    option(CLAP_VULKAN_TEST_REQUIRE_DEVICE "Require actual Vulkan execution in tensor tests" OFF)
+    if(CLAP_VULKAN_TEST_REQUIRE_DEVICE)
+        add_test(NAME clap_tensor_ops_vulkan
+            COMMAND tensor-ops-test "${CMAKE_CURRENT_BINARY_DIR}/tensor-ops-vulkan.gguf" --require-vulkan)
+    endif()
     add_executable(ggml-smoke tests/ggml-smoke.cpp)
     target_compile_features(ggml-smoke PRIVATE cxx_std_17)
     target_link_libraries(ggml-smoke PRIVATE ggml)

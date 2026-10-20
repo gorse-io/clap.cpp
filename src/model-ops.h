@@ -3,6 +3,7 @@
 #include "model-loader.h"
 #include "impl.h"
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,8 @@ void add(Matrix &a, const Matrix &b);
 void gelu(Matrix &x);
 float scalar(const ggml_tensor *tensor, size_t index);
 
-// Reusable CPU ggml execution primitives. Architectural attention and projection
+// Reusable ggml execution primitives (optional Vulkan linear, CPU fallback).
+// Architectural attention and projection
 // composition belongs to each implementation under src/models, not this layer.
 class TensorOps {
 public:
@@ -27,8 +29,13 @@ public:
     Matrix linear(const Matrix &x, const std::string &name, bool bias = true) const;
     Matrix norm(const Matrix &x, const std::string &name, float epsilon) const;
     int threads() const { return n_threads; }
+    // Diagnostics report successful execution, not merely device availability.
+    bool last_linear_used_vulkan() const;
+    size_t vulkan_weight_uploads() const;
 private:
     const ModelLoader &loader;
     int n_threads;
+    struct BackendState;
+    std::shared_ptr<BackendState> backend;
 };
 } // namespace clap::detail

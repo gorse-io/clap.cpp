@@ -10,10 +10,19 @@ permissions:
 
 jobs:
   build:
+    name: ${{ matrix.os }} / ${{ matrix.vulkan && 'Vulkan' || 'default' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
+          - os: macos-latest
+          - os: windows-latest
+          - os: ubuntu-24.04
+            vulkan: true
+          - os: ubuntu-24.04-arm
+            vulkan: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +30,21 @@ jobs:
           submodules: recursive
       - name: Install FFmpeg for test fixtures
         uses: AnimMouse/setup-ffmpeg@v1
+      - name: Install Vulkan build and test dependencies
+        if: matrix.vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev glslc spirv-headers mesa-vulkan-drivers
+          # ggml excludes software devices unless explicitly selected.
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test -f "${icds[0]}"
+          echo "VK_DRIVER_FILES=${icds[0]}" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=${icds[0]}" >> "$GITHUB_ENV"
+          echo "GGML_VK_VISIBLE_DEVICES=0" >> "$GITHUB_ENV"
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: >-
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          ${{ matrix.vulkan && '-DGGML_VULKAN=ON -DCLAP_VULKAN_TEST_REQUIRE_DEVICE=ON' || '' }}
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test

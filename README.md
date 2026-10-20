@@ -63,6 +63,34 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+### Vulkan
+
+Enable ggml's native Vulkan backend (no custom shaders or matrix kernels):
+
+```sh
+# Debian/Ubuntu build dependencies:
+sudo apt-get install libvulkan-dev glslc spirv-headers
+cmake -S . -B build-vulkan -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
+cmake --build build-vulkan --config Release --parallel
+ctest --test-dir build-vulkan -C Release --output-on-failure
+./build-vulkan/clap-model --model model.gguf --text 'A jazz quartet.'
+```
+
+The native model's linear layers use the first ggml Vulkan device, with weights
+cached on that device. Other operations remain on CPU. Missing devices or
+unsupported operations use CPU; set `CLAP_VULKAN=0` to force CPU execution.
+To require actual Vulkan execution in the tests rather than accept fallback,
+configure with `-DCLAP_VULKAN_TEST_REQUIRE_DEVICE=ON` as well. Linux CI exercises
+this path with Mesa's software Vulkan driver, including F32/F16 numerical parity,
+weight reuse, explicit CPU selection, and missing-driver fallback.
+
+Published releases additionally build `clap-linux-amd64-vulkan` and
+`clap-linux-arm64-vulkan` on Ubuntu 24.04. They require the system Vulkan loader
+(`libvulkan1` on Debian/Ubuntu) and a compatible Vulkan ICD/driver; the SDK and
+`glslc` are build-time dependencies only. Like the CPU release assets, these
+`clap` executables still expose the dummy embedding/server interfaces described
+below; real model inference currently uses the separately built `clap-model`.
+
 ## Native model layout
 
 The C++ organization follows `llama.cpp/src/models`: shared runtime services are
@@ -78,7 +106,7 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `include/clap.h` | Public, dependency-light C++ API (`clap::Model`, `decode_audio`, `resample_audio`, `log_mel`) |
 | `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
-| `src/model-ops.*` | Shared CPU ggml matrix operations and normalization |
+| `src/model-ops.*` | Shared ggml matrix operations (CPU/optional Vulkan) and CPU normalization |
 | `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
 | `src/models/models.h`, `src/models/*.cpp` | CLAP and CLaMP3 specializations: hyperparameters, tensor contracts, encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
@@ -141,7 +169,7 @@ with FFmpeg to generate them under `build/tests/audio` before CTest runs.
 The build regenerates missing or outdated fixtures automatically. Configure
 with `-DBUILD_TESTING=OFF` to build without Python or FFmpeg test dependencies.
 
-Inference is CPU-only; fusion CLAP, CLaMP3 symbolic input,
+Inference defaults to CPU, with optional Vulkan linear layers; fusion CLAP, CLaMP3 symbolic input,
 quantization and batching are not supported. The optional CLAP Transformers oracle
 suite is enabled with `-DCLAP_MODEL_PARITY=ON` and a Python interpreter containing
 `torch`, `transformers` and `numpy`. The deterministic synthetic CLaMP3 oracle
