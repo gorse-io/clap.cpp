@@ -91,6 +91,26 @@ Published releases additionally build `clap-linux-amd64-vulkan` and
 `clap` executables still expose the dummy embedding/server interfaces described
 below; real model inference currently uses the separately built `clap-model`.
 
+### CUDA 12.9 release build
+
+The published-release workflow also compiles `clap-linux-amd64-cuda12.9` on
+Ubuntu 22.04 using CUDA 12.9 and ggml's native CUDA backend. CPU-only build hosts
+are supported: `GGML_NATIVE=OFF` uses ggml's portable CUDA architecture list
+instead of detecting a local GPU. No CUDA inference or GPU tests are run.
+CUDA runtime and cuBLAS are linked statically (`GGML_STATIC=ON`); GPU execution
+still requires a compatible NVIDIA driver. The CUDA compiler and cuBLAS
+development packages are build-time dependencies only.
+
+```sh
+cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+cmake --build build-cuda --config Release --target clap-cli --parallel 2
+```
+
+This adds a CUDA-enabled release build, not new model-backend selection: native
+model linear dispatch remains CPU/optional Vulkan as documented above, and the
+released `clap` embedding/server interfaces still return dummy embeddings.
+
 ## Native model layout
 
 The C++ organization follows `llama.cpp/src/models`: shared runtime services are
