@@ -85,7 +85,7 @@ jobs:
           -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF
           ${{ matrix.cmake_args }}
       - name: Build
-        run: cmake --build build --config Release --target clap-cli --parallel ${{ matrix.cuda && '2' || '' }}
+        run: cmake --build build --config Release --target clap-cli --parallel ${{ matrix.cuda && '1' || '' }}
 
       - name: Upload release asset
         env:
