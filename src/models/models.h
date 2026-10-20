@@ -15,9 +15,12 @@ public:
     ClapModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
+    int sample_rate() const override;
+    bool is_waveform_encoder() const override;
 private:
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
@@ -37,9 +40,12 @@ public:
     Clamp3Model(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
+    int sample_rate() const override;
+    bool is_waveform_encoder() const override;
 private:
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
@@ -55,5 +61,31 @@ private:
     const ModelLoader &loader;
     TensorOps ops;
     nlohmann::json config, audio_config, text_config;
+};
+
+// Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,
+// ConvNeXt subsampler and bidirectional rotary Conformer stack.
+class Mert2Model final : public ModelArchitecture {
+public:
+    Mert2Model(const ModelLoader &loader, int threads);
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    TextParameters text_parameters() const override;
+    int projection_dimension() const override;
+    int mel_bins() const override;
+    int sample_rate() const override;
+    bool is_waveform_encoder() const override;
+private:
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    Matrix frontend(const std::vector<float> &pcm) const;
+    Matrix subsample(Matrix hidden) const;
+    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
+    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
+
+    const ModelLoader &loader;
+    TensorOps ops;
+    nlohmann::json config;
 };
 } // namespace clap::detail

@@ -30,6 +30,8 @@ class TensorOps {
 public:
     TensorOps(const ModelLoader &loader, int threads);
     Matrix linear(const Matrix &x, const std::string &name, bool bias = true) const;
+    Matrix conv1d(const Matrix &x, const std::string &name, int kernel, int stride,
+                  int padding, int groups, bool bias = true) const;
     Matrix norm(const Matrix &x, const std::string &name, float epsilon) const;
     int threads() const { return n_threads; }
     // Diagnostics report successful execution, not merely device availability.

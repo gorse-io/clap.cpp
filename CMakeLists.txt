@@ -193,6 +193,24 @@ if(BUILD_TESTING)
                     "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
         set_tests_properties(clamp3_invalid_metadata PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
     endif()
+    option(MERT2_MODEL_PARITY "Run optional official MERT-v2-FullSong oracle tests (torch/torchaudio/transformers/safetensors required)" OFF)
+    set(MERT2_REFERENCE_SOURCE "" CACHE PATH "Reviewed pinned MERT-v2-FullSong source directory")
+    if(MERT2_MODEL_PARITY)
+        if(NOT EXISTS "${MERT2_REFERENCE_SOURCE}/modeling_mert2.py")
+            message(FATAL_ERROR "MERT2_REFERENCE_SOURCE must contain the reviewed pinned official source")
+        endif()
+        add_executable(mert2-model-test tests/models/mert2-model-test.cpp)
+        target_link_libraries(mert2-model-test PRIVATE clap nlohmann_json::nlohmann_json)
+        add_test(NAME mert2_model_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert2_parity.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture"
+                    "${MERT2_REFERENCE_SOURCE}")
+        set_tests_properties(mert2_model_parity PROPERTIES TIMEOUT 600)
+        add_test(NAME mert2_model_cli
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert2_cli.py"
+                    "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture")
+        set_tests_properties(mert2_model_cli PROPERTIES DEPENDS mert2_model_parity TIMEOUT 180)
+    endif()
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)

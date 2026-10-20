@@ -82,6 +82,12 @@ TextParameters Clamp3Model::text_parameters() const {
 }
 int Clamp3Model::projection_dimension() const { return config.at("projection_dim"); }
 int Clamp3Model::mel_bins() const { return 0; }
+int Clamp3Model::sample_rate() const { return 0; }
+bool Clamp3Model::is_waveform_encoder() const { return false; }
+AudioFrames Clamp3Model::audio_frames(const std::vector<float> &) const {
+    check(false, "CLaMP3 requires precomputed MERT-v1-95M features");
+    return {};
+}
 
 Matrix Clamp3Model::attention(const Matrix &x, const std::vector<int> &mask,
                               const std::string &prefix, int heads) const {
