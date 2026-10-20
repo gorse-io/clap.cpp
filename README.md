@@ -9,7 +9,7 @@ command and HTTP server intentionally retain their dummy behavior.
 - CMake 3.20 or newer
 - A C++17 compiler
 - ICU source submodule (included by recursive checkout; no system ICU installation required)
-- Python 3 (only when building tests; conversion/oracle tests additionally need torch, transformers, numpy)
+- Python 3 (only for model conversion and tests; install Python dependencies with `python -m pip install -r requirements.txt`)
 - FFmpeg with libmp3lame (only when building tests, to generate WAV/MP3/FLAC fixtures)
 
 ## Clone
