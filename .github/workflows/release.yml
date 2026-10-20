@@ -42,12 +42,10 @@ jobs:
             asset: clap-linux-amd64-vulkan
             binary: build/clap
             cmake_args: -DGGML_METAL=OFF -DGGML_VULKAN=ON
-            vulkan: true
           - os: ubuntu-24.04-arm
             asset: clap-linux-arm64-vulkan
             binary: build/clap
             cmake_args: -DGGML_METAL=OFF -DGGML_VULKAN=ON
-            vulkan: true
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -65,7 +63,7 @@ jobs:
           sub-packages: '["nvcc"]'
           non-cuda-sub-packages: '["libcublas-dev"]'
       - name: Install Vulkan build dependencies
-        if: matrix.vulkan
+        if: endsWith(matrix.asset, '-vulkan')
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: libvulkan-dev glslc spirv-headers
