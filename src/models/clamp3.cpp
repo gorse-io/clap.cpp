@@ -151,6 +151,8 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
     const auto *positions = loader.weight("text.embeddings.position_embeddings.weight");
     const auto *types = loader.weight("text.embeddings.token_type_embeddings.weight");
     std::vector<float> result(projection_dimension());
+    std::vector<float> position_row(dim), type_row(dim);
+    tensor_row(types, 0, type_row.data());
     const size_t segments = (ids.size() + chunk - 1) / chunk;
     const size_t remainder = ids.size() % chunk;
     double total_weight = 0;
@@ -167,9 +169,9 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
             mask[row] = static_cast<size_t>(row) < length;
             const int pos = id == pad ? pad : ++position;
             check(pos < text_config.at("max_position_embeddings").get<int>(), "text positions overflow");
-            for (int c = 0; c < dim; ++c)
-                embeddings[row][c] = scalar(words, static_cast<size_t>(id) * dim + c) +
-                                     scalar(positions, static_cast<size_t>(pos) * dim + c) + scalar(types, c);
+            tensor_row(words, id, embeddings[row]);
+            tensor_row(positions, pos, position_row.data());
+            for (int c = 0; c < dim; ++c) embeddings[row][c] = embeddings[row][c] + position_row[c] + type_row[c];
         }
         const auto projected = pool_project(encode(embeddings, mask, text_config, "text"), mask, "text_proj");
         const size_t weight = part + 1 == segments && remainder ? remainder : chunk;
@@ -185,6 +187,8 @@ std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
     const auto *positions = loader.weight("audio.embeddings.position_embeddings.weight");
     const auto *types = loader.weight("audio.embeddings.token_type_embeddings.weight");
     std::vector<float> result(projection_dimension());
+    std::vector<float> position_row(dim), type_row(dim);
+    tensor_row(types, 0, type_row.data());
     const size_t frames = features.rows;
     const size_t segments = (frames + chunk - 1) / chunk;
     const size_t remainder = frames % chunk;
@@ -197,9 +201,10 @@ std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
         std::vector<int> mask(chunk);
         for (int row = 0; row < chunk; ++row) {
             mask[row] = static_cast<size_t>(row) < length;
+            tensor_row(positions, row, position_row.data());
             for (int c = 0; c < dim; ++c) {
                 const float input = mask[row] ? features[static_cast<int>(start) + row][c] : 0.0f;
-                embeddings[row][c] = input + scalar(positions, static_cast<size_t>(row) * dim + c) + scalar(types, c);
+                embeddings[row][c] = input + position_row[c] + type_row[c];
             }
         }
         const auto projected = pool_project(encode(embeddings, mask, audio_config, "audio"), mask, "audio_proj");

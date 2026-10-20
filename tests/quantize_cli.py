@@ -12,7 +12,9 @@ def run(*args):
 help_result = run('quantize', '--help')
 assert help_result.returncode == 0, help_result.stderr
 assert 'INPUT.gguf' in help_result.stdout and 'OUTPUT.gguf' in help_result.stdout
-assert 'Q8_0' in help_result.stdout
+assert 'Q8_0' in help_result.stdout and 'Q4_K_M' in help_result.stdout
+assert '--type' in help_result.stdout
+assert run('quantize', '--type', 'bad', 'a', 'b').returncode != 0
 assert 'quantize' in run('--help').stdout
 assert run('quantize', '-h').returncode == 0
 for args in [(), ('input.gguf',), ('a', 'b', 'c'), ('--unknown',)]:

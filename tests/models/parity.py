@@ -17,9 +17,9 @@ out.mkdir(parents=True, exist_ok=True)
 torch.set_num_threads(2)
 torch.manual_seed(123)
 c = ClapConfig(
-    text_config=dict(hidden_size=32, intermediate_size=64, num_attention_heads=4,
-                     num_hidden_layers=2, vocab_size=50265, projection_dim=12),
-    audio_config=dict(hidden_size=64, patch_embeds_hidden_size=8,
+    text_config=dict(hidden_size=256, intermediate_size=512, num_attention_heads=4,
+                     num_hidden_layers=2, vocab_size=512, projection_dim=12),
+    audio_config=dict(hidden_size=256, patch_embeds_hidden_size=32,
                       num_attention_heads=[1, 2, 4, 8], depths=[2, 2, 2, 2],
                       num_mel_bins=32, spec_size=128, window_size=2, projection_dim=12),
     projection_dim=12)
@@ -87,11 +87,13 @@ subprocess.run([str(build / 'clap-model-test'), str(out / 'model-f16.gguf'), str
 from q8_reference import load_storage
 sys.path.insert(0, str(ROOT))
 from convert_hf_to_gguf import clap_tensor_name
-for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8')]:
+for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
+                       ('model.gguf', 'q4-k-m'), ('model-f16.gguf', 'f16-q4-k-m')]:
     target = out / f'model-{suffix}.gguf'
     if target.exists(): target.unlink()
-    subprocess.run([str(build / 'clap'), 'quantize', str(out / source), str(target)], check=True)
-    count = load_storage(m, target, clap_tensor_name)
+    subprocess.run([str(build / 'clap'), 'quantize', '--type',
+                    'Q4_K_M' if 'q4' in suffix else 'Q8_0', str(out / source), str(target)], check=True)
+    count = load_storage(m, target, clap_tensor_name, build / 'clap-q8-test' if 'q4' in suffix else None)
     quantized_fixture = json.loads(json.dumps(fixture))
     # Block packing is discontinuous: small interpolation/normalization rounding
     # differences can move audio activations across Q8 bins. Allow 1% absolute
@@ -129,4 +131,4 @@ for name, data, error in corruptions:
     path.write_bytes(data)
     result = subprocess.run([str(build / 'clap-model'), '--model', str(path), '--text', 'hello'], capture_output=True, text=True)
     assert result.returncode == 1 and error in result.stderr.lower(), result.stderr
-print('Transformers F32/F16/Q8_0 parity, malformed GGUF and unsupported-config rejection passed')
+print('Transformers F32/F16/Q8_0/Q4_K_M parity, malformed GGUF and unsupported-config rejection passed')

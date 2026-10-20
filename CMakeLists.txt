@@ -96,7 +96,7 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
                 "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_quantize PROPERTIES TIMEOUT 60)
-    foreach(regression alignment symlink)
+    foreach(regression alignment symlink k)
         add_test(NAME clap_quantize_${regression}
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize.py"
                     "$<TARGET_FILE:clap-q8-test>" "$<TARGET_FILE:clap-cli>" "${regression}")
@@ -134,7 +134,7 @@ if(BUILD_TESTING)
         add_test(NAME clap_model_parity
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/parity.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
-        set_tests_properties(clap_model_parity PROPERTIES TIMEOUT 180)
+        set_tests_properties(clap_model_parity PROPERTIES TIMEOUT 600)
         add_test(NAME clap_model_cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/cli.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
@@ -154,7 +154,7 @@ if(BUILD_TESTING)
         add_test(NAME clamp3_model_parity
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_parity.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
-        set_tests_properties(clamp3_model_parity PROPERTIES TIMEOUT 300)
+        set_tests_properties(clamp3_model_parity PROPERTIES TIMEOUT 600)
         add_test(NAME clamp3_model_native
             COMMAND clamp3-model-test
                     "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/model.gguf"
