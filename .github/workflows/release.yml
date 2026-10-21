@@ -27,7 +27,7 @@ jobs:
             cmake_args: -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
           - os: windows-2022
             asset: clap-windows-amd64-cuda12.9.zip
-            binary: build/Release/clap.exe
+            binary: build/clap-cuda.zip
             cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
           - os: windows-2022
             asset: clap-windows-amd64-vulkan.exe
@@ -153,14 +153,13 @@ jobs:
         shell: pwsh
         env:
           BINARY: ${{ matrix.binary }}
-          ASSET: ${{ matrix.asset }}
         run: |
           $stage = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/clap-cuda"
-          Copy-Item $env:BINARY "$stage/clap.exe"
+          Copy-Item 'build/Release/clap.exe' "$stage/clap.exe"
           foreach ($dll in @('cublas64_12.dll', 'cublasLt64_12.dll')) {
             Copy-Item "$env:CUDA_PATH/bin/$dll" $stage
           }
-          Compress-Archive -Path "$stage/*" -DestinationPath $env:ASSET
+          Compress-Archive -Path "$stage/*" -DestinationPath $env:BINARY
 
       - name: Upload release asset
         env:
@@ -170,7 +169,5 @@ jobs:
           BINARY: ${{ matrix.binary }}
           ASSET: ${{ matrix.asset }}
         run: |
-          if [[ ! -f "$ASSET" ]]; then
-            mv "$BINARY" "$ASSET"
-          fi
+          mv "$BINARY" "$ASSET"
           gh release upload "$RELEASE_TAG" "$ASSET" --clobber
