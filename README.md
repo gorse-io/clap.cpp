@@ -1,5 +1,8 @@
 # clap.cpp
 
+[![CI](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml)
+[![Release](https://github.com/gorse-io/clap.cpp/actions/workflows/release.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/release.yml)
+
 C++17/ggml implementations of Hugging Face `laion/larger_clap_music`, CLaMP3,
 and `m-a-p/MERT-v2-FullSong`, with native inference through `clap-model`. The
 original `clap` embedding command and HTTP server intentionally retain their dummy behavior.
@@ -472,3 +475,8 @@ cmake --install build --config Release --prefix ./install
 ```
 
 The executable is installed under `bin/` in the selected prefix.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
+Third-party dependencies retain their respective licenses.
