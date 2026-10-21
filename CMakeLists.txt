@@ -77,8 +77,17 @@ include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     if(NOT BUILD_SHARED_LIBS)
+        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/googletest/CMakeLists.txt")
+            message(FATAL_ERROR
+                "GoogleTest submodule is missing. Run: git submodule update --init --recursive")
+        endif()
+        set(BUILD_GMOCK OFF CACHE BOOL "Build GoogleMock" FORCE)
+        set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
+        set(gtest_force_shared_crt ON CACHE BOOL "Use the shared MSVC runtime" FORCE)
+        add_subdirectory(thirdparty/googletest EXCLUDE_FROM_ALL)
+
         add_executable(clap-c-api-allocation-test tests/c-api-allocation-test.cpp)
-        target_link_libraries(clap-c-api-allocation-test PRIVATE clap)
+        target_link_libraries(clap-c-api-allocation-test PRIVATE clap GTest::gtest_main)
         add_test(NAME clap_c_api_allocation COMMAND clap-c-api-allocation-test)
     endif()
     add_test(NAME clap_conversion_imports
