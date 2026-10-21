@@ -50,8 +50,10 @@ To use an installed full ICU instead, configure with `-DCLAP_USE_SYSTEM_ICU=ON`
 (requires the `uc`/`i18n` development libraries, e.g. `libicu-dev` on Debian/Ubuntu).
 The bundled targets stay static even when `BUILD_SHARED_LIBS=ON`.
 
-dr_libs is pinned as a submodule under `thirdparty/dr_libs`. The core library
-compiles `dr_wav`, `dr_mp3` and `dr_flac` directly. MiniVorbis is pinned under
+miniaudio 0.11.25 (`9634bedb5b5a2ca38c1ee7108a9358a4e233f14d`) is pinned
+as a submodule under `thirdparty/miniaudio`. It provides WAV/MP3/FLAC decoding,
+mono conversion and resampling. Device I/O, threading, the engine, resource
+manager, node graph, encoding and signal generation are disabled. MiniVorbis is pinned under
 `thirdparty/minivorbis` and compiled as C for Ogg Vorbis decoding (not Ogg Opus).
 Chained Vorbis streams must keep the same channel count and sample rate.
 Audio decoding requires no
@@ -350,9 +352,13 @@ python tests/models/mert2_checkpoint_parity.py build checkpoint/ build/published
 The public `clap::decode_audio(path)` API returns `clap::Audio` with mono float
 `samples` and the original `sample_rate`; decoding itself does not resample or
 require 48 kHz. `clap::resample_audio(audio, target_rate)` separately resamples
-mono PCM (default: 48 kHz) using a centered Hann-windowed sinc filter with
-anti-alias filtering for downsampling. Duration is rounded up to the next output
-sample, and same-rate input is unchanged. Neither operation requires an external
+mono PCM (default: 48 kHz) using miniaudio's linear interpolator and eighth-order
+low-pass filter (before downsampling or after upsampling). Unlike the previous
+centered sinc, this causal filter has startup latency and a frequency-dependent
+phase response; very short clips include that startup transient. It is not
+bit-identical to the old resampler. Duration is rounded up to the next output
+sample, with the last input value extended when fractional output needs lookahead;
+same-rate input is unchanged. Neither operation requires an external
 codec/resampling library. Empty/unsupported inputs and non-finite samples are rejected;
 decoded output is limited to 1 GiB. Synthetic codec fixtures are not stored in
 the repository. When tests are enabled, the build runs `tests/audio/generate.py`

@@ -1,9 +1,11 @@
 #include "clap.h"
+#include "miniaudio-config.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <memory>
 
 namespace clap {
 Audio resample_audio(const Audio &audio, int sample_rate) {
@@ -22,34 +24,37 @@ Audio resample_audio(const Audio &audio, int sample_rate) {
     if (frames > max_frames) throw std::runtime_error("Resampled audio exceeds 1 GiB");
     Audio output{std::vector<float>(static_cast<size_t>(frames)), sample_rate};
 
-    // Hann-windowed sinc with 32 lobes on either side. Widen the input-domain
-    // filter when downsampling so frequencies above the new Nyquist are removed.
-    // A 5% transition band keeps the filter away from the Nyquist discontinuity.
-    constexpr double pi = 3.14159265358979323846;
-    const double ratio = static_cast<double>(sample_rate) / audio.sample_rate;
-    const double cutoff = 0.95 * std::min(1.0, ratio);
-    const double radius = 32 / cutoff;
-    for (size_t i = 0; i < output.samples.size(); ++i) {
-        const double position = static_cast<double>(i) * audio.sample_rate / sample_rate;
-        const auto first = static_cast<size_t>(std::ceil(std::max(0.0, position - radius)));
-        const auto last = static_cast<size_t>(std::floor(std::min(
-            static_cast<double>(audio.samples.size() - 1), position + radius)));
-        double sum = 0, weights = 0;
-        for (size_t j = first; j <= last; ++j) {
-            const double distance = position - static_cast<double>(j);
-            const double x = pi * cutoff * distance;
-            const double sinc = std::abs(x) < 1e-12 ? 1.0 : std::sin(x) / x;
-            const double window = 0.5 * (1 + std::cos(pi * distance / radius));
-            const double weight = cutoff * sinc * window;
-            sum += weight * audio.samples[j];
-            weights += weight;
-        }
-        // Truncate and renormalize at boundaries: constant clips keep unity gain
-        // rather than fading toward zero. The centered filter adds no delay.
-        output.samples[i] = static_cast<float>(sum / weights);
-        if (!std::isfinite(output.samples[i]))
-            throw std::runtime_error("Non-finite resampled audio sample");
+    auto config = ma_resampler_config_init(ma_format_f32, 1,
+        static_cast<ma_uint32>(audio.sample_rate), static_cast<ma_uint32>(sample_rate),
+        ma_resample_algorithm_linear);
+    // Use miniaudio's highest built-in LPF order to suppress downsampling aliases.
+    config.linear.lpfOrder = MA_MAX_FILTER_ORDER;
+    ma_resampler resampler{};
+    if (ma_resampler_init(&config, nullptr, &resampler) != MA_SUCCESS)
+        throw std::runtime_error("Cannot initialize audio resampler");
+    const auto close = [](ma_resampler *value) { ma_resampler_uninit(value, nullptr); };
+    const std::unique_ptr<ma_resampler, decltype(close)> guard(&resampler, close);
+
+    // This is a causal linear + LPF resampler, not the previous zero-phase sinc.
+    // Keep its startup latency, but preserve ceil(duration * target rate). If
+    // the last fractional frame needs lookahead, extend the final input value
+    // rather than inserting silence or returning a short output.
+    size_t consumed = 0, written = 0;
+    const std::vector<float> tail(4096, audio.samples.back());
+    while (written < output.samples.size()) {
+        const bool flushing = consumed == audio.samples.size();
+        ma_uint64 input_frames = flushing ? tail.size() : audio.samples.size() - consumed;
+        ma_uint64 output_frames = output.samples.size() - written;
+        const float *input = flushing ? tail.data() : audio.samples.data() + consumed;
+        if (ma_resampler_process_pcm_frames(&resampler, input, &input_frames,
+                output.samples.data() + written, &output_frames) != MA_SUCCESS)
+            throw std::runtime_error("Cannot resample audio");
+        if (!input_frames && !output_frames) throw std::runtime_error("Audio resampler made no progress");
+        if (!flushing) consumed += static_cast<size_t>(input_frames);
+        written += static_cast<size_t>(output_frames);
     }
+    if (!std::all_of(output.samples.begin(), output.samples.end(), [](float x) { return std::isfinite(x); }))
+        throw std::runtime_error("Non-finite resampled audio sample");
     return output;
 }
 } // namespace clap

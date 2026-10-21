@@ -1,11 +1,6 @@
 #include "clap.h"
 
-#define DR_WAV_IMPLEMENTATION
-#include "dr_wav.h"
-#define DR_MP3_IMPLEMENTATION
-#include "dr_mp3.h"
-#define DR_FLAC_IMPLEMENTATION
-#include "dr_flac.h"
+#include "miniaudio-config.h"
 #include "minivorbis.h"
 
 #include <cmath>
@@ -25,22 +20,28 @@ Audio read_mono(unsigned channels, unsigned sample_rate, Read read) {
         throw std::runtime_error("Invalid audio channel count or sample rate");
     Audio audio;
     audio.sample_rate = static_cast<int>(sample_rate);
+    // Preserve equal-weight averaging, including LFE in multichannel files.
+    const auto config = ma_channel_converter_config_init(
+        ma_format_f32, channels, nullptr, 1, nullptr, ma_channel_mix_mode_rectangular);
+    ma_channel_converter converter{};
+    if (ma_channel_converter_init(&config, nullptr, &converter) != MA_SUCCESS)
+        throw std::runtime_error("Cannot initialize mono conversion");
+    const auto close = [](ma_channel_converter *value) { ma_channel_converter_uninit(value, nullptr); };
+    const std::unique_ptr<ma_channel_converter, decltype(close)> guard(&converter, close);
     constexpr size_t chunk_frames = 4096;
-    std::vector<float> chunk(chunk_frames * channels);
+    std::vector<float> chunk(chunk_frames * channels), mono(chunk_frames);
     for (;;) {
         const auto count = read(chunk_frames, chunk.data());
         if (!count) break;
-        if (count > max_frames - audio.samples.size())
+        if (count > chunk_frames || count > max_frames - audio.samples.size())
             throw std::runtime_error("Decoded audio exceeds 1 GiB");
-        for (size_t i = 0; i < count; ++i) {
-            double sum = 0;
-            for (unsigned c = 0; c < channels; ++c) {
-                const float value = chunk[i * channels + c];
-                if (!std::isfinite(value)) throw std::runtime_error("Non-finite audio sample");
-                sum += value;
-            }
-            audio.samples.push_back(static_cast<float>(sum / channels));
-        }
+        for (size_t i = 0; i < count * channels; ++i)
+            if (!std::isfinite(chunk[i])) throw std::runtime_error("Non-finite audio sample");
+        if (ma_channel_converter_process_pcm_frames(&converter, mono.data(), chunk.data(), count) != MA_SUCCESS)
+            throw std::runtime_error("Cannot convert audio to mono");
+        for (size_t i = 0; i < count; ++i)
+            if (!std::isfinite(mono[i])) throw std::runtime_error("Non-finite mono sample");
+        audio.samples.insert(audio.samples.end(), mono.begin(), mono.begin() + count);
     }
     if (audio.samples.empty()) throw std::runtime_error("Empty or invalid audio");
     return audio;
@@ -48,36 +49,33 @@ Audio read_mono(unsigned channels, unsigned sample_rate, Read read) {
 } // namespace
 
 Audio decode_audio(const std::string &path) {
-    drwav wav{};
-    if (drwav_init_file(&wav, path.c_str(), nullptr)) {
-        const auto close = [](drwav *decoder) { drwav_uninit(decoder); };
-        const std::unique_ptr<drwav, decltype(close)> guard(&wav, close);
-        auto audio = read_mono(wav.channels, wav.sampleRate, [&](size_t count, float *out) {
-            return drwav_read_pcm_frames_f32(&wav, count, out);
+    // Decode native-rate interleaved float PCM. Keep channels until after the
+    // finite-sample check so a bad channel cannot be hidden by downmixing.
+    auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder{};
+    if (ma_decoder_init_file(path.c_str(), &config, &decoder) == MA_SUCCESS) {
+        const auto close = [](ma_decoder *value) { ma_decoder_uninit(value); };
+        const std::unique_ptr<ma_decoder, decltype(close)> guard(&decoder, close);
+        ma_uint32 channels = 0, sample_rate = 0;
+        if (ma_decoder_get_data_format(&decoder, nullptr, &channels, &sample_rate, nullptr, 0) != MA_SUCCESS)
+            throw std::runtime_error("Cannot read audio format: " + path);
+        ma_uint64 total = 0;
+        // Some FLAC files have an unknown length. MP3 length queries may scan
+        // the stream; do not allocate from any untrusted declared frame count.
+        const bool known_length = ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total != 0;
+        auto audio = read_mono(channels, sample_rate, [&](size_t count, float *out) {
+            ma_uint64 frames = 0;
+            const auto result = ma_decoder_read_pcm_frames(&decoder, out, count, &frames);
+            if (result != MA_SUCCESS && result != MA_AT_END)
+                throw std::runtime_error("Invalid audio: " + path);
+            return static_cast<size_t>(frames);
         });
-        if (audio.samples.size() != wav.totalPCMFrameCount)
-            throw std::runtime_error("Truncated WAV audio: " + path);
+        if (known_length && audio.samples.size() != total)
+            throw std::runtime_error("Truncated audio: " + path);
         return audio;
     }
-    const std::unique_ptr<drflac, decltype(&drflac_close)> flac(
-        drflac_open_file(path.c_str(), nullptr), drflac_close);
-    if (flac) {
-        auto audio = read_mono(flac->channels, flac->sampleRate, [&](size_t count, float *out) {
-            return drflac_read_pcm_frames_f32(flac.get(), count, out);
-        });
-        // FLAC permits an unknown (zero) total sample count in STREAMINFO.
-        if (flac->totalPCMFrameCount && audio.samples.size() != flac->totalPCMFrameCount)
-            throw std::runtime_error("Truncated FLAC audio: " + path);
-        return audio;
-    }
-    drmp3 mp3{};
-    if (drmp3_init_file(&mp3, path.c_str(), nullptr)) {
-        const auto close = [](drmp3 *decoder) { drmp3_uninit(decoder); };
-        const std::unique_ptr<drmp3, decltype(close)> guard(&mp3, close);
-        return read_mono(mp3.channels, mp3.sampleRate, [&](size_t count, float *out) {
-            return drmp3_read_pcm_frames_f32(&mp3, count, out);
-        });
-    }
+    // miniaudio has no built-in Vorbis decoder. Retain MiniVorbis for its
+    // seekable, homogeneous chained-stream support (stb_vorbis lacks chaining).
     OggVorbis_File vorbis{};
     if (ov_fopen(path.c_str(), &vorbis) == 0) {
         const auto close = [](OggVorbis_File *decoder) { ov_clear(decoder); };

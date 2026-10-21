@@ -29,7 +29,15 @@ if(NOT WIN32)
     target_link_libraries(clap-minivorbis PUBLIC m)
 endif()
 target_link_libraries(clap PRIVATE clap-minivorbis)
-target_include_directories(clap SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/dr_libs")
+# A separate C implementation keeps upstream code out of our C++ warning policy.
+add_library(clap-miniaudio STATIC miniaudio.c)
+set_target_properties(clap-miniaudio PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(clap-miniaudio SYSTEM PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/miniaudio")
+if(NOT WIN32)
+    target_link_libraries(clap-miniaudio PUBLIC m)
+endif()
+target_link_libraries(clap PRIVATE clap-miniaudio)
 target_link_libraries(clap PUBLIC ggml
     PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
 if(GGML_VULKAN)

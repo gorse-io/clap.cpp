@@ -35,7 +35,7 @@ ffmpeg("mono.wav", "44100.flac", "-ar", "44100")
 ffmpeg("mono.wav", "44100.ogg", "-ar", "44100", "-codec:a", "libvorbis")
 shutil.copyfile(ROOT / "mono.ogg", ROOT / "vorbis.dat")
 vorbis = (ROOT / "mono.ogg").read_bytes()
-ffmpeg("mono.wav", "second.ogg", "-codec:a", "libvorbis", "-q:a", "6")
+ffmpeg("mono.wav", "second.ogg", "-af", "volume=0.5", "-codec:a", "libvorbis", "-q:a", "6")
 (ROOT / "chained.ogg").write_bytes(vorbis + (ROOT / "second.ogg").read_bytes())
 (ROOT / "changed-channels.ogg").write_bytes(vorbis + (ROOT / "stereo.ogg").read_bytes())
 (ROOT / "changed-rate.ogg").write_bytes(vorbis + (ROOT / "44100.ogg").read_bytes())
@@ -44,3 +44,20 @@ shutil.copyfile(ROOT / "mono.flac", ROOT / "audio.dat")
 (ROOT / "invalid.bin").write_bytes(b"not an audio file\n")
 with wave.open(str(ROOT / "empty.wav"), "wb") as output:
     output.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+
+# Exercise partial reads, non-finite IEEE float input and equal-weight surround downmix.
+(ROOT / "truncated.wav").write_bytes((ROOT / "mono.wav").read_bytes()[:20])
+(ROOT / "truncated.flac").write_bytes((ROOT / "mono.flac").read_bytes()[:-200])
+data = bytearray((ROOT / "float.wav").read_bytes())
+pos = data.index(b"data") + 8
+data[pos:pos + 4] = struct.pack("<f", float("nan"))
+(ROOT / "nonfinite.wav").write_bytes(data)
+with wave.open(str(ROOT / "surround.wav"), "wb") as output:
+    output.setparams((6, 2, 48000, 0, "NONE", "not compressed"))
+    output.writeframes(struct.pack("<6h", 3000, 6000, 9000, 12000, 15000, 18000) * 4800)
+
+# STREAMINFO's 36-bit total-sample field may legally be unknown (zero).
+unknown = bytearray((ROOT / "mono.flac").read_bytes())
+info = int.from_bytes(unknown[18:26], "big") & ~((1 << 36) - 1)
+unknown[18:26] = info.to_bytes(8, "big")
+(ROOT / "unknown-length.flac").write_bytes(unknown)

@@ -25,12 +25,10 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/json/CMakeLists.txt")
         "json submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
-foreach(header dr_wav.h dr_mp3.h dr_flac.h)
-    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dr_libs/${header}")
-        message(FATAL_ERROR
-            "dr_libs submodule is missing. Run: git submodule update --init --recursive")
-    endif()
-endforeach()
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio/miniaudio.h")
+    message(FATAL_ERROR
+        "miniaudio submodule is missing. Run: git submodule update --init --recursive")
+endif()
 
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/minivorbis/minivorbis.h")
     message(FATAL_ERROR
@@ -71,7 +69,8 @@ if(BUILD_TESTING)
         mono.wav stereo.wav mono.flac stereo.flac mono.mp3 stereo.mp3
         mono.ogg stereo.ogg 44100.ogg vorbis.dat
         second.ogg chained.ogg changed-channels.ogg changed-rate.ogg truncated.ogg
-        pcm24.wav float.wav 44100.flac audio.dat invalid.bin empty.wav)
+        pcm24.wav float.wav 44100.flac audio.dat invalid.bin empty.wav
+        truncated.wav truncated.flac nonfinite.wav surround.wav unknown-length.flac)
     list(TRANSFORM CLAP_AUDIO_FIXTURES PREPEND "${CLAP_AUDIO_FIXTURE_DIR}/")
     add_custom_command(
         OUTPUT ${CLAP_AUDIO_FIXTURES}

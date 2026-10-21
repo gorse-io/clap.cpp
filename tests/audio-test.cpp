@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
         require(argc == 2, "usage: clap-audio-test FIXTURE_DIR");
         const std::filesystem::path dir(argv[1]);
         for (const auto &name : {"mono.wav", "mono.flac", "mono.mp3", "stereo.wav",
-                                 "stereo.flac", "stereo.mp3", "mono.ogg", "stereo.ogg", "pcm24.wav", "float.wav"}) {
+                                 "stereo.flac", "stereo.mp3", "unknown-length.flac", "mono.ogg", "stereo.ogg", "pcm24.wav", "float.wav"}) {
             const auto audio = clap::decode_audio((dir / name).string());
             require(audio.sample_rate == 48000, std::string(name) + " sample rate");
             require(audio.samples.size() == 4800, std::string(name) + " frame count");
@@ -45,7 +45,20 @@ int main(int argc, char **argv) {
         const auto chained = clap::decode_audio((dir / "chained.ogg").string());
         require(chained.sample_rate == 48000 && chained.samples.size() == 9600,
                 "decode every link in a chained Vorbis stream");
-        for (const auto &path : {dir / "missing.wav", dir / "invalid.bin", dir / "empty.wav",
+        const auto first = clap::decode_audio((dir / "mono.ogg").string());
+        const auto second = clap::decode_audio((dir / "second.ogg").string());
+        require(second.samples.size() == first.samples.size(), "second Vorbis link frame count");
+        for (size_t i = 0; i < first.samples.size(); ++i) {
+            require(std::abs(chained.samples[i] - first.samples[i]) < 1e-6f, "first chained Vorbis link PCM");
+            require(std::abs(chained.samples[first.samples.size() + i] - second.samples[i]) < 1e-6f,
+                    "second chained Vorbis link PCM");
+        }
+        const auto surround = clap::decode_audio((dir / "surround.wav").string());
+        require(surround.samples.size() == 4800, "surround frame count");
+        for (float value : surround.samples)
+            require(std::abs(value - 10500.0f / 32768) < 1e-6f, "equal-weight surround downmix");
+        for (const auto &path : {dir / "truncated.wav", dir / "truncated.flac", dir / "nonfinite.wav",
+                                 dir / "missing.wav", dir / "invalid.bin", dir / "empty.wav",
                                  dir / "changed-channels.ogg", dir / "changed-rate.ogg",
                                  dir / "truncated.ogg"}) {
             bool rejected = false;

@@ -14,9 +14,9 @@
 	path = thirdparty/icu
 	url = https://github.com/unicode-org/icu.git
 	shallow = true
-[submodule "thirdparty/dr_libs"]
-	path = thirdparty/dr_libs
-	url = https://github.com/mackron/dr_libs.git
 [submodule "thirdparty/minivorbis"]
 	path = thirdparty/minivorbis
 	url = https://github.com/edubart/minivorbis.git
+[submodule "thirdparty/miniaudio"]
+	path = thirdparty/miniaudio
+	url = https://github.com/mackron/miniaudio.git
