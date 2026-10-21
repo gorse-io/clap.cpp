@@ -17,3 +17,6 @@
 [submodule "thirdparty/dr_libs"]
 	path = thirdparty/dr_libs
 	url = https://github.com/mackron/dr_libs.git
+[submodule "thirdparty/minivorbis"]
+	path = thirdparty/minivorbis
+	url = https://github.com/edubart/minivorbis.git
