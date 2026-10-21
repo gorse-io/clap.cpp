@@ -1,4 +1,5 @@
 #include "model-ops.h"
+#include <stdexcept>
 #include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>
@@ -124,10 +125,12 @@ size_t TensorOps::vulkan_weight_uploads() const {
 }
 
 Matrix::Matrix(int r, int c) : rows(r), cols(c), data(static_cast<size_t>(r) * c, 0) {
-    check(r > 0 && c > 0, "invalid matrix shape");
+    if (!(r > 0 && c > 0))
+        throw std::runtime_error("CLAP: invalid matrix shape");
 }
 void add(Matrix &a, const Matrix &b) {
-    check(a.rows == b.rows && a.cols == b.cols, "residual shape mismatch");
+    if (!(a.rows == b.rows && a.cols == b.cols))
+        throw std::runtime_error("CLAP: residual shape mismatch");
     for (size_t i = 0; i < a.data.size(); ++i) a.data[i] += b.data[i];
 }
 void gelu(Matrix &x) {
@@ -136,8 +139,8 @@ void gelu(Matrix &x) {
 float scalar(const ggml_tensor *t, size_t i) {
     if (t->type == GGML_TYPE_F32) return static_cast<const float *>(t->data)[i];
     if (t->type == GGML_TYPE_F16) return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
-    check(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q6_K,
-          "unsupported scalar tensor type");
+    if (!(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q6_K))
+        throw std::runtime_error("CLAP: unsupported scalar tensor type");
     // Decode only the containing block (embeddings, relative biases, or norms),
     // never expand an entire mapped weight tensor/model.
     float block[256];
@@ -147,14 +150,16 @@ float scalar(const ggml_tensor *t, size_t i) {
     return block[i % width];
 }
 void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
-    check(row >= 0 && row < ggml_nrows(t), "embedding row out of range");
+    if (!(row >= 0 && row < ggml_nrows(t)))
+        throw std::runtime_error("CLAP: embedding row out of range");
     const auto *data = static_cast<const uint8_t *>(t->data) + row * t->nb[1];
     if (t->type == GGML_TYPE_F32) std::copy_n(reinterpret_cast<const float *>(data), t->ne[0], output);
     else if (t->type == GGML_TYPE_F16)
         ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data), output, t->ne[0]);
     else {
         const auto *traits = ggml_get_type_traits(t->type);
-        check(traits && traits->to_float, "unsupported embedding tensor type");
+        if (!(traits && traits->to_float))
+            throw std::runtime_error("CLAP: unsupported embedding tensor type");
         traits->to_float(data, output, t->ne[0]);
     }
 }
@@ -167,7 +172,8 @@ TensorOps::TensorOps(const ModelLoader &source, int threads) : loader(source),
 
 Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) const {
     auto *w = loader.weight(name + ".weight");
-    check(w->ne[0] == x.cols && w->ne[2] == 1 && w->ne[3] == 1, "linear shape: " + name);
+    if (!(w->ne[0] == x.cols && w->ne[2] == 1 && w->ne[3] == 1))
+        throw std::runtime_error("CLAP: linear shape: " + name);
     Matrix result(x.rows, static_cast<int>(w->ne[1]));
     bool computed = false;
 #ifdef CLAP_USE_VULKAN
@@ -184,7 +190,8 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
     if (!computed) {
         const size_t bytes = (x.data.size() + result.data.size()) * sizeof(float) + 2 * 1024 * 1024;
         std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes, nullptr, false}), ggml_free);
-        check(ctx != nullptr, "ggml allocation failed");
+        if (ctx == nullptr)
+            throw std::runtime_error("CLAP: ggml allocation failed");
         auto *input = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, x.cols, x.rows);
         std::memcpy(input->data, x.data.data(), x.data.size() * sizeof(float));
         auto *output = ggml_mul_mat(ctx.get(), w, input);
@@ -193,7 +200,8 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
         auto plan = ggml_graph_plan(graph, n_threads, nullptr);
         std::vector<uint8_t> work(plan.work_size);
         plan.work_data = work.data();
-        check(ggml_graph_compute(graph, &plan) == GGML_STATUS_SUCCESS, "ggml matrix multiply failed");
+        if (ggml_graph_compute(graph, &plan) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("CLAP: ggml matrix multiply failed");
         std::memcpy(result.data.data(), output->data, result.data.size() * sizeof(float));
     }
     if (bias) {
@@ -206,12 +214,13 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
 Matrix TensorOps::conv1d(const Matrix &x, const std::string &name, int kernel,
                          int stride, int padding, int groups, bool bias) const {
     const auto *w = loader.weight(name + ".weight");
-    check(kernel > 0 && stride > 0 && padding >= 0 && groups > 0,
-          "invalid convolution parameters: " + name);
-    check(w->ne[0] == kernel && w->ne[1] * groups == x.cols && w->ne[2] > 0 &&
-          w->ne[2] % groups == 0 && w->ne[3] == 1, "convolution shape: " + name);
+    if (!(kernel > 0 && stride > 0 && padding >= 0 && groups > 0))
+        throw std::runtime_error("CLAP: invalid convolution parameters: " + name);
+    if (!(w->ne[0] == kernel && w->ne[1] * groups == x.cols && w->ne[2] > 0 &&
+          w->ne[2] % groups == 0 && w->ne[3] == 1)) throw std::runtime_error("CLAP: convolution shape: " + name);
     const int rows = (x.rows + 2 * padding - kernel) / stride + 1;
-    check(rows > 0, "convolution input is too short: " + name);
+    if (!(rows > 0))
+        throw std::runtime_error("CLAP: convolution input is too short: " + name);
     const int output_columns = static_cast<int>(w->ne[2]);
 
     // Conv1d with a one-sample kernel is a time-distributed dense layer. Use
@@ -223,20 +232,22 @@ Matrix TensorOps::conv1d(const Matrix &x, const std::string &name, int kernel,
         // published weights and can exhaust the deliberately small arena.
         std::unique_ptr<ggml_context, decltype(&ggml_free)> alias_context(
             ggml_init({4096, nullptr, true}), ggml_free);
-        check(alias_context != nullptr, "ggml convolution alias allocation failed");
+        if (alias_context == nullptr)
+            throw std::runtime_error("CLAP: ggml convolution alias allocation failed");
         auto *flat = ggml_new_tensor_2d(alias_context.get(), w->type, x.cols, output_columns);
         flat->data = w->data;
         const size_t bytes = (x.data.size() + static_cast<size_t>(rows) * output_columns) * sizeof(float) +
                              2 * 1024 * 1024;
         std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes, nullptr, false}), ggml_free);
-        check(ctx != nullptr, "ggml convolution allocation failed");
+        if (ctx == nullptr)
+            throw std::runtime_error("CLAP: ggml convolution allocation failed");
         auto *input = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, x.cols, x.rows);
         std::memcpy(input->data, x.data.data(), x.data.size() * sizeof(float));
         auto *output = ggml_mul_mat(ctx.get(), flat, input);
         auto *graph = ggml_new_graph_custom(ctx.get(), 32, false);
         ggml_build_forward_expand(graph, output);
-        check(ggml_graph_compute_with_ctx(ctx.get(), graph, n_threads) == GGML_STATUS_SUCCESS,
-              "ggml convolution matrix multiply failed");
+        if (ggml_graph_compute_with_ctx(ctx.get(), graph, n_threads) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("CLAP: ggml convolution matrix multiply failed");
         Matrix result(rows, output_columns);
         std::memcpy(result.data.data(), output->data, result.data.size() * sizeof(float));
         if (bias) {

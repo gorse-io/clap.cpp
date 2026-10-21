@@ -1,4 +1,5 @@
 #include "models.h"
+#include <stdexcept>
 #include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>
@@ -27,20 +28,28 @@ void ClapModel::load_arch_hparams() {
     a = config.at("audio_config");
     t = config.at("text_config");
 
-    check(config.at("model_type") == "clap", "not a CLAP model");
-    check(!a.at("enable_fusion").get<bool>(), "fusion models are not supported");
-    check(a.at("depths").size() == 4 && a.at("num_attention_heads").size() == 4, "expected four HTSAT stages");
-    check(a.at("patch_size") == 4 && a.at("patch_stride") == json::array({4, 4}) &&
+    if (config.at("model_type") != "clap")
+        throw std::runtime_error("CLAP: not a CLAP model");
+    if (!(!a.at("enable_fusion").get<bool>()))
+        throw std::runtime_error("CLAP: fusion models are not supported");
+    if (!(a.at("depths").size() == 4 && a.at("num_attention_heads").size() == 4))
+        throw std::runtime_error("CLAP: expected four HTSAT stages");
+    if (!(a.at("patch_size") == 4 && a.at("patch_stride") == json::array({4, 4}) &&
           a.at("patch_embed_input_channels") == 1 && a.at("qkv_bias").get<bool>() &&
-          a.at("enable_patch_layer_norm").get<bool>() && a.at("flatten_patch_embeds").get<bool>(), "unsupported patch embedding");
-    check(a.at("hidden_act") == "gelu" && t.at("hidden_act") == "gelu", "only exact GELU is supported");
-    check(a.at("projection_hidden_act") == "relu" && t.at("projection_hidden_act") == "relu", "only ReLU projections supported");
-    check(t.value("position_embedding_type", std::string("absolute")) == "absolute", "unsupported text position embedding type");
+          a.at("enable_patch_layer_norm").get<bool>() && a.at("flatten_patch_embeds").get<bool>()))
+        throw std::runtime_error("CLAP: unsupported patch embedding");
+    if (!(a.at("hidden_act") == "gelu" && t.at("hidden_act") == "gelu"))
+        throw std::runtime_error("CLAP: only exact GELU is supported");
+    if (!(a.at("projection_hidden_act") == "relu" && t.at("projection_hidden_act") == "relu"))
+        throw std::runtime_error("CLAP: only ReLU projections supported");
+    if (t.value("position_embedding_type", std::string("absolute")) != "absolute")
+        throw std::runtime_error("CLAP: unsupported text position embedding type");
     const int spec = a.at("spec_size"), bins = a.at("num_mel_bins"), window = a.at("window_size");
-    check(spec > 0 && spec % 32 == 0 && bins > 0 && spec % bins == 0 && window > 0 &&
-          spec / 32 >= spec / bins, "invalid spectrogram geometry");
+    if (!(spec > 0 && spec % 32 == 0 && bins > 0 && spec % bins == 0 && window > 0 &&
+          spec / 32 >= spec / bins)) throw std::runtime_error("CLAP: invalid spectrogram geometry");
     int dim = a.at("patch_embeds_hidden_size");
-    check(dim > 0 && dim * 8 == a.at("hidden_size"), "audio hidden size mismatch");
+    if (!(dim > 0 && dim * 8 == a.at("hidden_size")))
+        throw std::runtime_error("CLAP: audio hidden size mismatch");
 }
 
 void ClapModel::load_arch_tensors() const {
@@ -53,8 +62,10 @@ void ClapModel::load_arch_tensors() const {
     loader.shape("audio.batch_norm.running_mean", {bins}); loader.shape("audio.batch_norm.running_var", {bins});
     for (int s = 0; s < 4; ++s) {
         const int heads = a.at("num_attention_heads")[s], depth = a.at("depths")[s];
-        check(heads > 0 && dim % heads == 0 && depth > 0, "invalid audio attention dimensions");
-        check(spec / (4 << s) >= window, "window larger than stage resolution is unsupported");
+        if (!(heads > 0 && dim % heads == 0 && depth > 0))
+            throw std::runtime_error("CLAP: invalid audio attention dimensions");
+        if (!(spec / (4 << s) >= window))
+            throw std::runtime_error("CLAP: window larger than stage resolution is unsupported");
         for (int b = 0; b < depth; ++b) {
             const std::string p = "audio.layers." + std::to_string(s) + ".blocks." + std::to_string(b);
             loader.norm_shape(p + ".layernorm_before", dim); loader.norm_shape(p + ".layernorm_after", dim);
@@ -73,8 +84,8 @@ void ClapModel::load_arch_tensors() const {
     loader.norm_shape("audio.norm", dim / 2);
     dim = t.at("hidden_size");
     const int heads = t.at("num_attention_heads"), layers = t.at("num_hidden_layers");
-    check(dim > 0 && heads > 0 && dim % heads == 0 && layers > 0 &&
-          t.at("type_vocab_size").get<int>() > 0, "invalid text dimensions");
+    if (!(dim > 0 && heads > 0 && dim % heads == 0 && layers > 0 &&
+          t.at("type_vocab_size").get<int>() > 0)) throw std::runtime_error("CLAP: invalid text dimensions");
     loader.shape("text.embeddings.word_embeddings.weight", {dim, t.at("vocab_size").get<int>()});
     loader.shape("text.embeddings.position_embeddings.weight", {dim, t.at("max_position_embeddings").get<int>()});
     loader.shape("text.embeddings.token_type_embeddings.weight", {dim, t.at("type_vocab_size").get<int>()});
@@ -91,7 +102,8 @@ void ClapModel::load_arch_tensors() const {
     for (const auto *branch : {"audio", "text"}) {
         const auto &c = std::string(branch) == "audio" ? a : t;
         const int pd = c.at("projection_dim");
-        check(pd > 0 && pd == config.at("projection_dim"), "projection dimensions disagree");
+        if (!(pd > 0 && pd == config.at("projection_dim")))
+            throw std::runtime_error("CLAP: projection dimensions disagree");
         loader.linear_shape(std::string(branch) + "_proj.linear1", c.at("hidden_size"), pd);
         loader.linear_shape(std::string(branch) + "_proj.linear2", pd, pd);
     }
@@ -106,8 +118,7 @@ int ClapModel::mel_bins() const { return a.at("num_mel_bins"); }
 int ClapModel::sample_rate() const { return 48000; }
 bool ClapModel::is_waveform_encoder() const { return false; }
 AudioFrames ClapModel::audio_frames(const std::vector<float> &) const {
-    check(false, "CLAP exposes one pooled audio projection, not frame representations");
-    return {};
+    throw std::runtime_error("CLAP: CLAP exposes one pooled audio projection, not frame representations");
 }
 
 Matrix ClapModel::attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
@@ -158,7 +169,8 @@ std::vector<float> ClapModel::project(const Matrix &pooled, const std::string &p
     auto y = ops.linear(h, prefix + ".linear2");
     double square = 0;
     for (float v : y.data) square += v * v;
-    check(std::isfinite(square) && square > 0, "invalid projection norm");
+    if (!(std::isfinite(square) && square > 0))
+        throw std::runtime_error("CLAP: invalid projection norm");
     const float length = static_cast<float>(std::sqrt(square));
     for (float &v : y.data) v /= length;
     return y.data;
@@ -166,7 +178,8 @@ std::vector<float> ClapModel::project(const Matrix &pooled, const std::string &p
 
 std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
     const int dim = t.at("hidden_size"), pad = t.at("pad_token_id"), vocab = t.at("vocab_size");
-    check(!ids.empty() && ids.size() <= static_cast<size_t>(t.at("max_position_embeddings").get<int>() - 2), "text length outside model context");
+    if (!(!ids.empty() && ids.size() <= static_cast<size_t>(t.at("max_position_embeddings").get<int>() - 2)))
+        throw std::runtime_error("CLAP: text length outside model context");
     const auto *word = loader.weight("text.embeddings.word_embeddings.weight"), *position = loader.weight("text.embeddings.position_embeddings.weight"),
                *type = loader.weight("text.embeddings.token_type_embeddings.weight");
     Matrix x(static_cast<int>(ids.size()), dim);
@@ -175,15 +188,18 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
     tensor_row(type, 0, type_row.data());
     int counter = pad;
     for (int i = 0; i < x.rows; ++i) {
-        check(ids[i] >= 0 && ids[i] < vocab, "token ID out of vocabulary");
+        if (!(ids[i] >= 0 && ids[i] < vocab))
+            throw std::runtime_error("CLAP: token ID out of vocabulary");
         mask[i] = ids[i] != pad;
         const int pos = mask[i] ? ++counter : pad;
-        check(pos < t.at("max_position_embeddings").get<int>(), "text positions overflow");
+        if (!(pos < t.at("max_position_embeddings").get<int>()))
+            throw std::runtime_error("CLAP: text positions overflow");
         tensor_row(word, ids[i], x[i]);
         tensor_row(position, pos, position_row.data());
         for (int c = 0; c < dim; ++c) x[i][c] = x[i][c] + position_row[c] + type_row[c];
     }
-    check(std::any_of(mask.begin(), mask.end(), [](int x) { return x; }), "text contains only padding");
+    if (!(std::any_of(mask.begin(), mask.end(), [](int x) { return x; })))
+        throw std::runtime_error("CLAP: text contains only padding");
     const float eps = t.at("layer_norm_eps");
     x = ops.norm(x, "text.embeddings.LayerNorm", eps);
     for (int l = 0; l < t.at("num_hidden_layers").get<int>(); ++l) {
@@ -204,8 +220,10 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
 std::vector<float> ClapModel::audio_features(const std::vector<float> &features, int frames) const {
     const int bins = a.at("num_mel_bins"), spec = a.at("spec_size"), ratio = spec / bins;
     const int target_time = spec * ratio;
-    check(frames > 0 && frames <= target_time && features.size() == static_cast<size_t>(frames) * bins, "invalid mel feature shape");
-    check(std::all_of(features.begin(), features.end(), [](float x) { return std::isfinite(x); }), "non-finite mel features");
+    if (!(frames > 0 && frames <= target_time && features.size() == static_cast<size_t>(frames) * bins))
+        throw std::runtime_error("CLAP: invalid mel feature shape");
+    if (!(std::all_of(features.begin(), features.end(), [](float x) { return std::isfinite(x); })))
+        throw std::runtime_error("CLAP: non-finite mel features");
     Matrix mel(frames, bins);
     const auto *bnw = loader.weight("audio.batch_norm.weight"), *bnb = loader.weight("audio.batch_norm.bias"),
                *mean = loader.weight("audio.batch_norm.running_mean"), *variance = loader.weight("audio.batch_norm.running_var");
@@ -235,7 +253,8 @@ std::vector<float> ClapModel::audio_features(const std::vector<float> &features,
     // The stored Conv2d [out,1,4,4] has the same contiguous bytes as [out,16].
     const auto *conv = loader.weight("audio.patch_embed.proj.weight");
     std::unique_ptr<ggml_context, decltype(&ggml_free)> convctx(ggml_init({4096, nullptr, true}), ggml_free);
-    check(convctx != nullptr, "conv metadata allocation failed");
+    if (convctx == nullptr)
+        throw std::runtime_error("CLAP: conv metadata allocation failed");
     auto *flat = ggml_new_tensor_2d(convctx.get(), conv->type, 16, patchdim);
     flat->data = conv->data;
     // Use a temporary alias name only in this instance's metadata context.
@@ -243,12 +262,14 @@ std::vector<float> ClapModel::audio_features(const std::vector<float> &features,
     auto conv_linear = [&](const Matrix &input) {
         const size_t bytes = (input.data.size() + static_cast<size_t>(input.rows) * patchdim) * sizeof(float) + 2 * 1024 * 1024;
         std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes, nullptr, false}), ggml_free);
-        check(ctx != nullptr, "patch allocation failed");
+        if (ctx == nullptr)
+            throw std::runtime_error("CLAP: patch allocation failed");
         auto *in = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, 16, input.rows);
         std::memcpy(in->data, input.data.data(), input.data.size() * sizeof(float));
         auto *out = ggml_mul_mat(ctx.get(), flat, in);
         auto *graph = ggml_new_graph_custom(ctx.get(), 32, false); ggml_build_forward_expand(graph, out);
-        check(ggml_graph_compute_with_ctx(ctx.get(), graph, ops.threads()) == GGML_STATUS_SUCCESS, "patch convolution failed");
+        if (ggml_graph_compute_with_ctx(ctx.get(), graph, ops.threads()) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("CLAP: patch convolution failed");
         Matrix result(input.rows, patchdim);
         std::memcpy(result.data.data(), out->data, result.data.size() * sizeof(float));
         const auto *bias = loader.weight("audio.patch_embed.proj.bias");
@@ -284,7 +305,8 @@ std::vector<float> ClapModel::audio_features(const std::vector<float> &features,
             y = ops.linear(y, p + ".output.dense"); add(x, y);
         }
         if (stage < 3) {
-            check(grid % 2 == 0, "odd stage grid not supported");
+            if (grid % 2 != 0)
+                throw std::runtime_error("CLAP: odd stage grid not supported");
             Matrix merged((grid / 2) * (grid / 2), x.cols * 4);
             for (int r = 0; r < grid / 2; ++r) for (int c = 0; c < grid / 2; ++c)
                 for (int part = 0; part < 4; ++part) {

@@ -15,18 +15,16 @@
 #include "miniaudio.h"
 
 #include "clap.h"
-#include "impl.h"
 
+#include <stdexcept>
 #include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <stdexcept>
 
 namespace clap {
-using detail::check;
 namespace {
 constexpr double pi = 3.14159265358979323846;
 void fft(std::vector<std::complex<double>> &a) {
@@ -57,16 +55,21 @@ double mel_to_hz(double mel) {
 } // namespace
 
 std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
-    check(sample_rate == 48000, "audio must be mono 48000 Hz (resample before inference)");
-    check(!pcm.empty(), "empty waveform");
-    check(std::all_of(pcm.begin(), pcm.end(), [](float x) { return std::isfinite(x); }), "non-finite waveform");
+    if (sample_rate != 48000)
+        throw std::runtime_error("CLAP: audio must be mono 48000 Hz (resample before inference)");
+    if (pcm.empty())
+        throw std::runtime_error("CLAP: empty waveform");
+    if (!(std::all_of(pcm.begin(), pcm.end(), [](float x) { return std::isfinite(x); })))
+        throw std::runtime_error("CLAP: non-finite waveform");
     constexpr size_t length = 480000;
     std::vector<double> wav(length, 0);
     if (pcm.size() > length) {
-        check(crop_offset <= pcm.size() - length, "crop offset out of range");
+        if (!(crop_offset <= pcm.size() - length))
+            throw std::runtime_error("CLAP: crop offset out of range");
         std::copy_n(pcm.data() + crop_offset, length, wav.data());
     } else {
-        check(crop_offset == 0, "crop offset requires audio longer than 10 seconds");
+        if (crop_offset != 0)
+            throw std::runtime_error("CLAP: crop offset requires audio longer than 10 seconds");
         const size_t repeats = length / pcm.size();
         for (size_t i = 0; i < repeats; ++i) std::copy(pcm.begin(), pcm.end(), wav.begin() + i * pcm.size());
     }

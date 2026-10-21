@@ -1,7 +1,6 @@
 #pragma once
 
 #include "model-loader.h"
-#include "impl.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>

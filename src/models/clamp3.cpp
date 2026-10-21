@@ -1,4 +1,5 @@
 #include "models.h"
+#include <stdexcept>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -14,40 +15,50 @@ Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
 
 void Clamp3Model::load_arch_hparams() {
     config = json::parse(loader.metadata("clamp3.config"));
-    check(config.at("model_type") == "clamp3", "not a CLaMP3 model");
-    check(config.at("chunk_length").get<int>() == 128, "CLaMP3 chunk length must be 128");
+    if (config.at("model_type") != "clamp3")
+        throw std::runtime_error("CLAP: not a CLaMP3 model");
+    if (config.at("chunk_length").get<int>() != 128)
+        throw std::runtime_error("CLAP: CLaMP3 chunk length must be 128");
     audio_config = config.at("audio_config");
     text_config = config.at("text_config");
     for (const auto *key : {"hidden_size", "num_hidden_layers", "num_attention_heads",
                             "intermediate_size", "max_position_embeddings", "type_vocab_size"}) {
-        check(audio_config.at(key).get<int>() > 0, std::string("invalid audio ") + key);
-        check(text_config.at(key).get<int>() > 0, std::string("invalid text ") + key);
+        if (!(audio_config.at(key).get<int>() > 0))
+            throw std::runtime_error(std::string("CLAP: invalid audio ") + key);
+        if (!(text_config.at(key).get<int>() > 0))
+            throw std::runtime_error(std::string("CLAP: invalid text ") + key);
     }
-    check(audio_config.at("hidden_size") == config.at("audio_feature_dim"), "audio feature dimension mismatch");
-    check(audio_config.at("max_position_embeddings").get<int>() >= 128, "audio position table is too short");
-    check(text_config.at("max_position_embeddings").get<int>() >= 130, "text position table is too short");
-    check(audio_config.at("hidden_size").get<int>() % audio_config.at("num_attention_heads").get<int>() == 0,
-          "invalid audio attention dimensions");
-    check(text_config.at("hidden_size").get<int>() % text_config.at("num_attention_heads").get<int>() == 0,
-          "invalid text attention dimensions");
-    check(audio_config.value("hidden_act", std::string("gelu")) == "gelu" &&
-          text_config.value("hidden_act", std::string("gelu")) == "gelu", "only exact GELU is supported");
-    check(text_config.value("position_embedding_type", std::string("absolute")) == "absolute" &&
-          audio_config.value("position_embedding_type", std::string("absolute")) == "absolute",
-          "only absolute position embeddings are supported");
+    if (audio_config.at("hidden_size") != config.at("audio_feature_dim"))
+        throw std::runtime_error("CLAP: audio feature dimension mismatch");
+    if (!(audio_config.at("max_position_embeddings").get<int>() >= 128))
+        throw std::runtime_error("CLAP: audio position table is too short");
+    if (!(text_config.at("max_position_embeddings").get<int>() >= 130))
+        throw std::runtime_error("CLAP: text position table is too short");
+    if (audio_config.at("hidden_size").get<int>() % audio_config.at("num_attention_heads").get<int>() != 0)
+        throw std::runtime_error("CLAP: invalid audio attention dimensions");
+    if (text_config.at("hidden_size").get<int>() % text_config.at("num_attention_heads").get<int>() != 0)
+        throw std::runtime_error("CLAP: invalid text attention dimensions");
+    if (!(audio_config.value("hidden_act", std::string("gelu")) == "gelu" &&
+          text_config.value("hidden_act", std::string("gelu")) == "gelu"))
+        throw std::runtime_error("CLAP: only exact GELU is supported");
+    if (!(text_config.value("position_embedding_type", std::string("absolute")) == "absolute" &&
+          audio_config.value("position_embedding_type", std::string("absolute")) == "absolute"))
+        throw std::runtime_error("CLAP: only absolute position embeddings are supported");
     const int pad = text_config.at("pad_token_id"), vocab = text_config.at("vocab_size");
-    check(pad >= 0 && pad < vocab && pad <= text_config.at("max_position_embeddings").get<int>() - 129,
-          "invalid text padding token");
+    if (!(pad >= 0 && pad < vocab && pad <= text_config.at("max_position_embeddings").get<int>() - 129))
+        throw std::runtime_error("CLAP: invalid text padding token");
     for (const auto *key : {"bos_token_id", "eos_token_id"})
-        check(text_config.at(key).get<int>() >= 0 && text_config.at(key).get<int>() < vocab,
-              "invalid text special token");
+        if (!(text_config.at(key).get<int>() >= 0 && text_config.at(key).get<int>() < vocab))
+            throw std::runtime_error("CLAP: invalid text special token");
     for (const auto *branch : {&audio_config, &text_config}) {
         const float epsilon = branch->at("layer_norm_eps").get<float>();
-        check(std::isfinite(epsilon) && epsilon > 0, "invalid layer norm epsilon");
-        check(!branch->value("is_decoder", false) && !branch->value("add_cross_attention", false),
-              "CLaMP3 decoder and cross-attention configurations are unsupported");
+        if (!(std::isfinite(epsilon) && epsilon > 0))
+            throw std::runtime_error("CLAP: invalid layer norm epsilon");
+        if (!(!branch->value("is_decoder", false) && !branch->value("add_cross_attention", false)))
+            throw std::runtime_error("CLAP: CLaMP3 decoder and cross-attention configurations are unsupported");
     }
-    check(config.at("projection_dim").get<int>() > 0, "invalid projection dimension");
+    if (!(config.at("projection_dim").get<int>() > 0))
+        throw std::runtime_error("CLAP: invalid projection dimension");
 }
 
 void Clamp3Model::load_arch_tensors() const {
@@ -85,8 +96,7 @@ int Clamp3Model::mel_bins() const { return 0; }
 int Clamp3Model::sample_rate() const { return 0; }
 bool Clamp3Model::is_waveform_encoder() const { return false; }
 AudioFrames Clamp3Model::audio_frames(const std::vector<float> &) const {
-    check(false, "CLaMP3 requires precomputed MERT-v1-95M features");
-    return {};
+    throw std::runtime_error("CLAP: CLaMP3 requires precomputed MERT-v1-95M features");
 }
 
 Matrix Clamp3Model::attention(const Matrix &x, const std::vector<int> &mask,
@@ -145,7 +155,8 @@ std::vector<float> Clamp3Model::pool_project(const Matrix &hidden, const std::ve
         ++count;
         for (int c = 0; c < hidden.cols; ++c) pooled[0][c] += hidden[r][c];
     }
-    check(count > 0, "CLaMP3 chunk contains no input");
+    if (!(count > 0))
+        throw std::runtime_error("CLAP: CLaMP3 chunk contains no input");
     for (float &value : pooled.data) value /= count;
     return ops.linear(pooled, projection).data;
 }
@@ -171,10 +182,12 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
         int position = pad;
         for (int row = 0; row < chunk; ++row) {
             const int id = static_cast<size_t>(row) < length ? ids[start + row] : pad;
-            check(id >= 0 && id < vocab, "token ID out of vocabulary");
+            if (!(id >= 0 && id < vocab))
+                throw std::runtime_error("CLAP: token ID out of vocabulary");
             mask[row] = static_cast<size_t>(row) < length;
             const int pos = id == pad ? pad : ++position;
-            check(pos < text_config.at("max_position_embeddings").get<int>(), "text positions overflow");
+            if (!(pos < text_config.at("max_position_embeddings").get<int>()))
+                throw std::runtime_error("CLAP: text positions overflow");
             tensor_row(words, id, embeddings[row]);
             tensor_row(positions, pos, position_row.data());
             for (int c = 0; c < dim; ++c) embeddings[row][c] = embeddings[row][c] + position_row[c] + type_row[c];
@@ -223,17 +236,18 @@ std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
 }
 
 std::vector<float> Clamp3Model::text(const std::vector<int> &ids) const {
-    check(!ids.empty(), "text token sequence is empty");
+    if (ids.empty())
+        throw std::runtime_error("CLAP: text token sequence is empty");
     return chunked_text(ids);
 }
 
 std::vector<float> Clamp3Model::audio_features(const std::vector<float> &features, int frames) const {
     const int dim = config.at("audio_feature_dim");
-    check(frames > 0 && frames <= std::numeric_limits<int>::max() - 2 &&
-          features.size() == static_cast<size_t>(frames) * dim,
-          "invalid MERT-v1-95M feature shape");
-    check(std::all_of(features.begin(), features.end(), [](float value) { return std::isfinite(value); }),
-          "non-finite MERT-v1-95M features");
+    if (!(frames > 0 && frames <= std::numeric_limits<int>::max() - 2 &&
+          features.size() == static_cast<size_t>(frames) * dim))
+        throw std::runtime_error("CLAP: invalid MERT-v1-95M feature shape");
+    if (!(std::all_of(features.begin(), features.end(), [](float value) { return std::isfinite(value); })))
+        throw std::runtime_error("CLAP: non-finite MERT-v1-95M features");
     Matrix bordered(frames + 2, dim);
     std::copy(features.begin(), features.end(), bordered.data.begin() + dim);
     return chunked_audio(bordered);
