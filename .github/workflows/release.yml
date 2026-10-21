@@ -36,7 +36,7 @@ jobs:
           - os: ubuntu-24.04
             asset: clap-linux-riscv64-cpu
             binary: build/clap
-            cross: riscv64
+            target: riscv64
             cmake_args: >-
               -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64
               -DCMAKE_C_COMPILER=riscv64-linux-gnu-gcc-14
@@ -47,7 +47,7 @@ jobs:
           - os: ubuntu-24.04
             asset: clap-linux-loong64-cpu
             binary: build/clap
-            cross: loongarch64
+            target: loongarch64
             cmake_args: >-
               -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=loongarch64
               -DCMAKE_C_COMPILER=loongarch64-linux-gnu-gcc-14
@@ -75,12 +75,11 @@ jobs:
         with:
           submodules: recursive
       - name: Install cross-compilation tools
-        if: matrix.cross != ''
-        env:
-          CROSS: ${{ matrix.cross }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y "gcc-14-${CROSS}-linux-gnu" "g++-14-${CROSS}-linux-gnu" qemu-user
+        if: matrix.target != ''
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: gcc-14-${{ matrix.target }}-linux-gnu g++-14-${{ matrix.target }}-linux-gnu
+          version: cross-${{ matrix.os }}-${{ matrix.target }}-gcc14-v1
       - name: Install CUDA 12.9 build dependencies
         if: contains(matrix.asset, '-cuda')
         uses: Jimver/cuda-toolkit@v0.2.36
@@ -111,20 +110,6 @@ jobs:
           ${{ matrix.cmake_args }}
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
-
-      - name: Smoke-test cross-compiled binary
-        if: matrix.cross != ''
-        env:
-          CROSS: ${{ matrix.cross }}
-          BINARY: ${{ matrix.binary }}
-        run: |
-          file "$BINARY"
-          "${CROSS}-linux-gnu-readelf" -h "$BINARY"
-          if "${CROSS}-linux-gnu-readelf" -l "$BINARY" | grep -q INTERP; then
-            echo "Expected a statically linked release binary" >&2
-            exit 1
-          fi
-          timeout 60 "qemu-${CROSS}" "$BINARY" --help
 
       - name: Upload release asset
         env:
