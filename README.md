@@ -136,7 +136,9 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
 | `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3 and MERT2 specializations: hyperparameters, tensor contracts, encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
-| `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion; no Python at inference |
+| `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion CLI; no Python at inference |
+| `conversion/base.py` | Shared safe checkpoint loading and GGUF serialization |
+| `conversion/clap.py`, `conversion/clamp3.py`, `conversion/mert2.py` | Model-specific config validation, tensor mapping and conversion |
 
 Convert a local `laion/larger_clap_music` checkpoint containing `config.json`,
 `pytorch_model.bin`, `tokenizer.json` and `preprocessor_config.json`, then run:
