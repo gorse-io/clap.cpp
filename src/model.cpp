@@ -66,7 +66,7 @@ std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, 
         return pooled;
     }
     if (impl_->architecture->mel_bins() == 0)
-        throw std::runtime_error("CLAP: CLaMP3 waveform input is unavailable; extract MERT-v1-95M features and use audio_features/--audio-features");
+        throw std::runtime_error("CLAP: CLaMP3 waveform input requires --mert-model or MERT-v1-95M features via audio_features/--audio-features");
     if (impl_->architecture->mel_bins() != 64)
         throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
     return audio_features(log_mel(pcm, sample_rate, crop_offset), 1001);
@@ -84,7 +84,7 @@ AudioFrames Model::audio_frames(const std::vector<float> &pcm, int sample_rate) 
 
 int Model::audio_sample_rate() const { return impl_->architecture->sample_rate(); }
 AudioFrames Model::clamp3_features(const std::vector<float> &pcm, int sample_rate) {
-    if (!(sample_rate > 0)) throw std::runtime_error("audio sample rate must be positive");
+    if (sample_rate <= 0) throw std::runtime_error("CLAP: audio sample rate must be positive");
     if (sample_rate == 24000) return impl_->architecture->clamp3_features(pcm);
     return impl_->architecture->clamp3_features(resample_audio({pcm, sample_rate}, 24000).samples);
 }

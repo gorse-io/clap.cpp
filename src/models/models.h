@@ -33,8 +33,8 @@ private:
     nlohmann::json config, a, t;
 };
 
-// CLaMP3 text (XLM-R) and precomputed-audio (BERT) encoders. Raw MERT feature
-// extraction and the optional symbolic encoder intentionally remain external.
+// CLaMP3 text (XLM-R) and feature-input audio (BERT) encoders. Raw waveform
+// extraction uses a separate MertModel; the optional symbolic encoder is external.
 class Clamp3Model final : public ModelArchitecture {
 public:
     Clamp3Model(const ModelLoader &loader, int threads);

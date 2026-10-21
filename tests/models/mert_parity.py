@@ -80,8 +80,9 @@ def run(args):
         target = args.out/f'model-{dtype}.gguf'
         subprocess.run([sys.executable, str(root/'convert_hf_to_gguf.py'),str(source),str(target),
                         '--dtype', dtype,'--mert-revision', REVISION], check=True)
+        subprocess.run([str(args.build/'mert-model-test'), str(target), str(args.out)], check=True)
+        cases['resampled'] = np.frombuffer((args.out/'resampled-control.wav').read_bytes()[44:], dtype='<f4').copy()
         # Compare identical storage-rounded weights, not a half-activation oracle.
-        original = {n:v.clone() for n,v in network.state_dict().items()}
         if dtype == 'f16':
             # Converter materializes weight norm before rounding; remove it here too.
             torch.nn.utils.parametrize.remove_parametrizations(network.encoder.pos_conv_embed.conv,
@@ -108,10 +109,13 @@ def run(args):
                 actual = json.loads(subprocess.check_output([str(args.build/'clap-model'),'-m',str(target),
                                      '-a',str(audio),'--clamp3-features','-t','2'], text=True))
                 error(np.asarray(actual['values']).reshape(actual['frames'],actual['dimension']),
-                      np.stack(chunks), f'{dtype}/{name}/clamp3', 0.004)
-        if dtype=='f32':
-            # Restore is unnecessary until after f16; retain native weight-norm structure.
-            pass
+                      np.stack(chunks), f'{dtype}/{name}/clamp3', 0.00002)
+                if name == 'resampled':
+                    resampled = json.loads(subprocess.check_output([str(args.build/'clap-model'),
+                        '-m',str(target),'-a',str(args.out/'resampled-input.wav'),
+                        '--clamp3-features','-t','2'], text=True))
+                    np.testing.assert_array_equal(resampled['values'], actual['values'])
+                    print(f'{dtype}/48kHz CLI -> 24kHz MERT matches native-rate control', flush=True)
     for n in [0,399,23999]:
         path=args.out/f'short-{n}.wav';wav(path,np.zeros(n,dtype='float32'))
         result=subprocess.run([str(args.build/'clap-model'),'-m',str(target),'-a',str(path),

@@ -30,23 +30,44 @@ c=dict(model_type='clamp3',variant='synthetic-pipeline',projection_dim=6,chunk_l
 (fixture/'config.json').write_text(json.dumps(c))
 subprocess.run([sys.executable,str(root/'convert_hf_to_gguf.py'),str(fixture/'model.pth'),str(fixture/'model.gguf'),
                '--clamp3-config',str(fixture/'config.json'),'--tokenizer',str(build/'clamp3-fixture/tokenizer.json')],check=True)
-cli=str(build/'clap-model');mert=str(out/'model-f32.gguf')
-for case in ['broadband','two_chunks','discard_tail']:
-    wave=out/f'{case}.wav'
-    data=json.loads(subprocess.check_output([cli,'-m',mert,'-a',str(wave),'--clamp3-features','-t','2']))
-    features=np.asarray(data['values'],dtype='float32').reshape(data['frames'],hidden)
-    np.save(fixture/'features.npy',features)
-    expected=json.loads(subprocess.check_output([cli,'-m',str(fixture/'model.gguf'),'--audio-features',
-                                                 str(fixture/'features.npy'),'-t','2']))
-    actual=json.loads(subprocess.check_output([cli,'-m',str(fixture/'model.gguf'),'--mert-model',mert,
-                                              '-a',str(wave),'-t','2']))
-    np.testing.assert_allclose(actual,expected,rtol=0,atol=1e-6)
-    with torch.no_grad():
-        x=torch.cat([torch.zeros(1,hidden),torch.from_numpy(features),torch.zeros(1,hidden)])[None]
-        mask=torch.zeros(1,128,dtype=torch.long);mask[:,:x.shape[1]]=1
-        x=torch.nn.functional.pad(x,(0,0,0,128-x.shape[1]))
-        y=audio(inputs_embeds=x,attention_mask=mask).last_hidden_state
-        y=proj((y*mask[:,:,None]).sum(1)/mask.sum(1)[:,None])[0].numpy()
-    np.testing.assert_allclose(actual,y,rtol=1e-4,atol=1e-5)
-    print(case,'native audio -> MERT -> CLaMP3 matches file and Transformers oracle',flush=True)
-print('Native pipeline passed')
+cli=str(build/'clap-model')
+for dtype in ['f32', 'f16']:
+    mert=str(out/f'model-{dtype}.gguf')
+    for case in ['broadband','two_chunks','discard_tail','resampled-input']:
+        wave=out/f'{case}.wav'
+        data=json.loads(subprocess.check_output([cli,'-m',mert,'-a',str(wave),'--clamp3-features','-t','2']))
+        features=np.asarray(data['values'],dtype='float32').reshape(data['frames'],hidden)
+        np.save(fixture/'features.npy',features)
+        expected=json.loads(subprocess.check_output([cli,'-m',str(fixture/'model.gguf'),'--audio-features',
+                                                     str(fixture/'features.npy'),'-t','2']))
+        actual=json.loads(subprocess.check_output([cli,'-m',str(fixture/'model.gguf'),'--mert-model',mert,
+                                                  '-a',str(wave),'-t','2']))
+        np.testing.assert_allclose(actual,expected,rtol=0,atol=1e-6)
+        with torch.no_grad():
+            x=torch.cat([torch.zeros(1,hidden),torch.from_numpy(features),torch.zeros(1,hidden)])[None]
+            mask=torch.zeros(1,128,dtype=torch.long);mask[:,:x.shape[1]]=1
+            x=torch.nn.functional.pad(x,(0,0,0,128-x.shape[1]))
+            y=audio(inputs_embeds=x,attention_mask=mask).last_hidden_state
+            y=proj((y*mask[:,:,None]).sum(1)/mask.sum(1)[:,None])[0].numpy()
+        np.testing.assert_allclose(actual,y,rtol=1e-4,atol=1e-5)
+        print(dtype,case,'native audio -> MERT -> CLaMP3 max_abs',
+              float(np.max(np.abs(np.asarray(actual)-y))),flush=True)
+
+wave = str(out/'broadband.wav')
+mert = str(out/'model-f32.gguf')
+clamp = str(fixture/'model.gguf')
+for arguments in [
+    ['-m',clamp,'--mert-model',mert,'--text','invalid'],
+    ['-m',mert,'-a',wave,'--clamp3-features','--frames'],
+    ['-m',mert,'-a',wave,'--mert-model',mert],
+    ['-m',clamp,'-a',wave,'--mert-model',clamp],
+    ['-m',clamp,'-a',wave],
+    ['-m',mert,'-a',wave,'--frames','--crop-offset','1'],
+    ['-m',mert,'-a',wave,'--frames','--crop-offset','0'],
+    ['-m',mert,'-a',wave,'--clamp3-features','--crop-offset','0'],
+    ['-m',clamp,'-a',wave,'--mert-model',mert,'--crop-offset','0'],
+    ['-m',str(build/'clamp3-fixture/model.gguf'),'-a',wave,'--mert-model',mert],
+]:
+    result = subprocess.run([cli,*arguments], capture_output=True, text=True)
+    assert result.returncode > 0 and result.stderr, (arguments,result.returncode,result.stderr[:1000])
+print('Native pipeline and CLI validation passed')

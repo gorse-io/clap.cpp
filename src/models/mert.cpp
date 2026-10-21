@@ -13,30 +13,48 @@ MertModel::MertModel(const ModelLoader &source, int threads) : loader(source), o
 
 void MertModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("mert.config"));
-    if (!(config.at("model_type") == "mert_model" && config.at("sample_rate") == 24000)) throw std::runtime_error("expected a 24 kHz MERT-v1 model");
-    if (!(!config.value("feature_extractor_cqt", false) && !config.value("deepnorm", false) &&
-          !config.value("do_stable_layer_norm", false) && config.at("feat_extract_norm") == "group" &&
-          config.value("feat_proj_layer_norm", true) && !config.value("conv_pos_batch_norm", false) &&
-          config.at("hidden_act") == "gelu" && config.at("feat_extract_activation") == "gelu")) throw std::runtime_error("unsupported MERT-v1 frontend/encoder variant");
+    if (config.at("model_type") != "mert_model" || config.at("sample_rate") != 24000)
+        throw std::runtime_error("expected a 24 kHz MERT-v1 model");
+    for (const char *key : {"feature_extractor_cqt", "deepnorm", "do_stable_layer_norm",
+                            "feat_proj_layer_norm", "conv_pos_batch_norm", "conv_bias"})
+        if ((config.contains(key) && !config.at(key).is_boolean()) ||
+            (std::string(key) == "conv_bias" && !config.contains(key)))
+            throw std::runtime_error(std::string("invalid MERT boolean ") + key);
+    if (config.value("feature_extractor_cqt", false) || config.value("deepnorm", false) ||
+        config.value("do_stable_layer_norm", false) || config.at("feat_extract_norm") != "group" ||
+        !config.value("feat_proj_layer_norm", true) || config.value("conv_pos_batch_norm", false) ||
+        config.at("hidden_act") != "gelu" || config.at("feat_extract_activation") != "gelu")
+        throw std::runtime_error("unsupported MERT-v1 frontend/encoder variant");
+    auto positive_int = [](const nlohmann::json &value) {
+        return value.is_number_integer() && value > 0 && value <= std::numeric_limits<int>::max();
+    };
     for (const char *key : {"hidden_size", "intermediate_size", "num_hidden_layers", "num_attention_heads",
                             "num_conv_pos_embeddings", "num_conv_pos_embedding_groups"})
-        if (!(config.at(key).is_number_integer() && config.at(key).get<int>() > 0)) throw std::runtime_error(std::string("invalid MERT ") + key);
+        if (!positive_int(config.at(key))) throw std::runtime_error(std::string("invalid MERT ") + key);
     const int width = config.at("hidden_size"), heads = config.at("num_attention_heads");
-    if (!(width % heads == 0 && width % config.at("num_conv_pos_embedding_groups").get<int>() == 0)) throw std::runtime_error("invalid MERT attention/position groups");
+    if (width % heads != 0 || width % config.at("num_conv_pos_embedding_groups").get<int>() != 0)
+        throw std::runtime_error("invalid MERT attention/position groups");
     const auto &dims = config.at("conv_dim"), &kernels = config.at("conv_kernel"), &strides = config.at("conv_stride");
-    if (!(dims.is_array() && !dims.empty() && dims.size() == kernels.size() && dims.size() == strides.size())) throw std::runtime_error("invalid MERT convolution geometry");
-    if (!(config.value("num_feat_extract_layers", static_cast<int>(dims.size())) == static_cast<int>(dims.size()))) throw std::runtime_error("invalid MERT convolution geometry: num_feat_extract_layers");
+    if (!dims.is_array() || !kernels.is_array() || !strides.is_array() || dims.empty() ||
+        dims.size() != kernels.size() || dims.size() != strides.size())
+        throw std::runtime_error("invalid MERT convolution geometry");
+    if (config.contains("num_feat_extract_layers") &&
+        (!positive_int(config.at("num_feat_extract_layers")) || config.at("num_feat_extract_layers") != dims.size()))
+        throw std::runtime_error("invalid MERT convolution geometry: num_feat_extract_layers");
     int64_t receptive = 1, jump = 1;
     for (size_t i = 0; i < dims.size(); ++i) {
         for (const auto *array : {&dims, &kernels, &strides})
-            if (!((*array)[i].is_number_integer() && (*array)[i].get<int>() > 0)) throw std::runtime_error("invalid MERT convolution dimension");
+            if (!positive_int((*array)[i])) throw std::runtime_error("invalid MERT convolution dimension");
         receptive += (kernels[i].get<int64_t>() - 1) * jump;
         jump *= strides[i].get<int64_t>();
-        if (!(receptive <= 24000 && jump <= 24000)) throw std::runtime_error("unsupported MERT convolution receptive field");
+        if (receptive > 24000 || jump > 24000)
+            throw std::runtime_error("unsupported MERT convolution receptive field");
     }
     minimum_samples = static_cast<int>(receptive);
+    if (!config.at("layer_norm_eps").is_number())
+        throw std::runtime_error("invalid MERT layer_norm_eps");
     const float epsilon = config.at("layer_norm_eps");
-    if (!(std::isfinite(epsilon) && epsilon > 0)) throw std::runtime_error("invalid MERT layer_norm_eps");
+    if (!std::isfinite(epsilon) || epsilon <= 0) throw std::runtime_error("invalid MERT layer_norm_eps");
 }
 
 void MertModel::load_arch_tensors() const {
@@ -76,9 +94,13 @@ std::vector<float> MertModel::audio_features(const std::vector<float> &, int) co
 }
 
 std::vector<float> MertModel::normalize(const std::vector<float> &pcm) const {
-    if (!(pcm.size() >= static_cast<size_t>(minimum_samples) && pcm.size() <= (1ULL << 28))) throw std::runtime_error("MERT waveform is empty, too short or too large");
+    if (pcm.size() < static_cast<size_t>(minimum_samples) || pcm.size() > (1ULL << 28))
+        throw std::runtime_error("MERT waveform is empty, too short or too large");
     double mean = 0, variance = 0;
-    for (float v : pcm) { if (!(std::isfinite(v))) throw std::runtime_error("non-finite MERT waveform"); mean += v; }
+    for (float v : pcm) {
+        if (!std::isfinite(v)) throw std::runtime_error("non-finite MERT waveform");
+        mean += v;
+    }
     mean /= pcm.size();
     for (float v : pcm) variance += (v - mean) * (v - mean);
     const double scale = 1 / std::sqrt(variance / pcm.size() + 1e-7);
@@ -94,7 +116,7 @@ Matrix MertModel::convolution(const Matrix &x, const std::string &name, int kern
     const auto *weight = loader.weight(name + ".weight");
     const int outputs = static_cast<int>(weight->ne[2]);
     const int rows = (x.rows + 2 * padding - kernel) / stride + 1;
-    if (!(rows > 0)) throw std::runtime_error("MERT convolution produces no frames");
+    if (rows <= 0) throw std::runtime_error("MERT convolution produces no frames");
     const int inputs = x.cols / groups, per_group = outputs / groups, width = inputs * kernel;
     Matrix result(rows, outputs);
     // Expand F16 storage to F32 once per group, keeping activations F32 as in
@@ -102,7 +124,7 @@ Matrix MertModel::convolution(const Matrix &x, const std::string &name, int kern
     const size_t bytes = (static_cast<size_t>(width) * (rows + per_group) +
                           static_cast<size_t>(rows) * per_group) * sizeof(float) + 2 * 1024 * 1024;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes,nullptr,false}),ggml_free);
-    if (!(ctx != nullptr)) throw std::runtime_error("MERT convolution allocation failed");
+    if (!ctx) throw std::runtime_error("MERT convolution allocation failed");
     auto *w = ggml_new_tensor_2d(ctx.get(),GGML_TYPE_F32,width,per_group);
     auto *input = ggml_new_tensor_2d(ctx.get(),GGML_TYPE_F32,width,rows);
     auto *output = ggml_mul_mat(ctx.get(),w,input);
@@ -118,7 +140,8 @@ Matrix MertModel::convolution(const Matrix &x, const std::string &name, int kern
                 columns[static_cast<size_t>(row)*width + channel*kernel+tap] =
                     source >= 0 && source < x.rows ? x[source][group*inputs+channel] : 0;
             }
-        if (!(ggml_graph_compute_with_ctx(ctx.get(),graph,ops.threads()) == GGML_STATUS_SUCCESS)) throw std::runtime_error("MERT convolution GGML execution failed");
+        if (ggml_graph_compute_with_ctx(ctx.get(),graph,ops.threads()) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("MERT convolution GGML execution failed");
         const auto *b = bias ? loader.weight(name + ".bias") : nullptr;
         for (int row = 0; row < rows; ++row) for (int col = 0; col < per_group; ++col)
             result[row][group*per_group+col] = static_cast<float *>(output->data)[row*per_group+col] +
@@ -234,7 +257,8 @@ AudioFrames MertModel::audio_frames(const std::vector<float> &pcm) const {
     return {std::move(output.data),output.rows,output.cols};
 }
 AudioFrames MertModel::clamp3_features(const std::vector<float> &pcm) const {
-    if (!(pcm.size() >= 24000)) throw std::runtime_error("CLaMP3 MERT extraction requires at least one second of audio");
+    if (pcm.size() < 24000)
+        throw std::runtime_error("CLaMP3 MERT extraction requires at least one second of audio");
     auto normalized = normalize(pcm);
     AudioFrames result; result.dimension = projection_dimension();
     constexpr size_t window = 5*24000;

@@ -13,7 +13,7 @@ struct Audio {
 };
 
 // Time-major frame representations returned by waveform encoders such as
-// MERT-v2-FullSong. values has exactly frames * dimension elements.
+// MERT-v1-95M/MERT-v2-FullSong. values has exactly frames * dimension elements.
 struct AudioFrames {
     std::vector<float> values;
     int frames = 0;
@@ -37,11 +37,14 @@ Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
                            std::size_t crop_offset = 0);
 
-// Native CLAP, CLaMP3 or MERT-v2-FullSong, selected from GGUF architecture metadata. Weights are
+// Native CLAP, CLaMP3, MERT-v1 or MERT2, selected from GGUF architecture metadata. Weights are
 // memory-mapped on POSIX platforms.
 // Each call embeds one item; methods on the same instance are not thread-safe.
 // CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
-// pooled projections and accepts precomputed MERT-v1-95M audio features only.
+// pooled projections from MERT-v1-95M features. Chain a separate MERT Model's
+// clamp3_features() into audio_features() for native raw-audio inference.
+// MERT-v1 audio_frames() exposes final-layer frames; audio() mean-pools them.
+// Neither is the all-layer CLaMP3 representation: use clamp3_features() for that.
 // MERT-v2-FullSong audio() mean-pools every output frame from the complete input;
 // audio_frames() returns the unpooled 25 Hz sequence for published weights.
 class Model {
@@ -56,7 +59,9 @@ public:
     std::vector<int> tokenize(const std::string &utf8, std::size_t max_length = 512) const;
     std::vector<float> text(const std::vector<int> &token_ids);
     std::vector<float> text(const std::string &utf8);
-    // Feature layout [frames, audio_config.num_mel_bins], channel count = 1.
+    // CLAP: [frames, audio_config.num_mel_bins], channel count = 1.
+    // CLaMP3: time-major [windows, audio_feature_dim] MERT features (published: 768).
+    // MERT waveform encoders do not accept precomputed features.
     std::vector<float> audio_features(const std::vector<float> &features, int frames);
     std::vector<float> audio(const std::vector<float> &pcm, int sample_rate = 48000,
                               std::size_t crop_offset = 0);

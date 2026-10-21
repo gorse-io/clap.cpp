@@ -204,6 +204,8 @@ if(BUILD_TESTING)
         if(NOT EXISTS "${MERT_REFERENCE_SOURCE}/modeling_MERT.py")
             message(FATAL_ERROR "MERT_REFERENCE_SOURCE must contain reviewed pinned official source")
         endif()
+        add_executable(mert-model-test tests/models/mert-model-test.cpp)
+        target_link_libraries(mert-model-test PRIVATE clap)
         add_test(NAME mert_model_parity
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_parity.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mert-fixture" "${MERT_REFERENCE_SOURCE}")
