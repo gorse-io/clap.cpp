@@ -1,5 +1,6 @@
 #include "models.h"
 
+#include <stdexcept>
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -48,38 +49,43 @@ Mert2Model::Mert2Model(const ModelLoader &source, int threads)
 
 void Mert2Model::load_arch_hparams() {
     config = json::parse(loader.metadata("mert2.config"));
-    check(config.at("model_type") == "mert2", "not a MERT2 model");
-    check(config.at("variant") == "fs", "only MERT-v2-FullSong variant 'fs' is supported");
+    if (config.at("model_type") != "mert2")
+        throw std::runtime_error("CLAP: not a MERT2 model");
+    if (config.at("variant") != "fs")
+        throw std::runtime_error("CLAP: only MERT-v2-FullSong variant 'fs' is supported");
     const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
     const int layers = config.at("num_hidden_layers"), heads = config.at("num_attention_heads");
-    check(hidden > 0 && intermediate > 0 && layers > 0 && heads > 0 && hidden % heads == 0 &&
-          (hidden / heads) % 2 == 0, "invalid MERT2 encoder dimensions");
+    if (!(hidden > 0 && intermediate > 0 && layers > 0 && heads > 0 && hidden % heads == 0 &&
+          (hidden / heads) % 2 == 0)) throw std::runtime_error("CLAP: invalid MERT2 encoder dimensions");
     const int bins = config.at("num_mel_bins"), rate = config.at("sampling_rate");
     const int fft_size = config.at("n_fft"), window = config.at("win_length"), hop = config.at("hop_length");
-    check(bins > 0 && rate > 0 && fft_size > 0 && (fft_size & (fft_size - 1)) == 0 &&
-          window == fft_size && hop > 0, "unsupported MERT2 waveform frontend geometry");
-    check(config.at("minimum_input_samples").get<int>() == fft_size / 2 + 1,
-          "invalid MERT2 minimum input length");
-    check(config.at("inputs_to_logits_ratio").get<int>() == hop * 4,
-          "invalid MERT2 frame ratio");
+    if (!(bins > 0 && rate > 0 && fft_size > 0 && (fft_size & (fft_size - 1)) == 0 &&
+          window == fft_size && hop > 0))
+        throw std::runtime_error("CLAP: unsupported MERT2 waveform frontend geometry");
+    if (config.at("minimum_input_samples").get<int>() != fft_size / 2 + 1)
+        throw std::runtime_error("CLAP: invalid MERT2 minimum input length");
+    if (config.at("inputs_to_logits_ratio").get<int>() != hop * 4)
+        throw std::runtime_error("CLAP: invalid MERT2 frame ratio");
     const auto channels = config.at("subsampling_channels");
     const auto depths = config.at("subsampling_depths");
-    check(channels.size() == 3 && depths.size() == 3 && channels[0] == bins && channels[2] == hidden,
-          "invalid MERT2 subsampling layout");
+    if (!(channels.size() == 3 && depths.size() == 3 && channels[0] == bins && channels[2] == hidden))
+        throw std::runtime_error("CLAP: invalid MERT2 subsampling layout");
     for (size_t index = 0; index < 3; ++index)
-        check(channels[index].get<int>() > 0 && depths[index].get<int>() > 0,
-              "invalid MERT2 subsampling dimensions");
+        if (!(channels[index].get<int>() > 0 && depths[index].get<int>() > 0))
+            throw std::runtime_error("CLAP: invalid MERT2 subsampling dimensions");
     const int convolution = config.at("conv_depthwise_kernel_size");
-    check(convolution > 0 && convolution % 2 == 1, "invalid MERT2 Conformer convolution kernel");
+    if (!(convolution > 0 && convolution % 2 == 1))
+        throw std::runtime_error("CLAP: invalid MERT2 Conformer convolution kernel");
     for (const auto *name : {"layer_norm_eps", "subsampling_layer_norm_eps"}) {
         const float epsilon = config.at(name);
-        check(std::isfinite(epsilon) && epsilon > 0, std::string("invalid MERT2 ") + name);
+        if (!(std::isfinite(epsilon) && epsilon > 0))
+            throw std::runtime_error(std::string("CLAP: invalid MERT2 ") + name);
     }
-    check(config.at("rotary_embedding_base").get<float>() > 0,
-          "invalid MERT2 rotary embedding base");
+    if (!(config.at("rotary_embedding_base").get<float>() > 0))
+        throw std::runtime_error("CLAP: invalid MERT2 rotary embedding base");
     const float context = config.at("context_seconds");
-    check(std::isfinite(context) && context >= 30.0f,
-          "MERT-v2-FullSong context metadata must cover at least 30 seconds");
+    if (!(std::isfinite(context) && context >= 30.0f))
+        throw std::runtime_error("CLAP: MERT-v2-FullSong context metadata must cover at least 30 seconds");
 }
 
 void Mert2Model::load_arch_tensors() const {
@@ -142,20 +148,19 @@ int Mert2Model::sample_rate() const { return config.at("sampling_rate"); }
 bool Mert2Model::is_waveform_encoder() const { return true; }
 
 std::vector<float> Mert2Model::text(const std::vector<int> &) const {
-    check(false, "MERT-v2-FullSong has no text encoder");
-    return {};
+    throw std::runtime_error("CLAP: MERT-v2-FullSong has no text encoder");
 }
 
 std::vector<float> Mert2Model::audio_features(const std::vector<float> &, int) const {
-    check(false, "MERT-v2-FullSong requires raw waveform input");
-    return {};
+    throw std::runtime_error("CLAP: MERT-v2-FullSong requires raw waveform input");
 }
 
 Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
     const int fft_size = config.at("n_fft"), hop = config.at("hop_length");
     const int bins = config.at("num_mel_bins"), frequencies = fft_size / 2 + 1;
     const int frames = static_cast<int>(pcm.size() / static_cast<size_t>(hop));
-    check(frames > 0, "MERT2 waveform produces no feature frames");
+    if (!(frames > 0))
+        throw std::runtime_error("CLAP: MERT2 waveform produces no feature frames");
     Matrix mel(frames, bins);
     const auto *window = loader.weight("feature_extractor.spectrogram.window");
     const auto *filters = loader.weight("feature_extractor.mel_scale.fb");
@@ -286,11 +291,12 @@ Matrix Mert2Model::conformer_convolution(const Matrix &hidden, const std::string
 
 AudioFrames Mert2Model::audio_frames(const std::vector<float> &pcm) const {
     const size_t maximum = (size_t{1} << 30) / sizeof(float);
-    check(pcm.size() >= config.at("minimum_input_samples").get<size_t>(),
-          "MERT2 waveform is shorter than minimum_input_samples");
-    check(pcm.size() <= maximum, "MERT2 waveform exceeds 1 GiB");
-    check(std::all_of(pcm.begin(), pcm.end(), [](float value) { return std::isfinite(value); }),
-          "MERT2 waveform contains a non-finite sample");
+    if (!(pcm.size() >= config.at("minimum_input_samples").get<size_t>()))
+        throw std::runtime_error("CLAP: MERT2 waveform is shorter than minimum_input_samples");
+    if (!(pcm.size() <= maximum))
+        throw std::runtime_error("CLAP: MERT2 waveform exceeds 1 GiB");
+    if (!(std::all_of(pcm.begin(), pcm.end(), [](float value) { return std::isfinite(value); })))
+        throw std::runtime_error("CLAP: MERT2 waveform contains a non-finite sample");
     Matrix hidden = subsample(frontend(pcm));
     const float epsilon = config.at("layer_norm_eps");
     for (int layer = 0; layer < config.at("num_hidden_layers").get<int>(); ++layer) {

@@ -1,7 +1,7 @@
 #include "model-loader.h"
-#include "impl.h"
 #include "quantize-output.h"
 #include "quantize.h"
+#include <stdexcept>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -12,7 +12,6 @@
 #include <vector>
 
 namespace {
-using clap::detail::check;
 using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 // Q4_K_M is a model preset, not a ggml tensor type. ggml's ftype enum
 // has no M variant; use llama.cpp's GGUF model-file value (15), not ggml's
@@ -37,15 +36,17 @@ ggml_type target_type(const ggml_tensor *w, bool k, const std::string &architect
     return value || down || projection ? GGML_TYPE_Q6_K : base;
 }
 void quantize(const std::filesystem::path &source, const std::filesystem::path &destination, bool k) {
-    check(!std::filesystem::exists(std::filesystem::symlink_status(destination)),
-          "output already exists; choose a new path");
+    if (std::filesystem::exists(std::filesystem::symlink_status(destination)))
+        throw std::runtime_error("CLAP: output already exists; choose a new path");
     clap::detail::ModelLoader loader;
     loader.load(source.string());
     const auto architecture = loader.metadata("general.architecture");
-    check(architecture == "clap" || architecture == "clamp3", "unsupported architecture");
+    if (!(architecture == "clap" || architecture == "clamp3"))
+        throw std::runtime_error("CLAP: unsupported architecture");
     File input(gguf_init_from_file(source.string().c_str(), {true, nullptr}), gguf_free);
     File output(gguf_init_empty(), gguf_free);
-    check(input && output, "cannot read GGUF metadata");
+    if (!(input && output))
+        throw std::runtime_error("CLAP: cannot read GGUF metadata");
     gguf_set_kv(output.get(), input.get());
     // gguf_set_kv copies metadata, not the writer's internal alignment.
     // Normalize the advertised value to the actual tensor/metadata layout.
@@ -56,8 +57,8 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     size_t count = 0;
     for (int64_t i = 0; i < gguf_get_n_tensors(input.get()); ++i) {
         const auto *w = loader.weight(gguf_get_tensor_name(input.get(), i));
-        check(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16,
-              "quantization requires F32/F16 input; refusing requantization");
+        if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16))
+            throw std::runtime_error("CLAP: quantization requires F32/F16 input; refusing requantization");
         gguf_add_tensor(output.get(), w);
         const auto target = target_type(w, k, architecture);
         if (target != w->type) {
@@ -65,7 +66,8 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
             ++count;
         }
     }
-    check(count > 0, k ? "no Q4_K-compatible tensors" : "no Q8_0-compatible tensors");
+    if (!(count > 0))
+        throw std::runtime_error(std::string("CLAP: ") + (k ? "no Q4_K-compatible tensors" : "no Q8_0-compatible tensors"));
     clap::detail::QuantizeOutput stream(destination);
     {
         std::vector<char> metadata(gguf_get_meta_size(output.get()));
@@ -91,7 +93,8 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
                         ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data), values.data(), elements);
                     else std::copy_n(reinterpret_cast<const float *>(data), elements, values.data());
                     const auto bytes = ggml_quantize_chunk(target, values.data(), packed.data(), 0, rows, w->ne[0], nullptr);
-                    check(bytes == ggml_row_size(target, elements), "quantized byte count mismatch");
+                    if (bytes != ggml_row_size(target, elements))
+                        throw std::runtime_error("CLAP: quantized byte count mismatch");
                     stream.write(reinterpret_cast<const char *>(packed.data()), static_cast<std::streamsize>(bytes));
                     written += bytes;
                 }
@@ -112,7 +115,8 @@ int run_quantize(const std::string &input, const std::string &output, const std:
     try {
         std::string preset(type);
         std::transform(preset.begin(), preset.end(), preset.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        check(preset == "Q8_0" || preset == "Q4_K_M", "unsupported quantization preset");
+        if (!(preset == "Q8_0" || preset == "Q4_K_M"))
+            throw std::runtime_error("CLAP: unsupported quantization preset");
         quantize(input, output, preset == "Q4_K_M"); return 0;
     }
     catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

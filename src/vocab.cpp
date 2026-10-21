@@ -1,5 +1,5 @@
 #include "vocab.h"
-#include "impl.h"
+#include <stdexcept>
 #include <unicode/uchar.h>
 #include <unicode/unistr.h>
 #include <algorithm>
@@ -18,7 +18,8 @@ std::string utf8(int cp) {
 
 std::vector<unsigned char> decode_charsmap(const std::string &encoded) {
     static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    check(!encoded.empty() && encoded.size() % 4 == 0, "invalid tokenizer charsmap encoding");
+    if (!(!encoded.empty() && encoded.size() % 4 == 0))
+        throw std::runtime_error("CLAP: invalid tokenizer charsmap encoding");
     std::vector<unsigned char> bytes;
     for (size_t i = 0; i < encoded.size(); i += 4) {
         uint32_t value = 0;
@@ -26,11 +27,13 @@ std::vector<unsigned char> decode_charsmap(const std::string &encoded) {
         for (size_t j = 0; j < 4; ++j) {
             const char c = encoded[i + j];
             if (c == '=') {
-                check(i + 4 == encoded.size() && j >= 2, "invalid tokenizer charsmap padding");
+                if (!(i + 4 == encoded.size() && j >= 2))
+                    throw std::runtime_error("CLAP: invalid tokenizer charsmap padding");
                 ++padding; value <<= 6;
             } else {
                 const auto digit = alphabet.find(c);
-                check(!padding && digit != std::string::npos, "invalid tokenizer charsmap encoding");
+                if (!(!padding && digit != std::string::npos))
+                    throw std::runtime_error("CLAP: invalid tokenizer charsmap encoding");
                 value = (value << 6) | static_cast<uint32_t>(digit);
             }
         }
@@ -90,7 +93,8 @@ std::vector<int32_t> normalizer_boundaries(const icu::UnicodeString &text) {
 
 ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length)
     : bos(bos), eos(eos), context_length(context_length) {
-    check(tokenizer.at("model").at("type") == "BPE", "expected byte-level BPE");
+    if (tokenizer.at("model").at("type") != "BPE")
+        throw std::runtime_error("CLAP: expected byte-level BPE");
     for (auto it = tokenizer["model"]["vocab"].begin(); it != tokenizer["model"]["vocab"].end(); ++it)
         vocab.emplace(it.key(), it.value().get<int>());
     int rank = 0;
@@ -99,12 +103,15 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
         if (entry.is_array()) { x = entry.at(0); y = entry.at(1); }
         else {
             const std::string s = entry; const auto space = s.find(' ');
-            check(space != std::string::npos, "invalid BPE merge"); x = s.substr(0, space); y = s.substr(space + 1);
+            if (space == std::string::npos)
+                throw std::runtime_error("CLAP: invalid BPE merge");
+            x = s.substr(0, space); y = s.substr(space + 1);
         }
         ranks.emplace(std::make_pair(x, y), rank++);
     }
     if (tokenizer.contains("added_tokens")) for (const auto &v : tokenizer["added_tokens"]) {
-        check(!v.at("content").get<std::string>().empty(), "empty added token");
+        if (v.at("content").get<std::string>().empty())
+            throw std::runtime_error("CLAP: empty added token");
         special.push_back(v);
     }
     int extra = 256;
@@ -114,14 +121,16 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
     }
     UErrorCode status = U_ZERO_ERROR;
     pattern.reset(icu::RegexPattern::compile(icu::UnicodeString::fromUTF8("'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"), 0, status));
-    check(U_SUCCESS(status), "cannot compile tokenizer Unicode regex");
+    if (U_FAILURE(status))
+        throw std::runtime_error("CLAP: cannot compile tokenizer Unicode regex");
 }
 
 void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &ids) const {
     UErrorCode status = U_ZERO_ERROR;
     const auto unicode = icu::UnicodeString::fromUTF8(text);
     std::unique_ptr<icu::RegexMatcher> matcher(pattern->matcher(unicode, status));
-    check(U_SUCCESS(status), "tokenizer regex failed");
+    if (U_FAILURE(status))
+        throw std::runtime_error("CLAP: tokenizer regex failed");
     while (matcher->find(status)) {
         std::string piece; matcher->group(status).toUTF8String(piece);
         std::vector<std::string> symbols;
@@ -145,14 +154,18 @@ void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &
         }
         for (const auto &symbol : symbols) {
             const auto it = vocab.find(symbol);
-            check(it != vocab.end(), "tokenizer has no token for byte sequence"); ids.push_back(it->second);
+            if (it == vocab.end())
+                throw std::runtime_error("CLAP: tokenizer has no token for byte sequence");
+            ids.push_back(it->second);
         }
     }
-    check(U_SUCCESS(status), "tokenizer regex failed");
+    if (U_FAILURE(status))
+        throw std::runtime_error("CLAP: tokenizer regex failed");
 }
 
 std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max_length) const {
-    check(max_length >= 2 && max_length <= context_length, "invalid maximum text length");
+    if (!(max_length >= 2 && max_length <= context_length))
+        throw std::runtime_error("CLAP: invalid maximum text length");
     std::vector<int> ids{bos};
     size_t pos = 0;
     while (pos < text.size()) {
@@ -189,85 +202,92 @@ std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max
 UnigramVocabulary::UnigramVocabulary(const json &tokenizer, int bos, int eos, int unk,
                                      size_t context_length)
     : bos(bos), eos(eos), unk(unk), context_length(context_length) {
-    check(tokenizer.contains("model") && tokenizer["model"].contains("vocab") &&
-          tokenizer["model"].value("type", std::string("Unigram")) == "Unigram",
-          "expected SentencePiece Unigram tokenizer");
+    if (!(tokenizer.contains("model") && tokenizer["model"].contains("vocab") &&
+          tokenizer["model"].value("type", std::string("Unigram")) == "Unigram"))
+        throw std::runtime_error("CLAP: expected SentencePiece Unigram tokenizer");
     const auto &vocab = tokenizer["model"]["vocab"];
-    check(vocab.is_array() && !vocab.empty() && vocab.size() <= static_cast<size_t>(std::numeric_limits<int>::max()),
-          "expected Unigram tokenizer vocabulary");
+    if (!(vocab.is_array() && !vocab.empty() && vocab.size() <= static_cast<size_t>(std::numeric_limits<int>::max())))
+        throw std::runtime_error("CLAP: expected Unigram tokenizer vocabulary");
     unknown_score = std::numeric_limits<double>::infinity();
     for (size_t id = 0; id < vocab.size(); ++id) {
         const auto &item = vocab[id];
-        check(item.is_array() && item.size() == 2 && item[0].is_string(), "invalid Unigram vocabulary entry");
+        if (!(item.is_array() && item.size() == 2 && item[0].is_string()))
+            throw std::runtime_error("CLAP: invalid Unigram vocabulary entry");
         const auto token = item[0].get<std::string>();
         const double score = item[1].get<double>();
-        check(!token.empty() && std::isfinite(score), "invalid Unigram vocabulary entry");
-        check(pieces.emplace(token, Piece{static_cast<int>(id), score}).second, "duplicate Unigram vocabulary entry");
+        if (!(!token.empty() && std::isfinite(score)))
+            throw std::runtime_error("CLAP: invalid Unigram vocabulary entry");
+        if (!(pieces.emplace(token, Piece{static_cast<int>(id), score}).second))
+            throw std::runtime_error("CLAP: duplicate Unigram vocabulary entry");
         longest_piece = std::max(longest_piece, token.size());
         unknown_score = std::min(unknown_score, score);
     }
     unknown_score -= 10.0;
-    check(bos >= 0 && eos >= 0 && unk >= 0 && static_cast<size_t>(std::max({bos, eos, unk})) < vocab.size() &&
-          pieces.count("▁") != 0 && pieces.count("<unk>") != 0 && longest_piece > 0,
-          "invalid Unigram tokenizer vocabulary");
-    check(tokenizer["model"].at("unk_id").get<int>() == unk && !tokenizer["model"].value("byte_fallback", false),
-          "unsupported Unigram unknown-token configuration");
-    check(tokenizer.value("padding", json()).is_null() && tokenizer.value("truncation", json()).is_null(),
-          "tokenizer-side padding/truncation is unsupported");
+    if (!(bos >= 0 && eos >= 0 && unk >= 0 && static_cast<size_t>(std::max({bos, eos, unk})) < vocab.size() &&
+          pieces.count("▁") != 0 && pieces.count("<unk>") != 0 && longest_piece > 0))
+        throw std::runtime_error("CLAP: invalid Unigram tokenizer vocabulary");
+    if (!(tokenizer["model"].at("unk_id").get<int>() == unk && !tokenizer["model"].value("byte_fallback", false)))
+        throw std::runtime_error("CLAP: unsupported Unigram unknown-token configuration");
+    if (!(tokenizer.value("padding", json()).is_null() && tokenizer.value("truncation", json()).is_null()))
+        throw std::runtime_error("CLAP: tokenizer-side padding/truncation is unsupported");
     const auto pre = tokenizer.value("pre_tokenizer", json());
-    check(pre.is_object() && pre.value("type", std::string()) == "Sequence" &&
-          pre.contains("pretokenizers") && pre["pretokenizers"].is_array() && pre["pretokenizers"].size() == 2,
-          "expected WhitespaceSplit/Metaspace pre-tokenizer");
+    if (!(pre.is_object() && pre.value("type", std::string()) == "Sequence" &&
+          pre.contains("pretokenizers") && pre["pretokenizers"].is_array() && pre["pretokenizers"].size() == 2))
+        throw std::runtime_error("CLAP: expected WhitespaceSplit/Metaspace pre-tokenizer");
     const auto &steps = pre["pretokenizers"];
-    check(steps[0].value("type", std::string()) == "WhitespaceSplit" &&
+    if (!(steps[0].value("type", std::string()) == "WhitespaceSplit" &&
           steps[1].value("type", std::string()) == "Metaspace" &&
           steps[1].value("replacement", std::string()) == "▁" && steps[1].value("split", true) &&
-          steps[1].value("add_prefix_space", true) && steps[1].value("prepend_scheme", std::string("always")) == "always",
-          "unsupported Unigram pre-tokenizer");
+          steps[1].value("add_prefix_space", true) && steps[1].value("prepend_scheme", std::string("always")) == "always"))
+        throw std::runtime_error("CLAP: unsupported Unigram pre-tokenizer");
     const std::string bos_piece = vocab.at(bos).at(0), eos_piece = vocab.at(eos).at(0);
     const auto post = tokenizer.value("post_processor", json());
     const json expected_single = json::array({
         {{"SpecialToken", {{"id", bos_piece}, {"type_id", 0}}}},
         {{"Sequence", {{"id", "A"}, {"type_id", 0}}}},
         {{"SpecialToken", {{"id", eos_piece}, {"type_id", 0}}}}});
-    check(post.is_object() && post.value("type", std::string()) == "TemplateProcessing" &&
-          post.value("single", json()) == expected_single && post.contains("special_tokens"),
-          "unsupported Unigram post-processor");
+    if (!(post.is_object() && post.value("type", std::string()) == "TemplateProcessing" &&
+          post.value("single", json()) == expected_single && post.contains("special_tokens")))
+        throw std::runtime_error("CLAP: unsupported Unigram post-processor");
     for (int id : {bos, eos}) {
         const std::string piece = vocab.at(id).at(0);
-        check(post["special_tokens"].contains(piece) &&
-              post["special_tokens"][piece].value("ids", json()) == json::array({id}),
-              "invalid Unigram post-processor special token");
+        if (!(post["special_tokens"].contains(piece) &&
+              post["special_tokens"][piece].value("ids", json()) == json::array({id})))
+            throw std::runtime_error("CLAP: invalid Unigram post-processor special token");
     }
     if (tokenizer.contains("added_tokens")) for (const auto &item : tokenizer["added_tokens"]) {
-        check(item.value("special", false), "unsupported non-special added Unigram token");
+        if (!(item.value("special", false)))
+            throw std::runtime_error("CLAP: unsupported non-special added Unigram token");
         if (item.value("special", false)) {
             const auto content = item.at("content").get<std::string>();
             const int id = item.at("id").get<int>();
-            check(!content.empty() && id >= 0 && static_cast<size_t>(id) < vocab.size() && vocab.at(id).at(0) == content,
-                  "invalid Unigram special token");
-            check(!item.value("normalized", false) && !item.value("lstrip", false) &&
-                  !item.value("rstrip", false) && !item.value("single_word", false),
-                  "unsupported Unigram special-token matching");
+            if (!(!content.empty() && id >= 0 && static_cast<size_t>(id) < vocab.size() && vocab.at(id).at(0) == content))
+                throw std::runtime_error("CLAP: invalid Unigram special token");
+            if (!(!item.value("normalized", false) && !item.value("lstrip", false) &&
+                  !item.value("rstrip", false) && !item.value("single_word", false)))
+                throw std::runtime_error("CLAP: unsupported Unigram special-token matching");
             special.emplace(content, id);
         }
     }
     const auto normalizer = tokenizer.value("normalizer", json());
     if (normalizer.is_null()) return;
     const auto type = normalizer.at("type").get<std::string>();
-    check(type == "Precompiled", "unsupported Unigram tokenizer normalizer");
+    if (type != "Precompiled")
+        throw std::runtime_error("CLAP: unsupported Unigram tokenizer normalizer");
     // SentencePiece's serialized character map is a little-endian Darts trie
     // followed by NUL-terminated UTF-8 replacements. It is checkpoint-specific:
     // generic NFKC does not reproduce XLM-R's handling of format/control chars.
     const auto bytes = decode_charsmap(normalizer.at("precompiled_charsmap").get<std::string>());
-    check(bytes.size() >= 8, "truncated tokenizer charsmap");
+    if (!(bytes.size() >= 8))
+        throw std::runtime_error("CLAP: truncated tokenizer charsmap");
     const size_t trie_bytes = read_le32(bytes.data());
-    check(trie_bytes >= 4 && trie_bytes % 4 == 0 && trie_bytes < bytes.size() - 4 && bytes.back() == 0,
-          "invalid tokenizer charsmap layout");
+    if (!(trie_bytes >= 4 && trie_bytes % 4 == 0 && trie_bytes < bytes.size() - 4 && bytes.back() == 0))
+        throw std::runtime_error("CLAP: invalid tokenizer charsmap layout");
     normalization_trie.reserve(trie_bytes / 4);
     for (size_t i = 4; i < 4 + trie_bytes; i += 4) normalization_trie.push_back(read_le32(bytes.data() + i));
     normalization_replacements.assign(reinterpret_cast<const char *>(bytes.data() + 4 + trie_bytes), bytes.size() - 4 - trie_bytes);
-    check(trie_offset(normalization_trie[0]) < normalization_trie.size(), "invalid tokenizer charsmap root");
+    if (!(trie_offset(normalization_trie[0]) < normalization_trie.size()))
+        throw std::runtime_error("CLAP: invalid tokenizer charsmap root");
 }
 
 bool UnigramVocabulary::transform(const std::string &text, std::string &result) const {
@@ -275,16 +295,20 @@ bool UnigramVocabulary::transform(const std::string &text, std::string &result) 
     for (unsigned char label : text) {
         if (!label) break;
         node ^= label;
-        check(node < normalization_trie.size(), "invalid tokenizer charsmap transition");
+        if (!(node < normalization_trie.size()))
+            throw std::runtime_error("CLAP: invalid tokenizer charsmap transition");
         const uint32_t unit = normalization_trie[node];
         if ((unit & 0x800000ffu) != label) return false;
         node ^= trie_offset(unit);
-        check(node < normalization_trie.size(), "invalid tokenizer charsmap transition");
+        if (!(node < normalization_trie.size()))
+            throw std::runtime_error("CLAP: invalid tokenizer charsmap transition");
         if (unit & (1u << 8)) {
             const size_t replacement = normalization_trie[node] & 0x7fffffffu;
-            check(replacement < normalization_replacements.size(), "invalid tokenizer charsmap replacement");
+            if (!(replacement < normalization_replacements.size()))
+                throw std::runtime_error("CLAP: invalid tokenizer charsmap replacement");
             const auto end = normalization_replacements.find('\0', replacement);
-            check(end != std::string::npos, "unterminated tokenizer charsmap replacement");
+            if (end == std::string::npos)
+                throw std::runtime_error("CLAP: unterminated tokenizer charsmap replacement");
             result.append(normalization_replacements, replacement, end - replacement);
             return true;
         }
@@ -339,7 +363,8 @@ void UnigramVocabulary::encode_word(const std::string &text, std::vector<int> &i
         if (!single_character && score > best[begin + 1].score)
             best[begin + 1] = {score, static_cast<int>(begin), unk};
     }
-    check(best[count].previous >= 0, "Unigram tokenizer could not encode text");
+    if (!(best[count].previous >= 0))
+        throw std::runtime_error("CLAP: Unigram tokenizer could not encode text");
     std::vector<int> reversed;
     for (int pos = static_cast<int>(count); pos > 0; pos = best[pos].previous) reversed.push_back(best[pos].id);
     bool previous_unknown = false;
@@ -350,7 +375,8 @@ void UnigramVocabulary::encode_word(const std::string &text, std::vector<int> &i
 }
 
 std::vector<int> UnigramVocabulary::tokenize(const std::string &text, size_t max_length) const {
-    check(max_length >= 2 && max_length <= context_length, "invalid maximum text length");
+    if (!(max_length >= 2 && max_length <= context_length))
+        throw std::runtime_error("CLAP: invalid maximum text length");
     std::vector<int> ids{bos};
     size_t offset = 0;
     while (offset < text.size()) {
