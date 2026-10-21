@@ -20,7 +20,7 @@ struct AudioFrames {
     int dimension = 0;
 };
 
-// Decode WAV, MP3, FLAC or Ogg Vorbis by contents. Preserves the source sample rate
+// Decode WAV, MP3 or FLAC by contents. Preserves the source sample rate
 // (no resampling); throws on unsupported, empty or invalid audio.
 Audio decode_audio(const std::string &path);
 

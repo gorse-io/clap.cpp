@@ -18,15 +18,6 @@ target_compile_features(clap PUBLIC cxx_std_17)
 target_include_directories(clap
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-# Compile the upstream implementation as C in its own translation unit.
-add_library(clap-minivorbis STATIC minivorbis.c)
-set_target_properties(clap-minivorbis PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(clap-minivorbis SYSTEM PUBLIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/minivorbis")
-if(NOT WIN32)
-    target_link_libraries(clap-minivorbis PUBLIC m)
-endif()
-target_link_libraries(clap PRIVATE clap-minivorbis)
 target_include_directories(clap SYSTEM PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/miniaudio")
 target_link_libraries(clap PUBLIC ggml

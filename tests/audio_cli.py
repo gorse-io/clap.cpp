@@ -16,8 +16,7 @@ def run(*args):
 
 baseline = run("--text", "hello")
 assert baseline.returncode != 0 and baseline.stderr
-for name in ["mono.wav", "stereo.wav", "mono.mp3", "stereo.mp3", "mono.flac", "stereo.flac",
-             "mono.ogg", "stereo.ogg", "44100.ogg", "vorbis.dat"]:
+for name in ["mono.wav", "stereo.wav", "mono.mp3", "stereo.mp3", "mono.flac", "stereo.flac"]:
     result = run("--audio", str(fixtures / name))
     assert result.returncode != 0 and result.stderr == baseline.stderr, (name, result.stderr)
 result = run("--audio", str(fixtures / "44100.flac"))
