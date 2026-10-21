@@ -1,4 +1,5 @@
 #include "embedding.h"
+#include "hf.h"
 #include "quantize.h"
 #include "server.h"
 
@@ -8,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 int main(int argc, char **argv) {
     CLI::App app{"clap.cpp"};
@@ -28,8 +30,17 @@ int main(int argc, char **argv) {
     EmbeddingOptions options;
     std::string file;
     auto *embedding = app.add_subcommand("embedding", "Generate native text or audio embeddings");
-    embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
-        ->required()->check(CLI::ExistingFile);
+    auto *model_option = embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
+        ->check(CLI::ExistingFile);
+    clap::HfOptions embedding_hf;
+    auto *hf_option = embedding->add_option("--hf-repo", embedding_hf.repo, "owner/repo[:quant] (-hf)");
+    hf_option->excludes(model_option);
+    embedding->add_option("--hf-file", embedding_hf.file, "Exact GGUF filename (-hff)")->needs(hf_option);
+    embedding->add_option("--hf-token", embedding_hf.token, "Bearer token (-hft; defaults to HF_TOKEN)")->needs(hf_option);
+    embedding->add_flag("--offline", embedding_hf.offline, "Use only cached HF model")->needs(hf_option);
+    auto *model = embedding->add_option_group("Model");
+    model->add_options(model_option, hf_option);
+    model->require_option(1, 1);
     embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: automatic)")
         ->check(CLI::NonNegativeNumber)->capture_default_str();
     auto *input = embedding->add_option_group("Input", "Choose one text prompt, text file, or audio file");
@@ -62,7 +73,26 @@ int main(int argc, char **argv) {
     quantize->add_option("INPUT.gguf", quantize_input, "F32/F16 CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan model")->required();
     quantize->add_option("OUTPUT.gguf", quantize_output, "Output model (must not exist)")->required();
 
-    CLI11_PARSE(app, argc, argv);
+    clap::HfOptions hf;
+    auto *download = app.add_subcommand("download", "Download a Hugging Face GGUF model");
+    download->add_option("--hf-repo", hf.repo, "owner/repo[:quant] (-hf)")->required();
+    download->add_option("--hf-file", hf.file, "Exact GGUF filename (-hff)");
+    download->add_option("--hf-token", hf.token, "Bearer token (-hft; defaults to HF_TOKEN)");
+    download->add_flag("--offline", hf.offline, "Use only an existing cached snapshot");
+    auto arguments = clap::hf_arguments(argc, argv);
+    std::vector<char *> pointers;
+    for (auto &arg : arguments) pointers.push_back(arg.data());
+    CLI11_PARSE(app, argc, pointers.data());
+    if (*download) {
+        try {
+            std::cout << clap::hf_download(hf) << '\n';
+            if (!std::cout) throw std::runtime_error("Cannot write downloaded path");
+            return 0;
+        } catch (const std::exception &e) {
+            std::cerr << e.what() << '\n';
+            return 1;
+        }
+    }
 
     if (*quantize) {
         return run_quantize(quantize_input, quantize_output, quantize_type);
@@ -94,6 +124,7 @@ int main(int argc, char **argv) {
             }
             if (!*audio_option && !options.single_text && options.text.empty())
                 throw std::runtime_error("Input must not be empty");
+            if (*hf_option) options.model_path = clap::hf_download(embedding_hf);
             return run_embedding(options);
         }
         if (*serve) {

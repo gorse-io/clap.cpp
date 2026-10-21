@@ -13,6 +13,7 @@ require a converted GGUF model; inference runs locally without Python or downloa
 
 - CMake 3.20 or newer
 - A C++17 compiler
+- OpenSSL 3 development headers/libraries and a trusted CA certificate store (HTTPS downloads; e.g. `libssl-dev` and `ca-certificates` on Debian/Ubuntu)
 - ICU source submodule (included by recursive checkout; no system ICU installation required)
 - Python 3 (only for model conversion and tests; install Python dependencies with `python -m pip install -r requirements.txt`)
 - FFmpeg with libmp3lame (only when building tests, to generate WAV/MP3/FLAC fixtures)
@@ -173,6 +174,82 @@ compatible AMD GPU and driver.
 This adds a release build, not HIP model dispatch: native model linear layers
 remain CPU/optional Vulkan. The embedding command and server use that same
 native runtime. No ROCm inference or GPU tests are run.
+
+## Download GGUF models from Hugging Face
+
+Download a **converted, unsplit GGUF** with the native C++ HTTP client. No Python,
+`huggingface-cli`, Git or git-lfs is needed at runtime. Replace `owner/repo` below
+with a repository containing a CLAP/CLaMP3/MERT2 GGUF compatible with this loader:
+
+```sh
+./build/clap download -hf owner/repo
+./build/clap download -hf owner/repo:Q8_0
+./build/clap download -hf owner/repo -hff subdirectory/model.gguf
+./build/clap embedding -hf owner/repo:Q4_K_M --text 'A jazz quartet.'
+# Existing local model inference is unchanged:
+./build/clap embedding --model model.gguf --text 'A jazz quartet.'
+```
+
+`-hf`, `-hff` and `-hft` are aliases for `--hf-repo`, `--hf-file` and
+`--hf-token`. The default selection prefers a filename containing `Q4_K_M`, then
+`Q8_0`, then the first GGUF in lexical filename order. `:quant` filters filenames
+case-insensitively; `-hff` selects an exact repository-relative filename and takes
+precedence over the quant selector. Split `-00001-of-00002.gguf` models are rejected
+before downloading: the clap loader does not support split GGUFs. Downloading does
+**not** convert safetensors/PyTorch weights or make unrelated architectures usable.
+For repositories without a GGUF, use the conversion instructions below first.
+
+The command resolves `main` to an immutable commit and enumerates the recursive
+repository tree (including paginated results). Successful downloads print only
+the absolute local snapshot path to stdout; download status and errors go to
+stderr. `clap embedding` resolves the same cache path before loading the model and
+keeps its embedding JSON on stdout. `--model` and `-hf` are mutually exclusive.
+
+### Cache, authentication and network settings
+
+Cache root precedence (first nonempty value):
+
+1. `CLAP_CACHE`
+2. `HF_HUB_CACHE`
+3. `HUGGINGFACE_HUB_CACHE` (legacy alias)
+4. `$HF_HOME/hub`
+5. `$XDG_CACHE_HOME/huggingface/hub`, or `$HOME/.cache/huggingface/hub`
+   (falling back to `%USERPROFILE%/.cache/huggingface/hub` when `HOME` is unset)
+
+The layout is Hugging Face-compatible: `models--owner--repo/blobs/<oid>`,
+`snapshots/<commit>/<filename>` (relative symlinks to blobs, or hard links when
+symlink creation is unavailable), and `refs/main`.
+Completed files are reused. Online calls still refresh metadata; add `--offline`
+to use only the locally recorded `main` snapshot without any network requests.
+An offline cache miss is an error, not a fallback to the network.
+
+```sh
+CLAP_CACHE=/path/to/models ./build/clap download -hf owner/repo
+./build/clap download -hf owner/repo --offline
+./build/clap embedding -hf owner/repo --offline --text 'A jazz quartet.'
+# Set HF_TOKEN in your environment for private/gated repositories.
+# Alternatively: ./build/clap download -hf owner/repo -hft "$HF_TOKEN"
+```
+
+`-hft` overrides `HF_TOKEN`; prefer the environment to avoid putting credentials
+in shell history or process arguments. Tokens are sent as bearer credentials only
+to the configured origin, never to a different redirect host. `HF_ENDPOINT`
+(default `https://huggingface.co`) accepts an HTTP(S) origin for mirrors or local
+testing. Use HTTPS for real credentials. TLS certificate verification remains
+enabled; OpenSSL 3 support is required at configure time.
+
+Downloads stream into `.downloadInProgress` files, resume with validated HTTP
+Range responses, and publish completed blobs/snapshots atomically after size
+validation (and SHA256 verification for LFS blobs). Network/server failures retry
+at most three times per request. Directory traversal and unsafe cache symlinks
+are refused, including Windows drive/device/alternate-stream filenames on every
+platform. The cache must be writable and support symlinks or hard links; do not
+share a writable cache with untrusted users. A per-repository `.clap-download.lock`
+rejects concurrent writers; after a crash, remove that stale lock directory only
+when no download is running. Partial files remain available for the next resume.
+An interrupted snapshot publication is recovered under that lock only when its
+`.downloadInProgress` link points to the exact expected blob; unrelated temporary
+files or links are refused and left untouched.
 
 ## Native model layout
 
