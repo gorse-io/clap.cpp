@@ -20,3 +20,6 @@
 [submodule "thirdparty/minivorbis"]
 	path = thirdparty/minivorbis
 	url = https://github.com/edubart/minivorbis.git
+[submodule "thirdparty/googletest"]
+	path = thirdparty/googletest
+	url = https://github.com/google/googletest.git

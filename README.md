@@ -60,6 +60,12 @@ executables. Only the test fixture generation step uses FFmpeg.
 
 ## Build and test
 
+C++ tests use GoogleTest, pinned to v1.17.0 in the
+`thirdparty/googletest` source submodule and built with `add_subdirectory`.
+No system GoogleTest installation or configure-time download is required.
+It is only built when `BUILD_TESTING=ON`; Python integration/oracle tests
+continue to run through CTest.
+
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
