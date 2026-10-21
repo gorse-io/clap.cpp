@@ -59,6 +59,9 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME clap_conversion_imports
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
+    set_tests_properties(clap_conversion_imports PROPERTIES TIMEOUT 30)
     find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)
     set(CLAP_AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/audio")
     set(CLAP_AUDIO_FIXTURES
