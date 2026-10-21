@@ -64,6 +64,16 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/googletest/CMakeLists.txt")
+        message(FATAL_ERROR
+            "GoogleTest submodule is missing. Run: git submodule update --init --recursive")
+    endif()
+    set(BUILD_GMOCK OFF CACHE BOOL "Build GoogleMock" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
+    # Match the parent project's default MSVC runtime rather than forcing /MT.
+    set(gtest_force_shared_crt ON CACHE BOOL "Use the shared MSVC runtime" FORCE)
+    add_subdirectory(thirdparty/googletest EXCLUDE_FROM_ALL)
+
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)
     set(CLAP_AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/audio")
@@ -221,6 +231,15 @@ if(BUILD_TESTING)
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
+
+    foreach(test_target IN ITEMS
+            clap-resample-test clap-audio-test clap-quantize-output-test
+            clap-q8-test clap-model-test tensor-ops-test ggml-smoke
+            clamp3-model-test clap-unigram-test mert2-model-test)
+        if(TARGET ${test_target})
+            target_link_libraries(${test_target} PRIVATE GTest::gtest)
+        endif()
+    endforeach()
 endif()
 
 install(TARGETS clap-cli clap-model RUNTIME DESTINATION bin)

@@ -1,4 +1,5 @@
 #include "model-loader.h"
+#include "oracle-gtest.h"
 #include "model-ops.h"
 #include <ggml.h>
 #include <gguf.h>
@@ -68,24 +69,28 @@ static void verify(const std::string &source, const std::string &output, bool k 
     original.load(source); quantized.load(output);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> original_file(gguf_init_from_file(source.c_str(), {true, nullptr}), gguf_free);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> quantized_file(gguf_init_from_file(output.c_str(), {true, nullptr}), gguf_free);
-    require(quantized.metadata("test.metadata") == "preserved", "metadata changed");
+    ASSERT_NE(original_file, nullptr);
+    ASSERT_NE(quantized_file, nullptr);
+    ASSERT_TRUE(quantized.metadata("test.metadata") == "preserved") << "metadata changed";
     const auto alignment_key = gguf_find_key(quantized_file.get(), "general.alignment");
-    require(alignment_key >= 0 && gguf_get_val_u32(quantized_file.get(), alignment_key) == 32 &&
-            gguf_get_alignment(quantized_file.get()) == 32, "output alignment was not normalized");
+    ASSERT_TRUE(alignment_key >= 0 && gguf_get_val_u32(quantized_file.get(), alignment_key) == 32 &&
+            gguf_get_alignment(quantized_file.get()) == 32) << "output alignment was not normalized";
     const auto key = gguf_find_key(quantized_file.get(), "test.array");
-    require(key >= 0 && gguf_get_arr_n(quantized_file.get(), key) == 3, "array metadata changed");
+    ASSERT_TRUE(key >= 0 && gguf_get_arr_n(quantized_file.get(), key) == 3) << "array metadata changed";
     const auto *array = static_cast<const int32_t *>(gguf_get_arr_data(quantized_file.get(), key));
-    require(array[0] == 7 && array[1] == -3 && array[2] == 42, "array values changed");
+    ASSERT_TRUE(array[0] == 7 && array[1] == -3 && array[2] == 42) << "array values changed";
     const auto ftype = gguf_find_key(quantized_file.get(), "general.file_type");
-    require(ftype >= 0 && gguf_get_val_u32(quantized_file.get(), ftype) ==
-            (k ? 15u : static_cast<uint32_t>(GGML_FTYPE_MOSTLY_Q8_0)), "wrong model preset metadata");
-    if (k) require(quantized.metadata("clap.quantization_policy") ==
-                   "q4_k_m-v1-all-v-ffn-down-projection-q6_k", "missing K policy metadata");
+    ASSERT_TRUE(ftype >= 0 && gguf_get_val_u32(quantized_file.get(), ftype) ==
+            (k ? 15u : static_cast<uint32_t>(GGML_FTYPE_MOSTLY_Q8_0))) << "wrong model preset metadata";
+    if (k) ASSERT_TRUE(quantized.metadata("clap.quantization_policy") ==
+                   "q4_k_m-v1-all-v-ffn-down-projection-q6_k") << "missing K policy metadata";
     int q4 = 0, q6 = 0;
     for (int64_t i = 0; i < gguf_get_n_tensors(original_file.get()); ++i) {
         const char *name = gguf_get_tensor_name(original_file.get(), i);
         auto *a = original.weight(name), *b = quantized.weight(name);
-        require(std::memcmp(a->ne, b->ne, sizeof(a->ne)) == 0, "shape changed");
+        ASSERT_NE(a, nullptr) << name;
+        ASSERT_NE(b, nullptr) << name;
+        ASSERT_TRUE(std::memcmp(a->ne, b->ne, sizeof(a->ne)) == 0) << "shape changed";
         const bool eligible = ggml_n_dims(a) > 1 && a->ne[0] % (k ? 256 : 32) == 0;
         const std::string n(name);
         const bool high = n.find(".attention.self.value.weight") != std::string::npos ||
@@ -93,10 +98,10 @@ static void verify(const std::string &source, const std::string &output, bool k 
             (original.metadata("general.architecture") == "clap" ?
                 (n == "text_proj.linear1.weight" || n == "audio_proj.linear2.weight") : n == "text_proj.weight");
         const auto target = k ? (high ? GGML_TYPE_Q6_K : GGML_TYPE_Q4_K) : GGML_TYPE_Q8_0;
-        require(b->type == (eligible ? target : a->type), "mixed precision policy violated");
+        ASSERT_TRUE(b->type == (eligible ? target : a->type)) << "mixed precision policy violated";
         q4 += b->type == GGML_TYPE_Q4_K; q6 += b->type == GGML_TYPE_Q6_K;
         if (!eligible) {
-            require(ggml_nbytes(a) == ggml_nbytes(b) && std::memcmp(a->data, b->data, ggml_nbytes(a)) == 0, "fallback tensor changed");
+            ASSERT_TRUE(ggml_nbytes(a) == ggml_nbytes(b) && std::memcmp(a->data, b->data, ggml_nbytes(a)) == 0) << "fallback tensor changed";
             continue;
         }
         std::vector<float> floats(ggml_nelements(a));
@@ -104,19 +109,18 @@ static void verify(const std::string &source, const std::string &output, bool k 
         std::vector<uint8_t> expected(ggml_nbytes(b));
         // Independent canonical reference entry point, not the production chunk wrapper.
         ggml_get_type_traits(b->type)->from_float_ref(floats.data(), expected.data(), floats.size());
-        require(std::memcmp(expected.data(), b->data, expected.size()) == 0, "noncanonical quantized bytes");
+        ASSERT_TRUE(std::memcmp(expected.data(), b->data, expected.size()) == 0) << "noncanonical quantized bytes";
         std::vector<float> decoded(floats.size());
         ggml_get_type_traits(b->type)->to_float(b->data, decoded.data(), decoded.size());
         for (size_t j = 0; j < decoded.size(); ++j)
-            require(scalar(b, j) == decoded[j], "quantized scalar decode mismatch");
+            ASSERT_TRUE(scalar(b, j) == decoded[j]) << "quantized scalar decode mismatch";
         std::vector<float> row(b->ne[0]);
         for (int64_t r = 0; r < ggml_nrows(b); ++r) {
             tensor_row(b, r, row.data());
-            require(std::memcmp(row.data(), decoded.data() + r * b->ne[0], row.size() * sizeof(float)) == 0,
-                    "quantized embedding row decode mismatch");
+            ASSERT_TRUE(std::memcmp(row.data(), decoded.data() + r * b->ne[0], row.size() * sizeof(float)) == 0) << "quantized embedding row decode mismatch";
         }
     }
-    require(!k || (q4 > 0 && q6 > 0), "K fixture must exercise both Q4_K and Q6_K");
+    ASSERT_TRUE(!k || (q4 > 0 && q6 > 0)) << "K fixture must exercise both Q4_K and Q6_K";
     TensorOps ops(quantized, 2);
     Matrix input(3, 64);
     for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = std::sin(static_cast<float>(i));
@@ -124,7 +128,7 @@ static void verify(const std::string &source, const std::string &output, bool k 
     for (int r = 0; r < input.rows; ++r) for (int c = 0; c < actual.cols; ++c) {
         float expected = scalar(quantized.weight("dense.bias"), c);
         for (int k = 0; k < input.cols; ++k) expected += input[r][k] * scalar(quantized.weight("dense.weight"), c * input.cols + k);
-        require(std::abs(actual[r][c] - expected) < 0.005f, "native Q8 matmul mismatch");
+        ASSERT_TRUE(std::abs(actual[r][c] - expected) < 0.005f) << "native Q8 matmul mismatch";
     }
     if (k) for (const auto *name : {"text.encoder.layer.0.attention.self.value",
                                     "text.encoder.layer.0.output.dense"}) {
@@ -135,18 +139,18 @@ static void verify(const std::string &source, const std::string &output, bool k 
         for (int c = 0; c < y.cols; ++c) {
             float expected = 0;
             for (int j = 0; j < x.cols; ++j) expected += 0.25f * scalar(weight, c * x.cols + j);
-            require(std::abs(y[0][c] - expected) < 2e-5f && y[0][c] == y[2][c], "native Q6_K matmul mismatch");
+            ASSERT_TRUE(std::abs(y[0][c] - expected) < 2e-5f && y[0][c] == y[2][c]) << "native Q6_K matmul mismatch";
         }
     }
     // >2 MiB activation packing scratch: graph work must not use fixed arena spare.
     Matrix large(10000, 256);
     for (auto &v : large.data) v = 0.25f;
     const auto result = ops.linear(large, "large", false);
-    require(result.rows == large.rows && result.cols == 64, "large matmul shape");
+    ASSERT_TRUE(result.rows == large.rows && result.cols == 64) << "large matmul shape";
     for (int c = 0; c < result.cols; ++c) {
         float expected = 0;
         for (int k = 0; k < large.cols; ++k) expected += 0.25f * scalar(quantized.weight("large.weight"), c * large.cols + k);
-        require(std::abs(result[0][c] - expected) < 0.002f && result[0][c] == result[9999][c], "large matmul mismatch");
+        ASSERT_TRUE(std::abs(result[0][c] - expected) < 0.002f && result[0][c] == result[9999][c]) << "large matmul mismatch";
     }
     std::cout << "canonical quantized bytes, mixed precision, scalar/row reads, native matmul and large scratch passed\n";
 }
@@ -169,7 +173,16 @@ static void decode(const std::string &source, const std::string &destination) {
     }
     require(gguf_write_to_file(output.get(), destination.c_str(), false), "oracle export failed");
 }
+static std::string source_path, output_path;
+static bool k_quantization = false;
+
+TEST(Quantization, CanonicalStorageAndNativeOperations) {
+    ASSERT_NO_FATAL_FAILURE(verify(source_path, output_path, k_quantization));
+}
+
 int main(int argc, char **argv) {
+    oracle_test::initialize(&argc, argv);
+    if (GTEST_FLAG_GET(list_tests)) return RUN_ALL_TESTS();
     try {
         require(argc == 4, "usage: q8-test create|verify SOURCE OUTPUT");
         if (std::string(argv[1]) == "create") {
@@ -180,7 +193,11 @@ int main(int argc, char **argv) {
             create(std::string(argv[2]) + ".clamp3.gguf", GGML_TYPE_F32, 32, "clamp3");
             create(std::string(argv[2]) + ".narrow.gguf", GGML_TYPE_F32, 32, "clap", true);
         } else if (std::string(argv[1]) == "decode") decode(argv[2], argv[3]);
-        else verify(argv[2], argv[3], std::string(argv[1]) == "verify-k");
+        else {
+            source_path = argv[2]; output_path = argv[3];
+            k_quantization = std::string(argv[1]) == "verify-k";
+            return RUN_ALL_TESTS();
+        }
         return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
