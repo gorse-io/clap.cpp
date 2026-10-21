@@ -25,6 +25,22 @@ jobs:
             asset: clap-windows-arm64-cpu.exe
             binary: build/Release/clap.exe
             cmake_args: -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+          - os: windows-2022
+            asset: clap-windows-amd64-cuda12.9.zip
+            binary: build/Release/clap.exe
+            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+          - os: windows-2022
+            asset: clap-windows-amd64-vulkan.exe
+            binary: build/Release/clap.exe
+            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF -DGGML_VULKAN=ON
+          - os: windows-11-arm
+            asset: clap-windows-arm64-vulkan.exe
+            binary: build/Release/clap.exe
+            cmake_args: >-
+              -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+              -DGGML_METAL=OFF -DGGML_VULKAN=ON
+              -DVulkan_LIBRARY="$VULKAN_SDK/Lib-arm64/vulkan-1.lib"
+              -DVulkan_GLSLC_EXECUTABLE="$VULKAN_SDK/Bin/glslc.exe"
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cpu
             binary: build/clap
@@ -58,6 +74,10 @@ jobs:
             asset: clap-linux-amd64-cuda12.9
             binary: build/clap
             cmake_args: -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+          - os: ubuntu-22.04-arm
+            asset: clap-linux-arm64-cuda12.9
+            binary: build/clap
+            cmake_args: -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
           - os: ubuntu-24.04
             asset: clap-linux-amd64-vulkan
             binary: build/clap
@@ -86,14 +106,29 @@ jobs:
         with:
           cuda: '12.9.2'
           method: network
-          sub-packages: '["nvcc"]'
-          non-cuda-sub-packages: '["libcublas-dev"]'
-      - name: Install Vulkan build dependencies
-        if: endsWith(matrix.asset, '-vulkan')
+          sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]' || '["nvcc"]' }}
+          non-cuda-sub-packages: ${{ runner.os == 'Linux' && '["libcublas-dev"]' || '[]' }}
+      - name: Install Linux Vulkan build dependencies
+        if: runner.os == 'Linux' && contains(matrix.asset, '-vulkan')
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: libvulkan-dev glslc spirv-headers
           version: vulkan-${{ matrix.os }}-${{ runner.arch }}-v1
+      - name: Install Windows Vulkan SDK
+        if: runner.os == 'Windows' && contains(matrix.asset, '-vulkan')
+        shell: pwsh
+        env:
+          VULKAN_VERSION: '1.4.321.1'
+        run: |
+          $installer = "$env:RUNNER_TEMP/VulkanSDK-Installer.exe"
+          curl.exe --fail --location --retry 3 --output $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Vulkan SDK download failed' }
+          $arguments = @('--accept-licenses', '--default-answer', '--confirm-command', 'install')
+          if ('${{ runner.arch }}' -eq 'ARM64') { $arguments += 'com.lunarg.vulkan.arm64' }
+          $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Vulkan SDK installation failed: $($process.ExitCode)" }
+          "VULKAN_SDK=C:/VulkanSDK/$env:VULKAN_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "C:/VulkanSDK/$env:VULKAN_VERSION/Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Configure
         run: >-
           cmake -S . -B build
@@ -111,6 +146,22 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
 
+      # CUDA on Windows has no static cuBLAS library. Ship its runtime DLLs
+      # beside clap.exe rather than publishing an unusable standalone binary.
+      - name: Package Windows CUDA release
+        if: runner.os == 'Windows' && contains(matrix.asset, '-cuda')
+        shell: pwsh
+        env:
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          $stage = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/clap-cuda"
+          Copy-Item $env:BINARY "$stage/clap.exe"
+          foreach ($dll in @('cublas64_12.dll', 'cublasLt64_12.dll')) {
+            Copy-Item "$env:CUDA_PATH/bin/$dll" $stage
+          }
+          Compress-Archive -Path "$stage/*" -DestinationPath $env:ASSET
+
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -119,5 +170,7 @@ jobs:
           BINARY: ${{ matrix.binary }}
           ASSET: ${{ matrix.asset }}
         run: |
-          mv "$BINARY" "$ASSET"
+          if [[ ! -f "$ASSET" ]]; then
+            mv "$BINARY" "$ASSET"
+          fi
           gh release upload "$RELEASE_TAG" "$ASSET" --clobber
