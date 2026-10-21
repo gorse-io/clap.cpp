@@ -6,6 +6,7 @@
 #include "dr_mp3.h"
 #define DR_FLAC_IMPLEMENTATION
 #include "dr_flac.h"
+#include "minivorbis.h"
 
 #include <cmath>
 #include <limits>
@@ -77,6 +78,39 @@ Audio decode_audio(const std::string &path) {
             return drmp3_read_pcm_frames_f32(&mp3, count, out);
         });
     }
-    throw std::runtime_error("Cannot decode audio (expected WAV, MP3 or FLAC): " + path);
+    OggVorbis_File vorbis{};
+    if (ov_fopen(path.c_str(), &vorbis) == 0) {
+        const auto close = [](OggVorbis_File *decoder) { ov_clear(decoder); };
+        const std::unique_ptr<OggVorbis_File, decltype(close)> guard(&vorbis, close);
+        const auto *info = ov_info(&vorbis, 0);
+        if (!info || info->channels <= 0 || info->rate <= 0 ||
+            info->rate > std::numeric_limits<int>::max())
+            throw std::runtime_error("Invalid Ogg Vorbis channel count or sample rate: " + path);
+        const unsigned channels = static_cast<unsigned>(info->channels);
+        const unsigned sample_rate = static_cast<unsigned>(info->rate);
+        // Audio has a single sample rate; do not silently misinterpret chained links.
+        for (long link = 1; link < ov_streams(&vorbis); ++link) {
+            const auto *next = ov_info(&vorbis, static_cast<int>(link));
+            if (!next || next->channels != info->channels || next->rate != info->rate)
+                throw std::runtime_error("Ogg Vorbis links change audio format: " + path);
+        }
+        const auto total = ov_pcm_total(&vorbis, -1);
+        if (ov_pcm_seek(&vorbis, 0) != 0)
+            throw std::runtime_error("Cannot seek Ogg Vorbis audio: " + path);
+        auto audio = read_mono(channels, sample_rate, [&](size_t count, float *out) -> size_t {
+            float **pcm = nullptr;
+            int section = 0;
+            const long frames = ov_read_float(&vorbis, &pcm, static_cast<int>(count), &section);
+            if (frames < 0) throw std::runtime_error("Invalid Ogg Vorbis audio: " + path);
+            for (long i = 0; i < frames; ++i)
+                for (unsigned c = 0; c < channels; ++c)
+                    out[static_cast<size_t>(i) * channels + c] = pcm[c][i];
+            return static_cast<size_t>(frames);
+        });
+        if (total < 0 || audio.samples.size() != static_cast<size_t>(total))
+            throw std::runtime_error("Truncated Ogg Vorbis audio: " + path);
+        return audio;
+    }
+    throw std::runtime_error("Cannot decode audio (expected WAV, MP3, FLAC or Ogg Vorbis): " + path);
 }
 } // namespace clap
