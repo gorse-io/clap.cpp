@@ -33,6 +33,27 @@ jobs:
             asset: clap-linux-arm64-cpu
             binary: build/clap
             cmake_args: -DGGML_METAL=OFF
+          - os: ubuntu-24.04
+            asset: clap-linux-riscv64-cpu
+            binary: build/clap
+            cross: riscv64
+            cmake_args: >-
+              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64
+              -DCMAKE_C_COMPILER=riscv64-linux-gnu-gcc-14
+              -DCMAKE_CXX_COMPILER=riscv64-linux-gnu-g++-14
+              -DCMAKE_EXE_LINKER_FLAGS=-static
+              -DGGML_METAL=OFF -DGGML_RVV=OFF -DGGML_RV_ZFH=OFF
+              -DGGML_RV_ZVFH=OFF -DGGML_RV_ZICBOP=OFF -DGGML_RV_ZIHINTPAUSE=OFF
+          - os: ubuntu-24.04
+            asset: clap-linux-loong64-cpu
+            binary: build/clap
+            cross: loongarch64
+            cmake_args: >-
+              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=loongarch64
+              -DCMAKE_C_COMPILER=loongarch64-linux-gnu-gcc-14
+              -DCMAKE_CXX_COMPILER=loongarch64-linux-gnu-g++-14
+              -DCMAKE_EXE_LINKER_FLAGS=-static
+              -DGGML_METAL=OFF -DGGML_LSX=OFF -DGGML_LASX=OFF
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cuda12.9
             binary: build/clap
@@ -53,6 +74,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Install cross-compilation tools
+        if: matrix.cross != ''
+        env:
+          CROSS: ${{ matrix.cross }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y "gcc-14-${CROSS}-linux-gnu" "g++-14-${CROSS}-linux-gnu" qemu-user
       - name: Install CUDA 12.9 build dependencies
         if: contains(matrix.asset, '-cuda')
         uses: Jimver/cuda-toolkit@v0.2.36
@@ -83,6 +111,20 @@ jobs:
           ${{ matrix.cmake_args }}
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
+
+      - name: Smoke-test cross-compiled binary
+        if: matrix.cross != ''
+        env:
+          CROSS: ${{ matrix.cross }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          file "$BINARY"
+          "${CROSS}-linux-gnu-readelf" -h "$BINARY"
+          if "${CROSS}-linux-gnu-readelf" -l "$BINARY" | grep -q INTERP; then
+            echo "Expected a statically linked release binary" >&2
+            exit 1
+          fi
+          timeout 60 "qemu-${CROSS}" "$BINARY" --help
 
       - name: Upload release asset
         env:
