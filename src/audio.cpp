@@ -1,3 +1,9 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <stdint.h>
+
 #define MINIAUDIO_IMPLEMENTATION
 // Decode/convert only: no devices, background workers, engine or encoders.
 #define MA_NO_DEVICE_IO
