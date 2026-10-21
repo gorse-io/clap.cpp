@@ -61,6 +61,12 @@ public:
     std::vector<float> audio(const std::vector<float> &pcm, int sample_rate = 48000,
                               std::size_t crop_offset = 0);
     AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);
+    // MERT-v1 CLaMP3 --mean_features preprocessing: normalize the entire mono
+    // recording, split into non-overlapping 5 s windows, discard a final window
+    // shorter than 1 s, and average time then all hidden states (embedding +
+    // transformer layers). Returns one feature vector per retained window.
+    // At least one second is required. Resampling uses the native audio helper.
+    AudioFrames clamp3_features(const std::vector<float> &pcm, int sample_rate = 24000);
     int audio_sample_rate() const;
     int projection_dimension() const;
 private:

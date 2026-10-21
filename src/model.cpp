@@ -19,8 +19,9 @@ struct Model::Impl {
         if (name == "clap") architecture = std::make_unique<detail::ClapModel>(loader, threads);
         else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
         else if (name == "mert2") architecture = std::make_unique<detail::Mert2Model>(loader, threads);
+        else if (name == "mert") architecture = std::make_unique<detail::MertModel>(loader, threads);
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
-        if (name != "mert2") {
+        if (name != "mert2" && name != "mert") {
             const auto text = architecture->text_parameters();
             const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
             if (name == "clamp3")
@@ -56,7 +57,7 @@ std::vector<float> Model::audio_features(const std::vector<float> &features, int
 std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
     if (impl_->architecture->is_waveform_encoder()) {
         if (crop_offset != 0)
-            throw std::runtime_error("CLAP: MERT-v2-FullSong always processes the complete waveform; crop offsets are unsupported");
+            throw std::runtime_error("CLAP: waveform encoders process the complete waveform; crop offsets are unsupported");
         const auto sequence = audio_frames(pcm, sample_rate);
         std::vector<float> pooled(sequence.dimension);
         for (int frame = 0; frame < sequence.frames; ++frame)
@@ -82,4 +83,9 @@ AudioFrames Model::audio_frames(const std::vector<float> &pcm, int sample_rate) 
 }
 
 int Model::audio_sample_rate() const { return impl_->architecture->sample_rate(); }
+AudioFrames Model::clamp3_features(const std::vector<float> &pcm, int sample_rate) {
+    if (!(sample_rate > 0)) throw std::runtime_error("audio sample rate must be positive");
+    if (sample_rate == 24000) return impl_->architecture->clamp3_features(pcm);
+    return impl_->architecture->clamp3_features(resample_audio({pcm, sample_rate}, 24000).samples);
+}
 } // namespace clap
