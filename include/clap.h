@@ -20,13 +20,14 @@ struct AudioFrames {
     int dimension = 0;
 };
 
-// Decode WAV, MP3 or FLAC by file contents. Preserves the source sample rate
+// Decode WAV, MP3 or FLAC by contents. Preserves the source sample rate
 // (no resampling); throws on unsupported, empty or invalid audio.
 Audio decode_audio(const std::string &path);
 
-// Band-limited mono resampling, with anti-alias filtering when downsampling.
-// Output length is ceil(input length * target rate / source rate); no delay is
-// added. Both rates must be positive; empty/non-finite or >1 GiB PCM is rejected.
+// Mono linear resampling with an eighth-order anti-alias low-pass filter.
+// Output length is ceil(input length * target rate / source rate). The causal
+// filter adds startup latency; same-rate input is unchanged. Both rates must be
+// positive; empty/non-finite or >1 GiB PCM is rejected.
 Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 
 // 48 kHz mono float PCM -> [1001, 64] Slaney log-power mel features.

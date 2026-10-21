@@ -1,8 +1,29 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#define MINIAUDIO_IMPLEMENTATION
+// Decode/convert only: no devices, background workers, engine or encoders.
+#define MA_NO_DEVICE_IO
+#define MA_NO_ENGINE
+#define MA_NO_RESOURCE_MANAGER
+#define MA_NO_NODE_GRAPH
+#define MA_NO_THREADING
+#define MA_NO_RUNTIME_LINKING
+#define MA_NO_ENCODING
+#define MA_NO_GENERATION
+#include "miniaudio.h"
+
 #include "clap.h"
 #include "impl.h"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <stdexcept>
 
 namespace clap {
 using detail::check;
@@ -78,6 +99,124 @@ std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate, size_
             output[t * 64 + m] = static_cast<float>(10 * std::log10(std::max(sum, 1e-10)));
         }
     }
+    return output;
+}
+
+namespace {
+// Bound decoded output to 1 GiB, without trusting frame counts in file headers.
+constexpr size_t max_frames = (size_t{1} << 30) / sizeof(float);
+
+template <typename Read>
+Audio read_mono(unsigned channels, unsigned sample_rate, Read read) {
+    if (channels == 0 || channels > 256 || sample_rate == 0 ||
+        sample_rate > static_cast<unsigned>(std::numeric_limits<int>::max()))
+        throw std::runtime_error("Invalid audio channel count or sample rate");
+    Audio audio;
+    audio.sample_rate = static_cast<int>(sample_rate);
+    // Preserve equal-weight averaging, including LFE in multichannel files.
+    const auto config = ma_channel_converter_config_init(
+        ma_format_f32, channels, nullptr, 1, nullptr, ma_channel_mix_mode_rectangular);
+    ma_channel_converter converter{};
+    if (ma_channel_converter_init(&config, nullptr, &converter) != MA_SUCCESS)
+        throw std::runtime_error("Cannot initialize mono conversion");
+    const auto close = [](ma_channel_converter *value) { ma_channel_converter_uninit(value, nullptr); };
+    const std::unique_ptr<ma_channel_converter, decltype(close)> guard(&converter, close);
+    constexpr size_t chunk_frames = 4096;
+    std::vector<float> chunk(chunk_frames * channels), mono(chunk_frames);
+    for (;;) {
+        const auto count = read(chunk_frames, chunk.data());
+        if (!count) break;
+        if (count > chunk_frames || count > max_frames - audio.samples.size())
+            throw std::runtime_error("Decoded audio exceeds 1 GiB");
+        for (size_t i = 0; i < count * channels; ++i)
+            if (!std::isfinite(chunk[i])) throw std::runtime_error("Non-finite audio sample");
+        if (ma_channel_converter_process_pcm_frames(&converter, mono.data(), chunk.data(), count) != MA_SUCCESS)
+            throw std::runtime_error("Cannot convert audio to mono");
+        for (size_t i = 0; i < count; ++i)
+            if (!std::isfinite(mono[i])) throw std::runtime_error("Non-finite mono sample");
+        audio.samples.insert(audio.samples.end(), mono.begin(), mono.begin() + count);
+    }
+    if (audio.samples.empty()) throw std::runtime_error("Empty or invalid audio");
+    return audio;
+}
+} // namespace
+
+Audio decode_audio(const std::string &path) {
+    // Decode native-rate interleaved float PCM. Keep channels until after the
+    // finite-sample check so a bad channel cannot be hidden by downmixing.
+    auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder{};
+    if (ma_decoder_init_file(path.c_str(), &config, &decoder) == MA_SUCCESS) {
+        const auto close = [](ma_decoder *value) { ma_decoder_uninit(value); };
+        const std::unique_ptr<ma_decoder, decltype(close)> guard(&decoder, close);
+        ma_uint32 channels = 0, sample_rate = 0;
+        if (ma_decoder_get_data_format(&decoder, nullptr, &channels, &sample_rate, nullptr, 0) != MA_SUCCESS)
+            throw std::runtime_error("Cannot read audio format: " + path);
+        ma_uint64 total = 0;
+        // Some FLAC files have an unknown length. MP3 length queries may scan
+        // the stream; do not allocate from any untrusted declared frame count.
+        const bool known_length = ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total != 0;
+        auto audio = read_mono(channels, sample_rate, [&](size_t count, float *out) {
+            ma_uint64 frames = 0;
+            const auto result = ma_decoder_read_pcm_frames(&decoder, out, count, &frames);
+            if (result != MA_SUCCESS && result != MA_AT_END)
+                throw std::runtime_error("Invalid audio: " + path);
+            return static_cast<size_t>(frames);
+        });
+        if (known_length && audio.samples.size() != total)
+            throw std::runtime_error("Truncated audio: " + path);
+        return audio;
+    }
+    throw std::runtime_error("Cannot decode audio (expected WAV, MP3 or FLAC): " + path);
+}
+
+Audio resample_audio(const Audio &audio, int sample_rate) {
+    constexpr size_t max_frames = (size_t{1} << 30) / sizeof(float);
+    if (audio.sample_rate <= 0 || sample_rate <= 0)
+        throw std::runtime_error("Audio sample rates must be positive");
+    if (audio.samples.empty() || audio.samples.size() > max_frames)
+        throw std::runtime_error("Audio must be non-empty and at most 1 GiB");
+    if (!std::all_of(audio.samples.begin(), audio.samples.end(), [](float x) { return std::isfinite(x); }))
+        throw std::runtime_error("Non-finite audio sample");
+    if (audio.sample_rate == sample_rate) return audio;
+
+    // Round duration up to the next output sample, using bounded integer math.
+    const auto frames = (static_cast<std::uint64_t>(audio.samples.size()) * sample_rate +
+                         audio.sample_rate - 1) / audio.sample_rate;
+    if (frames > max_frames) throw std::runtime_error("Resampled audio exceeds 1 GiB");
+    Audio output{std::vector<float>(static_cast<size_t>(frames)), sample_rate};
+
+    auto config = ma_resampler_config_init(ma_format_f32, 1,
+        static_cast<ma_uint32>(audio.sample_rate), static_cast<ma_uint32>(sample_rate),
+        ma_resample_algorithm_linear);
+    // Use miniaudio's highest built-in LPF order to suppress downsampling aliases.
+    config.linear.lpfOrder = MA_MAX_FILTER_ORDER;
+    ma_resampler resampler{};
+    if (ma_resampler_init(&config, nullptr, &resampler) != MA_SUCCESS)
+        throw std::runtime_error("Cannot initialize audio resampler");
+    const auto close = [](ma_resampler *value) { ma_resampler_uninit(value, nullptr); };
+    const std::unique_ptr<ma_resampler, decltype(close)> guard(&resampler, close);
+
+    // This is a causal linear + LPF resampler, not the previous zero-phase sinc.
+    // Keep its startup latency, but preserve ceil(duration * target rate). If
+    // the last fractional frame needs lookahead, extend the final input value
+    // rather than inserting silence or returning a short output.
+    size_t consumed = 0, written = 0;
+    const std::vector<float> tail(4096, audio.samples.back());
+    while (written < output.samples.size()) {
+        const bool flushing = consumed == audio.samples.size();
+        ma_uint64 input_frames = flushing ? tail.size() : audio.samples.size() - consumed;
+        ma_uint64 output_frames = output.samples.size() - written;
+        const float *input = flushing ? tail.data() : audio.samples.data() + consumed;
+        if (ma_resampler_process_pcm_frames(&resampler, input, &input_frames,
+                output.samples.data() + written, &output_frames) != MA_SUCCESS)
+            throw std::runtime_error("Cannot resample audio");
+        if (!input_frames && !output_frames) throw std::runtime_error("Audio resampler made no progress");
+        if (!flushing) consumed += static_cast<size_t>(input_frames);
+        written += static_cast<size_t>(output_frames);
+    }
+    if (!std::all_of(output.samples.begin(), output.samples.end(), [](float x) { return std::isfinite(x); }))
+        throw std::runtime_error("Non-finite resampled audio sample");
     return output;
 }
 } // namespace clap
