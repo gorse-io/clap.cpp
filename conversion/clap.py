@@ -1,7 +1,7 @@
 """CLAP configuration, tokenizer and tensor conversion."""
 import json
 
-from .base import load_checkpoint
+from .base import ModelBase, load_checkpoint, write_gguf
 
 
 def clap_tensor_name(name):
@@ -60,3 +60,12 @@ def clamp_inputs(source, torch):
                 'clap.config': json.dumps(config, separators=(',', ':')),
                 'clap.tokenizer': json.dumps(tokenizer, ensure_ascii=False, separators=(',', ':'))}
     return selected, metadata
+
+
+@ModelBase.register('clap')
+class ClapModel(ModelBase):
+    def write(self):
+        import numpy as np
+        import torch
+        tensors, metadata = clamp_inputs(self.source, torch)
+        write_gguf(self.destination, tensors, metadata, self.dtype, np, torch)

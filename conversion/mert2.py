@@ -4,7 +4,7 @@ import os
 import struct
 import tempfile
 
-from .base import string
+from .base import ModelBase, string
 
 
 def mert2_inputs(source, revision):
@@ -98,3 +98,12 @@ def write_safetensors_gguf(destination, checkpoint, metadata, dtype, np, torch):
             if os.path.exists(temp):
                 os.unlink(temp)
     print(f'{destination}: {len(encoded)} tensors ({dtype}, mert2)')
+
+
+@ModelBase.register('mert2')
+class Mert2Model(ModelBase):
+    def write(self):
+        import numpy as np
+        import torch
+        checkpoint, metadata = mert2_inputs(self.source, self.options.get('mert2_revision'))
+        write_safetensors_gguf(self.destination, checkpoint, metadata, self.dtype, np, torch)

@@ -1,7 +1,8 @@
 """CLaMP3 configuration inference and text/audio tensor conversion."""
 import json
+from pathlib import Path
 
-from .base import load_checkpoint
+from .base import ModelBase, load_checkpoint, write_gguf
 
 
 def clamp3_tensor_name(name):
@@ -64,3 +65,15 @@ def clamp3_inputs(source, config_path, tokenizer_path, torch):
                 'clamp3.config': json.dumps(config, separators=(',', ':')),
                 'clamp3.tokenizer': json.dumps(tokenizer, ensure_ascii=False, separators=(',', ':'))}
     return selected, metadata
+
+
+@ModelBase.register('clamp3')
+class Clamp3Model(ModelBase):
+    def write(self):
+        import numpy as np
+        import torch
+        config = self.options.get('clamp3_config')
+        tokenizer = self.options.get('tokenizer')
+        tensors, metadata = clamp3_inputs(self.source, Path(config) if config else None,
+                                          Path(tokenizer) if tokenizer else None, torch)
+        write_gguf(self.destination, tensors, metadata, self.dtype, np, torch)

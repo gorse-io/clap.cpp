@@ -1,5 +1,8 @@
 """Shared safe checkpoint loading and GGUF serialization."""
+from abc import ABC, abstractmethod
+import json
 import os
+from pathlib import Path
 import struct
 import tempfile
 
@@ -52,3 +55,38 @@ def write_gguf(destination, tensors, metadata, dtype, np, torch):
         if os.path.exists(temp):
             os.unlink(temp)
     print(f'{destination}: {len(encoded)} tensors ({dtype}, {metadata["general.architecture"]})')
+
+
+def get_model_architecture(source, clamp3_config=None):
+    """Detect the architecture using the existing checkpoint selection rules."""
+    config_path = source / 'config.json'
+    hparams = json.loads(config_path.read_text()) if source.is_dir() and config_path.exists() else {}
+    if hparams.get('model_type') == 'mert2':
+        return 'mert2'
+    if clamp3_config is not None or source.is_file():
+        return 'clamp3'
+    return 'clap'
+
+
+class ModelBase(ABC):
+    """Common converter options and architecture registration."""
+
+    _model_classes = {}
+
+    def __init__(self, source, destination, dtype='f32', **options):
+        self.source = Path(source)
+        self.destination = Path(destination)
+        self.dtype = dtype
+        self.options = options
+
+    @classmethod
+    def register(cls, *architectures):
+        def decorator(model_class):
+            for architecture in architectures:
+                cls._model_classes[architecture] = model_class
+            return model_class
+        return decorator
+
+    @abstractmethod
+    def write(self):
+        """Write the model's tensors and metadata to GGUF."""
