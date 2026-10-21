@@ -37,13 +37,13 @@ Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
                            std::size_t crop_offset = 0);
 
-// Native CLAP, CLaMP3 or MERT-v2-FullSong, selected from GGUF architecture metadata. Weights are
-// memory-mapped on POSIX platforms.
+// Native CLAP, CLaMP3, MERT-v2-FullSong or MuQ, selected from GGUF metadata. Weights are
+// memory-mapped on POSIX platforms; MuQ F16 weights expand to owned F32 buffers.
 // Each call embeds one item; methods on the same instance are not thread-safe.
 // CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
 // pooled projections and accepts precomputed MERT-v1-95M audio features only.
-// MERT-v2-FullSong audio() mean-pools every output frame from the complete input;
-// audio_frames() returns the unpooled 25 Hz sequence for published weights.
+// MERT-v2-FullSong and MuQ audio() mean-pool the complete input's final frames;
+// audio_frames() returns the unpooled sequence (approximately 25 Hz for published weights).
 class Model {
 public:
     explicit Model(const std::string &gguf_path, int threads = 0);

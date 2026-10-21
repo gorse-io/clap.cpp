@@ -214,6 +214,26 @@ if(BUILD_TESTING)
                     "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture")
         set_tests_properties(mert2_model_cli PROPERTIES DEPENDS mert2_model_parity TIMEOUT 180)
     endif()
+    add_test(NAME muq_conversion_contract
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_conversion_test.py")
+    add_test(NAME muq_quantized_rejection
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_quantized.py"
+                "$<TARGET_FILE:clap-model>" "$<TARGET_FILE:clap-cli>")
+    set_tests_properties(muq_quantized_rejection PROPERTIES TIMEOUT 120)
+    option(MUQ_MODEL_PARITY "Run optional MuQ official-component waveform oracle tests" OFF)
+    set(MUQ_REFERENCE_SOURCE "" CACHE PATH "Pinned official MuQ conv.py/features.py directory")
+    if(MUQ_MODEL_PARITY)
+        if(NOT EXISTS "${MUQ_REFERENCE_SOURCE}/conv.py" OR NOT EXISTS "${MUQ_REFERENCE_SOURCE}/features.py")
+            message(FATAL_ERROR "MUQ_REFERENCE_SOURCE must contain pinned official conv.py and features.py")
+        endif()
+        add_executable(muq-model-test tests/models/muq-model-test.cpp)
+        target_link_libraries(muq-model-test PRIVATE clap nlohmann_json::nlohmann_json)
+        add_test(NAME muq_model_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_parity.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/muq-fixture"
+                    "${MUQ_REFERENCE_SOURCE}")
+        set_tests_properties(muq_model_parity PROPERTIES TIMEOUT 600)
+    endif()
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)

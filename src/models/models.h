@@ -88,4 +88,31 @@ private:
     TensorOps ops;
     nlohmann::json config;
 };
+// OpenMuQ/MuQ-large-msd-iter: native log-mel, residual 2D subsampling and
+// Wav2Vec2-Conformer (rotary BEFORE Q/K projections, SiLU and eval BatchNorm).
+class MuqModel final : public ModelArchitecture {
+public:
+    MuqModel(const ModelLoader &loader, int threads);
+    std::vector<float> text(const std::vector<int> &) const override;
+    std::vector<float> audio_features(const std::vector<float> &, int) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    TextParameters text_parameters() const override;
+    int projection_dimension() const override;
+    int mel_bins() const override;
+    int sample_rate() const override;
+    bool is_waveform_encoder() const override;
+private:
+    struct Image { int frequencies; int frames; Matrix values; };
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    Matrix frontend(const std::vector<float> &pcm) const;
+    Matrix subsample(const Matrix &mel) const;
+    Image conv2d(const Image &input, const std::string &prefix, int stride) const;
+    void batch_norm(Matrix &input, const std::string &prefix) const;
+    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
+    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
+    const ModelLoader &loader;
+    TensorOps ops;
+    nlohmann::json config, encoder;
+};
 } // namespace clap::detail

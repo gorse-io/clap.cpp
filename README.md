@@ -286,6 +286,96 @@ The converter safely memory-maps the checkpoint, reads a nested `model` state
 dictionary, omits the unsupported symbolic encoder, and supports `--dtype f32`
 and `--dtype f16`. Symbolic ABC/MTF/MusicXML/image input is not supported.
 
+### MuQ-large-msd-iter
+
+`OpenMuQ/MuQ-large-msd-iter` is an **audio-only** representation model, not
+MuQ-MuLan. Its published weights are **CC-BY-NC-4.0 (non-commercial)**; the
+upstream implementation is MIT. Adding a native loader does not change the
+weight license. No checkpoint is bundled with this project.
+
+Convert a local safetensors snapshot pinned to Hugging Face revision
+`0562a57814f6f8bbd9fdea0a25921a2fce1a841a`:
+
+```sh
+python -m pip install -r requirements.txt
+python convert_hf_to_gguf.py checkpoint/ muq-f32.gguf \
+  --muq-revision 0562a57814f6f8bbd9fdea0a25921a2fce1a841a
+./build/clap-model --model muq-f32.gguf --audio music.flac
+./build/clap-model --model muq-f32.gguf --audio music.flac --frames
+# F16 saves disk space; MuQ expands it to F32 compute weights on load:
+python convert_hf_to_gguf.py checkpoint/ muq-f16.gguf --dtype f16 \
+  --muq-revision 0562a57814f6f8bbd9fdea0a25921a2fce1a841a
+```
+
+The frontend mixes to mono/resamples to **24 kHz**, then computes the official
+periodic-Hann 2048-point, centered-reflect power spectrogram, HTK 128-bin mel
+projection, power dB without top-db clipping, last-frame removal, and fixed
+published mean/std normalization. There is no waveform amplitude standardization.
+The encoder has two residual Conv2d subsampling stages with evaluation BatchNorm,
+followed by 12 width-1024 Wav2Vec2-Conformer layers. In this architecture RoPE is
+applied **before Q/K projections**, not after as in MERT2; feed-forward and
+convolution branches use SiLU. Encoder final LayerNorm is included.
+
+`Model::audio_frames()` and `--frames` return the final unnormalized sequence;
+for `N` native-rate samples its frame count is `ceil(floor(N / 240) / 4)` (about
+25 Hz), not MERT2's floor rule. At least 1,025 samples are required.
+`Model::audio()` and the default CLI output mean-pool all returned frames into
+one 1,024-vector, without L2 normalization. Pooling is a convenience over MuQ
+features, **not** a MuQ-MuLan text/audio projection. Text, precomputed features,
+batching, training/RVQ codes, and intermediate-layer selection are unsupported.
+The entire supplied waveform is processed, without an implicit crop or chunk
+aggregation; bidirectional attention has quadratic compute and linear score
+workspace. Conv2d im2col scratch is tiled, but feature maps still grow with input
+length. Long inputs can require substantial RAM and CPU time.
+
+F32/F16 storage is supported; frontend buffers and vector parameters remain
+F32. MuQ F16 weights are expanded to owned F32 buffers on load so GGML does not
+also round activations to F16 during matrix multiplication. F16 therefore saves
+disk space, **not runtime weight RAM**; it does not retain F32's lazy mmap weight
+behavior and may use additional RAM for the original file buffer on Windows.
+Conversion streams one safetensors tensor at a time, excluding training-only
+RVQ/classifier/CLS tensors and positional-convolution parameters unused by the
+official inference forward. Quantized MuQ weights are explicitly rejected;
+`clap quantize` remains CLAP/CLaMP3-only. Stable dense weights use the shared
+CPU/optional Vulkan linear backend; convolutions, frontend and attention remain
+CPU operations. This is not end-to-end GPU inference.
+
+The optional oracle uses SHA-verified `conv.py` and `features.py` from official
+MuQ source revision `28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a`, wired to the
+Transformers Wav2Vec2-Conformer exactly as the official inference path. It does
+not instantiate unused training/RVQ modules. The tested oracle environment is
+torch/torchaudio 2.6.0 and Transformers 4.53.2, with `einops` installed:
+
+```sh
+cmake -S . -B build -DMUQ_MODEL_PARITY=ON \
+  -DMUQ_REFERENCE_SOURCE=/path/to/pinned/MuQ/source-components
+cmake --build build --parallel
+ctest --test-dir build -R muq --output-on-failure
+python tests/models/muq_checkpoint_parity.py build checkpoint/ \
+  /path/to/pinned/MuQ/source-components build/published-muq
+# Optional identically storage-rounded F16 reference:
+python tests/models/muq_checkpoint_parity.py build checkpoint/ \
+  /path/to/pinned/MuQ/source-components build/published-muq-f16 --dtype f16
+```
+
+Tiny-model tests cover learned BatchNorm statistics, silence, odd frame counts,
+a real-rate 31-second input, F32/F16 storage, resampling, API and CLI. Those random
+weights are not published-model evidence. The separate published oracle checks
+weight SHA-256 `273febab2be02872c37d2c37e48a9d6c52c1c9392f3eeeabd498efa281ccb7a6`
+and compares a 5,041-sample waveform (six final frames), not long-music quality.
+The default published fixture includes seeded low-level broadband energy so that
+its strict absolute-error test measures the architecture rather than differences
+at the power-dB noise floor. Native FFT intermediates use double precision to
+avoid accumulating single-precision twiddle error. This is not bit-exact with
+PyTorch's float32 FFT: a published-weight pure-tone diagnostic measured a frame
+max error of **0.013963**, failing the same `5e-4` F32 limit. Reproduce that known
+near-noise-floor limitation with `--tone-diagnostic`; its strict tolerance is
+not widened. A passing broadband test does not claim that error bound for every
+waveform or establish retrieval quality.
+Both oracle commands are offline and write generated audio/fixtures only to their
+output directories. Ordinary CTest also covers config/license metadata and
+quantized-storage rejection without requiring ML packages.
+
 ### MERT-v2-FullSong
 
 The native MERT2 implementation follows the official custom configuration,

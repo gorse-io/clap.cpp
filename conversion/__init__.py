@@ -11,6 +11,7 @@ MODEL_MAP = {
     'clap': 'clap',
     'clamp3': 'clamp3',
     'mert2': 'mert2',
+    'muq': 'muq',
 }
 
 
