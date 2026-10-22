@@ -86,7 +86,7 @@ subprocess.run([str(build / 'clap-model-test'), str(out / 'model-f16.gguf'), str
 # Q8 native inference against exact stored weights, not an unquantized oracle.
 from q8_reference import load_storage
 sys.path.insert(0, str(ROOT))
-from convert_hf_to_gguf import clap_tensor_name
+from conversion.clap import clap_tensor_name
 for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
                        ('model.gguf', 'q4-k-m'), ('model-f16.gguf', 'f16-q4-k-m')]:
     target = out / f'model-{suffix}.gguf'

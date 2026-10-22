@@ -20,8 +20,9 @@ struct Model::Impl {
         else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
         else if (name == "mert2") architecture = std::make_unique<detail::Mert2Model>(loader, threads);
         else if (name == "mert") architecture = std::make_unique<detail::MertModel>(loader, threads);
+        else if (name == "muq") architecture = std::make_unique<detail::MuqModel>(loader, threads);
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
-        if (name != "mert2" && name != "mert") {
+        if (!architecture->is_waveform_encoder()) {
             const auto text = architecture->text_parameters();
             const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
             if (name == "clamp3")

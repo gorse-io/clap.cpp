@@ -53,10 +53,8 @@ with tempfile.TemporaryDirectory(prefix='mert-invalid-') as temp:
     print(f'{len(cases)} invalid MERT metadata cases rejected')
 
 # Converter validation must also run without torch and before checkpoint loading.
-import importlib.util
-spec = importlib.util.spec_from_file_location('converter', Path(__file__).resolve().parents[2]/'convert_hf_to_gguf.py')
-converter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(converter)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from conversion import mert as converter
 preprocessor = dict(feature_extractor_type='Wav2Vec2FeatureExtractor', feature_size=1,
                     sampling_rate=24000, do_normalize=True, padding_value=0,
                     padding_side='right', return_attention_mask=True)

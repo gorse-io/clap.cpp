@@ -29,6 +29,9 @@ private:
     ggml_context *weights = nullptr;
     void *mapping = nullptr;
     size_t mapping_size = 0;
+    // MuQ F16 is a storage format, not F16 activation compute. Owning promoted
+    // buffers here preserves stable tensor identities and facade/backend lifetime.
+    std::vector<std::vector<float>> promoted_weights;
 #ifdef _WIN32
     std::vector<char> storage;
 #endif

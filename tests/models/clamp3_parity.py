@@ -186,7 +186,7 @@ rounded = json.loads(json.dumps(fixture)); rounded['embedding_tolerance'] = 2e-3
 # Exercise the shared Q8 loader, embedding reads and native text/audio matmul.
 from q8_reference import load_storage
 sys.path.insert(0, str(root))
-from convert_hf_to_gguf import clamp3_tensor_name
+from conversion.clamp3 import clamp3_tensor_name
 for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
                        ('model.gguf', 'q4-k-m'), ('model-f16.gguf', 'f16-q4-k-m')]:
     target = out / f'model-{suffix}.gguf'

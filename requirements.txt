@@ -1,4 +1,7 @@
 numpy
 tokenizers
 torch
+torchaudio
+safetensors
+einops
 transformers

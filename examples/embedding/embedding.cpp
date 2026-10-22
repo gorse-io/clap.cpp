@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     int threads = 0;
     size_t crop = 0;
     bool frames = false, clamp3_features = false;
-    app.add_option("-m,--model", path, "Converted CLAP/CLaMP3/MERT-v1/MERT2 GGUF")->required()->check(CLI::ExistingFile);
+    app.add_option("-m,--model", path, "Converted CLAP/CLaMP3/MERT-v1/MERT2/MuQ GGUF")->required()->check(CLI::ExistingFile);
     auto *text_option = app.add_option("-p,--text", text, "UTF-8 text to embed");
     auto *audio_option = app.add_option("-a,--audio", audio, "WAV, MP3 or FLAC (mixed to mono and resampled for the model)")->check(CLI::ExistingFile);
     auto *features_option = app.add_option("--audio-features", audio_features,
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
     audio_option->excludes(features_option);
     app.add_option("-t,--threads", threads, "ggml CPU threads (0: automatic)")->check(CLI::NonNegativeNumber);
     auto *crop_option = app.add_option("--crop-offset", crop, "Sample offset at 48 kHz into audio longer than ten seconds");
-    app.add_flag("--frames", frames, "Return final-layer MERT-v1/MERT2 frames instead of mean pooling");
+    app.add_flag("--frames", frames, "Return final-layer waveform-encoder frames instead of mean pooling");
     app.add_flag("--clamp3-features", clamp3_features,
                  "Return MERT-v1 CLaMP3 mean-layer/time features (one vector per 5 s window)");
     app.add_option("--mert-model", mert_path,

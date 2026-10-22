@@ -69,11 +69,17 @@ void ModelLoader::load(const std::string &path) {
         throw std::runtime_error("CLAP: cannot read weights");
     mapping = storage.data();
 #endif
+    const auto architecture = gguf_find_key(gguf, "general.architecture");
+    const bool muq = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING &&
+                     metadata("general.architecture") == "muq";
     const auto data_offset = gguf_get_data_offset(gguf);
     if (!(data_offset <= mapping_size))
         throw std::runtime_error("CLAP: truncated GGUF data");
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         auto *w = weight(gguf_get_tensor_name(gguf, i));
+        // MuQ convolution layouts are validated only for floating-point storage.
+        if (muq && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16)
+            throw std::runtime_error("CLAP: MuQ requires F32/F16 weights; quantized MuQ is unsupported");
         if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_Q8_0 ||
               w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K))
             throw std::runtime_error("CLAP: only F32/F16/Q8_0/Q4_K/Q6_K weights supported");
@@ -81,6 +87,19 @@ void ModelLoader::load(const std::string &path) {
         if (!(offset <= mapping_size - data_offset && ggml_nbytes(w) <= mapping_size - data_offset - offset))
             throw std::runtime_error("CLAP: truncated tensor data");
         w->data = static_cast<char *>(mapping) + data_offset + offset;
+        if (muq && w->type == GGML_TYPE_F16) {
+            // GGML's F16 matmul packs F32 inputs to F16 too. MuQ's learned
+            // feature norms amplify that extra rounding; preserve the
+            // storage-rounded, F32-activation reference by promoting weights.
+            promoted_weights.emplace_back(static_cast<size_t>(ggml_nelements(w)));
+            auto &values = promoted_weights.back();
+            ggml_fp16_to_fp32_row(static_cast<const ggml_fp16_t *>(w->data), values.data(), ggml_nelements(w));
+            w->type = GGML_TYPE_F32;
+            w->nb[0] = sizeof(float);
+            for (int dimension = 1; dimension < GGML_MAX_DIMS; ++dimension)
+                w->nb[dimension] = w->nb[dimension - 1] * w->ne[dimension - 1];
+            w->data = values.data();
+        }
     }
 }
 } // namespace clap::detail
