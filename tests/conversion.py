@@ -17,13 +17,13 @@ class ConversionImportsTest(unittest.TestCase):
         self.run_python('''
 import sys
 import convert_hf_to_gguf
-assert not any('conversion.' + name in sys.modules for name in ('clap', 'clamp3', 'mert2', 'muq'))
+assert not any('conversion.' + name in sys.modules for name in ('clap', 'clamp3', 'mert', 'mert2', 'muq'))
 assert 'torch' not in sys.modules
 assert 'numpy' not in sys.modules
 ''')
 
     def test_loads_only_selected_converter(self):
-        for name in ('clap', 'clamp3', 'mert2', 'muq'):
+        for name in ('clap', 'clamp3', 'mert', 'mert2', 'muq'):
             with self.subTest(model=name):
                 self.run_python(f'''
 import sys
@@ -33,7 +33,7 @@ from conversion import ModelBase
 assert issubclass(converter, ModelBase)
 assert converter.__module__ == 'conversion.' + {name!r}
 assert converter is get_model_class({name!r})
-for name in ('clap', 'clamp3', 'mert2', 'muq'):
+for name in ('clap', 'clamp3', 'mert', 'mert2', 'muq'):
     assert ('conversion.' + name in sys.modules) == (name == {name!r})
 assert 'torch' not in sys.modules
 assert 'numpy' not in sys.modules
@@ -59,6 +59,10 @@ with tempfile.TemporaryDirectory() as directory:
     (source / 'config.json').write_text(json.dumps({'encoder_dim': 8, 'w2v2_config': {}}))
     assert get_model_architecture(source) == 'muq'
     assert get_model_architecture(source, 'combined.json') == 'muq'
+    (source / 'config.json').write_text(json.dumps({'model_type': 'mert_model'}))
+    assert get_model_architecture(source) == 'mert'
+    assert get_model_architecture(source, 'combined.json') == 'mert'
+    assert get_model_architecture(source, muq_revision='a' * 40) == 'muq'
 ''')
 
     def test_rejects_unknown_model(self):

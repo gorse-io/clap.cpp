@@ -33,8 +33,8 @@ private:
     nlohmann::json config, a, t;
 };
 
-// CLaMP3 text (XLM-R) and precomputed-audio (BERT) encoders. Raw MERT feature
-// extraction and the optional symbolic encoder intentionally remain external.
+// CLaMP3 text (XLM-R) and feature-input audio (BERT) encoders. Raw waveform
+// extraction uses a separate MertModel; the optional symbolic encoder is external.
 class Clamp3Model final : public ModelArchitecture {
 public:
     Clamp3Model(const ModelLoader &loader, int threads);
@@ -88,6 +88,35 @@ private:
     TensorOps ops;
     nlohmann::json config;
 };
+// MERT-v1-95M: normalized waveform, HuBERT convolutional frontend and
+// post-layer-normalized transformer. CLaMP3 pooling is a separate contract.
+class MertModel final : public ModelArchitecture {
+public:
+    MertModel(const ModelLoader &loader, int threads);
+    std::vector<float> text(const std::vector<int> &) const override;
+    std::vector<float> audio_features(const std::vector<float> &, int) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
+    TextParameters text_parameters() const override { return {0,0,0}; }
+    int projection_dimension() const override { return config.at("hidden_size"); }
+    int mel_bins() const override { return 0; }
+    int sample_rate() const override { return 24000; }
+    bool is_waveform_encoder() const override { return true; }
+private:
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    std::vector<float> normalize(const std::vector<float> &pcm) const;
+    Matrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
+    Matrix convolution(const Matrix &x, const std::string &name, int kernel,
+                       int stride, int padding, int groups, bool bias) const;
+    Matrix linear(const Matrix &x, const std::string &name) const;
+    Matrix attention(const Matrix &x, const std::string &name) const;
+    const ModelLoader &loader;
+    TensorOps ops;
+    nlohmann::json config;
+    int minimum_samples = 0;
+};
+
 // OpenMuQ/MuQ-large-msd-iter: native log-mel, residual 2D subsampling and
 // Wav2Vec2-Conformer (rotary BEFORE Q/K projections, SiLU and eval BatchNorm).
 class MuqModel final : public ModelArchitecture {

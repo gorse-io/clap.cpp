@@ -65,6 +65,8 @@ def get_model_architecture(source, clamp3_config=None, muq_revision=None):
         return 'muq'
     if hparams.get('model_type') == 'mert2':
         return 'mert2'
+    if hparams.get('model_type') == 'mert_model':
+        return 'mert'
     if clamp3_config is not None or source.is_file():
         return 'clamp3'
     return 'clap'

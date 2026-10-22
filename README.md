@@ -4,7 +4,7 @@
 [![Release](https://github.com/gorse-io/clap.cpp/actions/workflows/release.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/release.yml)
 
 C++17/ggml implementations of Hugging Face `laion/larger_clap_music`, CLaMP3,
-and `m-a-p/MERT-v2-FullSong`, with native inference through `clap-model`. The
+`m-a-p/MERT-v1-95M` and `m-a-p/MERT-v2-FullSong`, with native inference through `clap-model`. The
 original `clap` embedding command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
@@ -133,13 +133,13 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
 | `src/model-ops.*` | Shared ggml matrix operations (CPU/optional Vulkan) and CPU normalization |
-| `src/audio.cpp`, `src/audio-decoder.cpp`, `src/resample.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
-| `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3 and MERT2 specializations: hyperparameters, tensor contracts, encoders and projections |
+| `src/audio.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
+| `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3, MERT-v1, MERT2 and MuQ specializations: hyperparameters, tensor contracts, encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
 | `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion CLI; no Python at inference |
 | `conversion/__init__.py` | Architecture-to-module map and lazy model-class lookup |
 | `conversion/base.py` | Shared model base, architecture detection, safe checkpoint loading and GGUF serialization |
-| `conversion/clap.py`, `conversion/clamp3.py`, `conversion/mert2.py` | Model-specific config validation, tensor mapping and conversion |
+| `conversion/clap.py`, `conversion/clamp3.py`, `conversion/mert.py`, `conversion/mert2.py`, `conversion/muq.py` | Model-specific config validation, tensor mapping and conversion |
 
 Convert a local `laion/larger_clap_music` checkpoint containing `config.json`,
 `pytorch_model.bin`, `tokenizer.json` and `preprocessor_config.json`, then run:
@@ -273,8 +273,16 @@ python convert_hf_to_gguf.py \
 
 `mert.npy` must be a C-contiguous little-endian float32 NumPy array shaped
 `[frames, 768]` or `[1, frames, 768]`, produced by the official MERT-v1-95M
-preprocessing. CLaMP3 does not accept raw waveform input: this project does not
-embed a MERT extractor, and `--audio` reports that limitation. The runtime adds
+preprocessing (described below). Native raw-waveform inference is also supported
+by supplying a separately converted MERT-v1-95M model:
+
+```sh
+./build/clap-model --model clamp3-f16.gguf --mert-model mert-v1-95m-f32.gguf --audio music.flac
+```
+
+`--mert-model` requires `--audio`; text and pre-extracted features continue to use
+one model. Without `--mert-model`, CLaMP3 still requires `--audio-features`.
+The runtime adds
 the official leading/trailing zero vectors, uses overlapping final 128-frame
 chunks, masked mean pooling, remainder-weighted chunk aggregation, and a linear
 projection. Unlike CLAP output, CLaMP3 returns a **768-dimensional**, non-L2-normalized
@@ -285,6 +293,107 @@ Text longer than a chunk is processed in full rather than truncated at 128/512 t
 The converter safely memory-maps the checkpoint, reads a nested `model` state
 dictionary, omits the unsupported symbolic encoder, and supports `--dtype f32`
 and `--dtype f16`. Symbolic ABC/MTF/MusicXML/image input is not supported.
+
+### MERT-v1-95M and native CLaMP3 audio
+
+The MERT-v1 encoder implements the official 95M, post-layer-normalized HuBERT
+architecture at Hugging Face revision
+[`12af15fef9d0ac838c3f475bfbbf26d2060dd4f5`](https://huggingface.co/m-a-p/MERT-v1-95M/tree/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5).
+Download that snapshot's `config.json`, `preprocessor_config.json` and
+`pytorch_model.bin` into `mert-checkpoint/`. The published weight SHA-256 is
+`a2b8b747f72c06e0595aeae41ae5473f4364938c6b39b2c58be38c48e6bd3fcd`.
+Conversion only parses metadata and safely memory-maps weights; it does not
+import checkpoint Python code or use `trust_remote_code`.
+The model card declares **CC-BY-NC-4.0** for the published MERT weights; this
+project's Apache-2.0 license does not relicense those weights.
+
+```sh
+python convert_hf_to_gguf.py mert-checkpoint/ mert-v1-95m-f32.gguf \
+  --dtype f32 --mert-revision 12af15fef9d0ac838c3f475bfbbf26d2060dd4f5
+./build/clap-model --model mert-v1-95m-f32.gguf --audio music.wav --frames
+./build/clap-model --model mert-v1-95m-f32.gguf --audio music.wav --clamp3-features
+./build/clap-model --model clamp3-f16.gguf --mert-model mert-v1-95m-f32.gguf --audio music.wav
+```
+
+`--mert-revision` records the full source SHA in GGUF; it is provenance supplied
+by the caller, not an automatic check that local files came from that revision.
+`--dtype f16` is also supported: dense/convolution weights use half storage,
+with F32 activations/accumulation and vector parameters. The positional
+convolution's legacy or parametrized weight normalization is materialized before
+storage rounding. The checkpoint's training-only masking vector is omitted.
+No Python, Torch, FFmpeg process, runtime download or external resampling library
+is required for inference.
+
+Two different outputs are intentionally exposed:
+
+- `--frames` / `Model::audio_frames(pcm, rate)` normalize the complete supplied
+  waveform and return the **last transformer layer**, in time-major order.
+  The published model has 768 channels and frame count
+  `floor((samples - 400) / 320) + 1` for at least 400 samples at 24 kHz.
+  Without either output flag, `Model::audio()` / the CLI mean-pool these final
+  frames into a non-normalized 768-vector. This is **not** a CLaMP3 input vector.
+- `--clamp3-features` / `Model::clamp3_features(pcm, rate)` implement the official
+  CLaMP3 `preprocessing/audio/extract_mert.py --mean_features` contract at
+  [`sanderwood/clamp3@9016d2b0c8d12d1aa79c2e0ab201e6822bdc83a8`](https://github.com/sanderwood/clamp3/tree/9016d2b0c8d12d1aa79c2e0ab201e6822bdc83a8/preprocessing/audio):
+  mix to mono and resample to 24 kHz, normalize the **whole recording** once as
+  `(x - mean) / sqrt(population_variance + 1e-7)`, split non-overlapping 120,000-sample
+  (five-second) windows, and discard only a final window shorter than 24,000
+  samples (one second). For each retained window, mean over time and then all
+  **13 hidden states**, including the projected/position-encoded encoder input.
+  Return one 768-vector per window. At least one second of audio is required.
+
+Both sequence flags print `{ "frames": N, "dimension": D, "values": [...] }`;
+`values` is flat, time-major, and matches `clap::AudioFrames`. For C++ chaining:
+
+```cpp
+clap::Model mert("mert-v1-95m-f32.gguf"), clamp3("clamp3-f16.gguf");
+auto pcm = clap::decode_audio("music.flac");
+auto features = mert.clamp3_features(pcm.samples, pcm.sample_rate);
+auto embedding = clamp3.audio_features(features.values, features.frames);
+```
+
+`--mert-model` performs this same chain natively, including CLaMP3's existing
+zero-boundary vectors, chunking and raw projection. Neither `--frames` nor
+`--crop-offset` may be combined with `--mert-model` or `--clamp3-features`.
+`--frames` also excludes `--crop-offset`, including an explicitly supplied zero.
+Native decoding/resampling uses miniaudio as documented below, **not** the
+bit-identical librosa/torchaudio path of the Python extraction script. Numerical
+oracles compare identical 24 kHz PCM, and separately test 48 kHz input against a
+native-resampler control.
+
+The optional offline oracle uses locally reviewed `modeling_MERT.py` and
+`configuration_MERT.py` from the pinned snapshot (no network access):
+
+```sh
+cmake -S . -B build -DMERT_MODEL_PARITY=ON -DCLAMP3_MODEL_PARITY=ON \
+  -DMERT_REFERENCE_SOURCE=/path/to/reviewed/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+# Actual 95M checkpoint, not the random tiny model:
+python tests/models/mert_parity.py build build/published-mert-v1 \
+  /path/to/reviewed/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5 --checkpoint mert-checkpoint/
+# Actual published MERT + CLaMP3 SAAS weights; CLaMP3 GGUF must be F32:
+python tests/models/mert_checkpoint_pipeline.py build mert-checkpoint/ clamp3-checkpoint/ \
+  /path/to/reviewed/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5 build/published-pipeline \
+  --mert-gguf mert-v1-95m-f32.gguf --clamp3-gguf clamp3-f32.gguf
+```
+
+The tiny F32/F16 suites cover waveform normalization, convolutions, attention,
+final frames, all-layer means, five-second boundaries/tail discard, public APIs,
+CLI validation, native/resampled pipelines and Transformers BERT projection.
+Always-on tests reject malformed model/converter metadata without Torch.
+A local published-95M check (broadband, tone, silence and resampled audio) had
+worst frame errors below **4.3e-5** and all-layer feature errors below **5.1e-6**, for both F32 and
+storage-rounded F16 oracles. Published MERT (F32/F16) chained to published CLaMP3
+SAAS F32 matched the independent Transformers pipeline within **3.4e-6** on
+one-second broadband, six-second/two-window audio and resampled input. These
+synthetic-waveform checks establish inference parity, not retrieval quality.
+
+Scope: MERT-v1-95M only; the 330M variant, stable-layer-norm/DeepNorm, CQT frontend,
+quantized MERT GGUF, batching, arbitrary layer selection and full GPU execution
+are not supported. Full-recording `--frames`/pooled inference has quadratic
+attention time cost; prefer the bounded five-second `--clamp3-features` path for
+CLaMP3/long recordings. This does not change MERT-v2-FullSong behavior.
 
 ### MuQ-large-msd-iter
 
@@ -478,10 +587,10 @@ python tests/models/clamp3_checkpoint_parity.py build checkpoint/ build/publishe
   --dtype f16 --gguf clamp3-f16.gguf
 ```
 
-For raw music files, first run `preprocessing/audio/extract_mert.py` in the
-official `sanderwood/clamp3` checkout using `--model_path m-a-p/MERT-v1-95M`
-and `--mean_features`; pass its resulting `.npy` to `--audio-features`.
-Existing dummy interfaces below are unchanged.
+For raw music files, use the native `--mert-model` pipeline above. Alternatively,
+run `preprocessing/audio/extract_mert.py` in the official `sanderwood/clamp3`
+checkout with `--model_path m-a-p/MERT-v1-95M` and `--mean_features`, then pass
+its `.npy` to `--audio-features`. Existing dummy interfaces below are unchanged.
 
 ## Embedding command
 

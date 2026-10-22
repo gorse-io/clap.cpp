@@ -197,6 +197,29 @@ if(BUILD_TESTING)
         set_tests_properties(clamp3_invalid_metadata PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
     endif()
     option(MERT2_MODEL_PARITY "Run optional official MERT-v2-FullSong oracle tests (torch/torchaudio/transformers/safetensors required)" OFF)
+    add_test(NAME mert_invalid_metadata
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_invalid.py"
+                "$<TARGET_FILE:clap-model>")
+    set_tests_properties(mert_invalid_metadata PROPERTIES TIMEOUT 30)
+    option(MERT_MODEL_PARITY "Run optional reviewed official MERT-v1 numerical oracles" OFF)
+    set(MERT_REFERENCE_SOURCE "" CACHE PATH "Reviewed pinned MERT-v1 source (modeling_MERT.py/configuration_MERT.py)")
+    if(MERT_MODEL_PARITY)
+        if(NOT EXISTS "${MERT_REFERENCE_SOURCE}/modeling_MERT.py")
+            message(FATAL_ERROR "MERT_REFERENCE_SOURCE must contain reviewed pinned official source")
+        endif()
+        add_executable(mert-model-test tests/models/mert-model-test.cpp)
+        target_link_libraries(mert-model-test PRIVATE clap)
+        add_test(NAME mert_model_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_parity.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mert-fixture" "${MERT_REFERENCE_SOURCE}")
+        set_tests_properties(mert_model_parity PROPERTIES TIMEOUT 600)
+        if(CLAMP3_MODEL_PARITY)
+            add_test(NAME mert_clamp3_pipeline
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_pipeline.py"
+                        "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mert-fixture")
+            set_tests_properties(mert_clamp3_pipeline PROPERTIES DEPENDS "mert_model_parity;clamp3_model_parity" TIMEOUT 300)
+        endif()
+    endif()
     set(MERT2_REFERENCE_SOURCE "" CACHE PATH "Reviewed pinned MERT-v2-FullSong source directory")
     if(MERT2_MODEL_PARITY)
         if(NOT EXISTS "${MERT2_REFERENCE_SOURCE}/modeling_mert2.py")
