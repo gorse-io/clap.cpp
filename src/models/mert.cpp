@@ -6,7 +6,9 @@
 #include <limits>
 
 namespace clap::detail {
-MertModel::MertModel(const ModelLoader &source, int threads) : loader(source), ops(source, threads) {
+MertModel::MertModel(const ModelLoader &source, int threads, const std::string &tensor_prefix,
+                     const std::string &metadata_prefix)
+    : loader(source, tensor_prefix, metadata_prefix), ops(loader, threads) {
     load_arch_hparams();
     load_arch_tensors();
 }
@@ -88,9 +90,6 @@ void MertModel::load_arch_tensors() const {
 
 std::vector<float> MertModel::text(const std::vector<int> &) const {
     throw std::runtime_error("MERT-v1 has no text encoder");
-}
-std::vector<float> MertModel::audio_features(const std::vector<float> &, int) const {
-    throw std::runtime_error("MERT-v1 requires raw waveform input");
 }
 
 std::vector<float> MertModel::normalize(const std::vector<float> &pcm) const {

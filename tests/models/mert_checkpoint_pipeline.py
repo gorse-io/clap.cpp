@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from transformers import BertConfig, BertModel, Wav2Vec2FeatureExtractor
 from mert_parity import reference, wav, error
+from feature_input import encode
 
 
 def run(args):
@@ -78,11 +79,9 @@ def run(args):
                                                  '--clamp3-features','-t','2']))
         native_features = np.asarray(raw['values'],dtype='float32').reshape(raw['frames'],raw['dimension'])
         error(native_features,features.numpy(),name+'/MERT',0.00002)
-        np.save(args.output/'features.npy',native_features)
-        file_embedding = json.loads(subprocess.check_output([cli,'-m',str(args.clamp3_gguf),
-                '--audio-features',str(args.output/'features.npy'),'-t','2']))
+        file_embedding = encode(args.build,args.clamp3_gguf,native_features.ravel(),raw['frames'],args.output)
         actual = json.loads(subprocess.check_output([cli,'-m',str(args.clamp3_gguf),
-                '--mert-model',str(args.mert_gguf),'-a',str(actual_path),'-t','2']))
+                '-a',str(actual_path),'-t','2']))
         np.testing.assert_allclose(actual,file_embedding,rtol=0,atol=1e-6)
         error(actual,expected,name+'/published-pipeline',0.0005)
         delta = np.asarray(actual)-expected

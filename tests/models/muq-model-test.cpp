@@ -52,7 +52,6 @@ int main(int argc, char **argv) {
             require(rejected, message);
         };
         rejects([&] { model.text("no text tower"); }, "MuQ text must fail");
-        rejects([&] { model.audio_features({0}, 1); }, "MuQ features must fail");
         rejects([&] { model.audio_frames(std::vector<float>(1024), 24000); }, "MuQ short waveform must fail");
         rejects([&] { model.audio_frames(wave, 0); }, "MuQ invalid rate must fail");
         rejects([&] { model.audio(wave, 24000, 1); }, "MuQ crop must fail");

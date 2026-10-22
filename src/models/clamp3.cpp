@@ -11,6 +11,28 @@ Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
     : loader(source), ops(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
+    if (loader.has_metadata_prefix("clamp3.audio_frontend")) {
+        if (loader.metadata("clamp3.audio_frontend") != "mert-v1")
+            throw std::runtime_error("CLAP: unsupported CLaMP3 audio frontend");
+        const auto revision = loader.metadata("clamp3.mert.source_revision");
+        if (revision.size() != 40 || revision.find_first_not_of("0123456789abcdef") != std::string::npos)
+            throw std::runtime_error("CLAP: invalid bundled MERT source revision");
+        const auto mert_config = json::parse(loader.metadata("clamp3.mert.config"));
+        if (!mert_config.at("hidden_size").is_number_integer() ||
+            mert_config.at("hidden_size") != config.at("audio_feature_dim"))
+            throw std::runtime_error("CLAP: CLaMP3/MERT feature dimension mismatch");
+        frontend = std::make_unique<MertModel>(loader, threads, "mert.", "clamp3.");
+    } else {
+        throw std::runtime_error("CLAP: CLaMP3 requires bundled MERT-v1-95M audio frontend metadata; reconvert the checkpoint");
+    }
+}
+Clamp3Model::~Clamp3Model() = default;
+bool Clamp3Model::has_waveform_embeddings() const { return frontend != nullptr; }
+std::vector<float> Clamp3Model::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    if (crop_offset != 0) throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
+    if (!frontend) throw std::runtime_error("CLAP: CLaMP3 requires MERT-v1-95M features");
+    const auto features = frontend->clamp3_features(pcm);
+    return encode_features(features.values, features.frames);
 }
 
 void Clamp3Model::load_arch_hparams() {
@@ -93,7 +115,7 @@ TextParameters Clamp3Model::text_parameters() const {
 }
 int Clamp3Model::projection_dimension() const { return config.at("projection_dim"); }
 int Clamp3Model::mel_bins() const { return 0; }
-int Clamp3Model::sample_rate() const { return 0; }
+int Clamp3Model::sample_rate() const { return frontend ? frontend->sample_rate() : 0; }
 bool Clamp3Model::is_waveform_encoder() const { return false; }
 AudioFrames Clamp3Model::audio_frames(const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLaMP3 requires precomputed MERT-v1-95M features");
@@ -241,7 +263,7 @@ std::vector<float> Clamp3Model::text(const std::vector<int> &ids) const {
     return chunked_text(ids);
 }
 
-std::vector<float> Clamp3Model::audio_features(const std::vector<float> &features, int frames) const {
+std::vector<float> Clamp3Model::encode_features(const std::vector<float> &features, int frames) const {
     const int dim = config.at("audio_feature_dim");
     if (!(frames > 0 && frames <= std::numeric_limits<int>::max() - 2 &&
           features.size() == static_cast<size_t>(frames) * dim))

@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "feature-test.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -6,6 +7,10 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
+template<class T, class = void> struct has_feature_input : std::false_type {};
+template<class T> struct has_feature_input<T, std::void_t<decltype(&T::audio_features)>> : std::true_type {};
+static_assert(!has_feature_input<clap::Model>::value, "public feature interface must not return");
 
 static void require(bool value, const std::string &message) {
     if (!value) throw std::runtime_error(message);
@@ -64,7 +69,7 @@ int main(int argc, char **argv) {
             compare(model.text(test.at("padded_ids").get<std::vector<int>>()),
                     test.at("expected").get<std::vector<float>>(), embedding_tolerance, "text embedding");
         }
-        compare(model.audio_features(fixture.at("features").get<std::vector<float>>(), fixture.at("frames")),
+        compare(clap::detail::FeatureTestAccess::encode(argv[1], fixture.at("features").get<std::vector<float>>(), fixture.at("frames")),
                 fixture.at("expected_audio").get<std::vector<float>>(), embedding_tolerance, "audio embedding");
         if (fixture.contains("waveform")) {
             compare(clap::log_mel(fixture.at("waveform").get<std::vector<float>>()),

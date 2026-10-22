@@ -217,7 +217,12 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
     return project(pooled, "text_proj");
 }
 
-std::vector<float> ClapModel::audio_features(const std::vector<float> &features, int frames) const {
+std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    if (mel_bins() != 64) throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
+    return encode_features(clap::log_mel(pcm, 48000, crop_offset), 1001);
+}
+
+std::vector<float> ClapModel::encode_features(const std::vector<float> &features, int frames) const {
     const int bins = a.at("num_mel_bins"), spec = a.at("spec_size"), ratio = spec / bins;
     const int target_time = spec * ratio;
     if (!(frames > 0 && frames <= target_time && features.size() == static_cast<size_t>(frames) * bins))

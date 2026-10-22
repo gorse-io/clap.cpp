@@ -170,7 +170,7 @@ python convert_hf_to_gguf.py checkpoint/ model-f32.gguf --dtype f32
 # --type Q8_0 is also accepted; preset names are case-insensitive.
 ./build/clap-model --model model-q8_0.gguf --text 'A jazz quartet.'
 ./build/clap-model --model model-q8_0.gguf --audio music.wav
-# The same quantizer accepts CLaMP3 F32/F16 GGUF; use --audio-features for CLaMP3.
+# CLaMP3 also accepts --audio; its bundled MERT tensors remain F32/F16.
 ```
 
 Q8_0 is **mixed precision**: tensors with ggml rank greater than one and a
@@ -269,20 +269,40 @@ python convert_hf_to_gguf.py \
   checkpoint/weights_clamp3_saas_h_size_768_t_model_FacebookAI_xlm-roberta-base_t_length_128_a_size_768_a_layers_12_a_length_128_s_size_768_s_layers_12_p_size_64_p_length_512.pth \
   clamp3-f16.gguf --dtype f16
 ./build/clap-model --model clamp3-f16.gguf --text 'A piano sonata.'
-./build/clap-model --model clamp3-f16.gguf --audio-features mert.npy
+./build/clap-model --model clamp3-f16.gguf --audio music.flac
 ```
 
-`mert.npy` must be a C-contiguous little-endian float32 NumPy array shaped
-`[frames, 768]` or `[1, frames, 768]`, produced by the official MERT-v1-95M
-preprocessing (described below). Native raw-waveform inference is also supported
-by supplying a separately converted MERT-v1-95M model:
+Every CLaMP3 conversion **automatically bundles** `m-a-p/MERT-v1-95M`.
+The converter resolves `config.json`, `preprocessor_config.json` and
+`pytorch_model.bin` at the default immutable revision
+`12af15fef9d0ac838c3f475bfbbf26d2060dd4f5` through Hugging Face's standard
+cache, downloading missing files when online. `--mert-revision FULL_COMMIT_SHA`
+can select another explicitly pinned revision of that same repository.
+Use `HF_HOME`/`HF_HUB_CACHE` to locate an existing cache and `HF_HUB_OFFLINE=1`
+to require cached inputs (a cache miss fails; bundling is never skipped).
+Conversion does not execute remote model code. Both encoders use `--dtype`.
 
-```sh
-./build/clap-model --model clamp3-f16.gguf --mert-model mert-v1-95m-f32.gguf --audio music.flac
-```
+A single GGUF now handles both text and raw waveform inference, with native
+mono decoding/resampling to 24 kHz and MERT's whole-recording normalization,
+five-second windows and all-layer pooling described below. No external MERT
+model or precomputed feature input is accepted. The public feature-input API
+and its CLI flag have been removed; old feature-only GGUFs must be reconverted.
+`Model::audio(pcm, rate)` is the C++ waveform entry point.
 
-`--mert-model` requires `--audio`; text and pre-extracted features continue to use
-one model. Without `--mert-model`, CLaMP3 still requires `--audio-features`.
+The bundle's string metadata contract is:
+
+- `general.architecture = clamp3`; the existing CLaMP3 config/tokenizer remain unchanged.
+- `clamp3.audio_frontend = mert-v1` selects the fixed whole-recording/5-second/all-layer extraction contract.
+- `clamp3.mert.config` contains the validated original MERT JSON config.
+- `clamp3.mert.source_revision` contains the full lowercase dependency commit SHA.
+- `mert.*` tensors retain the standalone MERT names under one prefix. They share
+  the same GGUF mapping and are consumed by the existing native `MertModel`, not
+  a duplicate encoder. Missing/unsupported metadata, incompatible dimensions,
+  missing/misshaped tensors and unused tensor names fail during model loading.
+
+Quantization applies only to eligible CLaMP3 encoder/projection tensors; the
+bundled MERT frontend stays in its original F32/F16 storage format.
+
 The runtime adds
 the official leading/trailing zero vectors, uses overlapping final 128-frame
 chunks, masked mean pooling, remainder-weighted chunk aggregation, and a linear
@@ -313,11 +333,13 @@ python convert_hf_to_gguf.py mert-checkpoint/ mert-v1-95m-f32.gguf \
   --dtype f32 --mert-revision 12af15fef9d0ac838c3f475bfbbf26d2060dd4f5
 ./build/clap-model --model mert-v1-95m-f32.gguf --audio music.wav --frames
 ./build/clap-model --model mert-v1-95m-f32.gguf --audio music.wav --clamp3-features
-./build/clap-model --model clamp3-f16.gguf --mert-model mert-v1-95m-f32.gguf --audio music.wav
+./build/clap-model --model clamp3-f16.gguf --audio music.wav
 ```
 
-`--mert-revision` records the full source SHA in GGUF; it is provenance supplied
-by the caller, not an automatic check that local files came from that revision.
+`--mert-revision` records the full source SHA in GGUF. Standalone local MERT
+conversion treats it as caller-supplied provenance, not a content-hash check.
+CLaMP3 conversion resolves that immutable revision from the fixed official repository;
+modified local cache contents are still the caller's responsibility.
 `--dtype f16` is also supported: dense/convolution weights use half storage,
 with F32 activations/accumulation and vector parameters. The positional
 convolution's legacy or parametrized weight normalization is materialized before
@@ -344,19 +366,20 @@ Two different outputs are intentionally exposed:
   Return one 768-vector per window. At least one second of audio is required.
 
 Both sequence flags print `{ "frames": N, "dimension": D, "values": [...] }`;
-`values` is flat, time-major, and matches `clap::AudioFrames`. For C++ chaining:
+`values` is flat, time-major, and matches `clap::AudioFrames`. These standalone
+MERT inspection APIs remain available; CLaMP3 feature encoding itself is private.
+For C++ end-to-end inference:
 
 ```cpp
-clap::Model mert("mert-v1-95m-f32.gguf"), clamp3("clamp3-f16.gguf");
+clap::Model clamp3("clamp3-f16.gguf");
 auto pcm = clap::decode_audio("music.flac");
-auto features = mert.clamp3_features(pcm.samples, pcm.sample_rate);
-auto embedding = clamp3.audio_features(features.values, features.frames);
+auto embedding = clamp3.audio(pcm.samples, pcm.sample_rate);
 ```
 
-`--mert-model` performs this same chain natively, including CLaMP3's existing
-zero-boundary vectors, chunking and raw projection. Neither `--frames` nor
-`--crop-offset` may be combined with `--mert-model` or `--clamp3-features`.
-`--frames` also excludes `--crop-offset`, including an explicitly supplied zero.
+CLaMP3 waveform inference includes the leading/trailing zero vectors, chunking
+and raw projection internally. CLaMP3 rejects `--frames`, `--clamp3-features`
+and `--crop-offset` (including an explicitly supplied zero). Standalone MERT
+sequence flags also exclude `--crop-offset`, and cannot be combined together.
 Native decoding/resampling uses miniaudio as documented below, **not** the
 bit-identical librosa/torchaudio path of the Python extraction script. Numerical
 oracles compare identical 24 kHz PCM, and separately test 48 kHz input against a
@@ -373,7 +396,7 @@ ctest --test-dir build --output-on-failure
 # Actual 95M checkpoint, not the random tiny model:
 python tests/models/mert_parity.py build build/published-mert-v1 \
   /path/to/reviewed/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5 --checkpoint mert-checkpoint/
-# Actual published MERT + CLaMP3 SAAS weights; CLaMP3 GGUF must be F32:
+# Actual published MERT + CLaMP3 SAAS weights; use a bundled F32 CLaMP3 GGUF:
 python tests/models/mert_checkpoint_pipeline.py build mert-checkpoint/ clamp3-checkpoint/ \
   /path/to/reviewed/12af15fef9d0ac838c3f475bfbbf26d2060dd4f5 build/published-pipeline \
   --mert-gguf mert-v1-95m-f32.gguf --clamp3-gguf clamp3-f32.gguf
@@ -382,6 +405,10 @@ python tests/models/mert_checkpoint_pipeline.py build mert-checkpoint/ clamp3-ch
 The tiny F32/F16 suites cover waveform normalization, convolutions, attention,
 final frames, all-layer means, five-second boundaries/tail discard, public APIs,
 CLI validation, native/resampled pipelines and Transformers BERT projection.
+The CLaMP3 fixtures populate an isolated offline Hugging Face cache with tiny
+synthetic MERT weights; no model download is needed for these tests. Private
+test-only feature-encoder access preserves independent tensor-level oracles
+without exposing feature input in the library or production executable.
 Always-on tests reject malformed model/converter metadata without Torch.
 A local published-95M check (broadband, tone, silence and resampled audio) had
 worst frame errors below **4.3e-5** and all-layer feature errors below **5.1e-6**, for both F32 and
@@ -578,7 +605,7 @@ MuQ backbone's F32 size in RAM, plus mapped working pages, activations, tokenize
 and scratch. F16 is not an assurance that this large model fits in a small RAM
 budget without paging. MuLan currently uses the validated CPU dense path.
 Quantized MuLan GGUF is rejected. Frame output, CLaMP3 features, precomputed
-features, crop offsets, and `--mert-model` are unsupported for this joint model.
+features and crop offsets are unsupported for this joint model.
 
 The optional tiny oracle exercises official hash-checked components with
 nontrivial random learned weights; it does not establish published retrieval

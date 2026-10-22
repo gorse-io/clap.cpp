@@ -5,6 +5,20 @@ import struct
 from .base import ModelBase, load_checkpoint, write_gguf
 
 
+MERT_REVISION = '12af15fef9d0ac838c3f475bfbbf26d2060dd4f5'
+
+
+def resolve_mert_source(revision=None):
+    """Resolve the mandatory official dependency through the standard HF cache."""
+    revision = MERT_REVISION if revision is None else revision
+    if len(revision) != 40 or any(c not in '0123456789abcdef' for c in revision.lower()):
+        raise ValueError('MERT revision must be a full 40-character commit SHA')
+    from huggingface_hub import snapshot_download
+    from pathlib import Path
+    return Path(snapshot_download('m-a-p/MERT-v1-95M', revision=revision.lower(),
+        allow_patterns=['config.json', 'preprocessor_config.json', 'pytorch_model.bin'])), revision.lower()
+
+
 def mert_inputs(source, revision, torch):
     """MERT-v1-95M/HuBERT post-norm inference; never execute checkpoint code."""
     if not revision or len(revision) != 40 or any(c not in '0123456789abcdef' for c in revision.lower()):
