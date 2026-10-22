@@ -117,6 +117,48 @@ This adds a CUDA-enabled release build, not new model-backend selection: native
 model linear dispatch remains CPU/optional Vulkan as documented above, and the
 released `clap` embedding/server interfaces still return dummy embeddings.
 
+### Docker
+
+Initialize the submodules before building. Images include both `clap` and
+`clap-model`, and reuse the Linux CMake release presets. `BACKEND` selects
+`cpu` (default), `cuda` (CUDA 12.9), or `vulkan`; amd64 and arm64 are supported.
+Windows/macOS and the RISC-V/LoongArch cross-build presets are not Docker targets.
+
+```sh
+# Docker build args select the backend; BuildKit selects the target architecture.
+docker build --build-arg BACKEND=cpu -t clap:cpu .
+docker build --build-arg BACKEND=cuda -t clap:cuda .
+docker build --build-arg BACKEND=vulkan -t clap:vulkan .
+
+# Bake defaults to CPU. Environment variables configure the default target.
+docker buildx bake --load
+BACKEND=vulkan BUILD_JOBS=4 docker buildx bake --load
+# Alternatively, choose one or more named targets.
+docker buildx bake cpu cuda vulkan --load
+# Multi-platform builds need native builders or QEMU; push to a registry.
+IMAGE=ghcr.io/your-org/clap docker buildx bake cpu \
+  --set '*.platform=linux/amd64' --set '*.platform+=linux/arm64' --push
+```
+
+`BUILD_JOBS` is optional (CPU/Vulkan default to 2, CUDA to 1) and is also accepted
+by `docker build --build-arg BUILD_JOBS=4`. `IMAGE` sets the Bake image repository
+(default `clap`); tags are `cpu`, `cuda`, and `vulkan`. No GPU is needed to compile.
+The CUDA presets disable optional NCCL so the image does not depend on a shared
+NCCL library from the development image; CUDA runtime and cuBLAS remain static.
+
+```sh
+docker run --rm clap:cpu --help
+docker run --rm -v "$PWD:/data" --entrypoint clap-model clap:cpu \
+  --model /data/model.gguf --text 'A jazz quartet.'
+# Requires NVIDIA Container Toolkit and a compatible host NVIDIA driver.
+docker run --rm --gpus all clap:cuda --help
+```
+
+Vulkan images include the loader, not a GPU driver/ICD. Supply a compatible
+vendor driver/ICD and device access for your host (for example `/dev/dri` for
+Mesa); passing a device alone does not install its driver in the container.
+The CLI/model backend limitations described above also apply to these images.
+
 ## Native model layout
 
 The C++ organization follows `llama.cpp/src/models`: shared runtime services are

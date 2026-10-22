@@ -63,6 +63,7 @@
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
+        "GGML_CUDA_NCCL": "OFF",
         "GGML_STATIC": "ON"
       }
     },
@@ -142,6 +143,7 @@
       "cacheVariables": {
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
+        "GGML_CUDA_NCCL": "OFF",
         "GGML_STATIC": "ON"
       }
     },
@@ -151,6 +153,7 @@
       "cacheVariables": {
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
+        "GGML_CUDA_NCCL": "OFF",
         "GGML_STATIC": "ON"
       }
     },

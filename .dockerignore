@@ -1,0 +1,10 @@
+.git
+**/.git
+build
+build-*
+**/__pycache__
+.venv
+venv
+*.gguf
+*.safetensors
+*.bin
