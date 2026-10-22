@@ -1,6 +1,7 @@
 #include "model-loader.h"
 #include "quantize-output.h"
 #include "quantize.h"
+#include "quantization-policy.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cctype>
@@ -18,11 +19,14 @@ using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 // unrelated MOSTLY_Q4_K value (12).
 constexpr uint32_t q4_k_m_file_type = 15;
 ggml_type target_type(const ggml_tensor *w, bool k, const std::string &architecture) {
-    if (std::string(w->name).rfind("mert.", 0) == 0) return w->type;
+    if (architecture == "clamp3" && std::string(w->name).rfind("mert.", 0) == 0) return w->type;
+    if (clap::detail::encoder_architecture(architecture) && !clap::detail::encoder_quantizable(w, architecture)) return w->type;
     const auto base = k ? GGML_TYPE_Q4_K : GGML_TYPE_Q8_0;
     if (ggml_n_dims(w) <= 1 || w->ne[0] % ggml_blck_size(base) != 0) return w->type;
     if (!k) return base;
     const std::string name(w->name);
+    if (clap::detail::encoder_architecture(architecture))
+        return clap::detail::encoder_sensitive(name, architecture) ? GGML_TYPE_Q6_K : base;
     const auto ends = [&](const std::string &suffix) {
         return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
     };
@@ -40,9 +44,9 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     if (std::filesystem::exists(std::filesystem::symlink_status(destination)))
         throw std::runtime_error("CLAP: output already exists; choose a new path");
     clap::detail::ModelLoader loader;
-    loader.load(source.string());
+    loader.load(source.string(), false);
     const auto architecture = loader.metadata("general.architecture");
-    if (!(architecture == "clap" || architecture == "clamp3"))
+    if (!(architecture == "clap" || architecture == "clamp3" || clap::detail::encoder_architecture(architecture)))
         throw std::runtime_error("CLAP: unsupported architecture");
     File input(gguf_init_from_file(source.string().c_str(), {true, nullptr}), gguf_free);
     File output(gguf_init_empty(), gguf_free);
@@ -53,7 +57,8 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     // Normalize the advertised value to the actual tensor/metadata layout.
     gguf_set_val_u32(output.get(), "general.alignment", gguf_get_alignment(output.get()));
     gguf_set_val_u32(output.get(), "general.file_type", k ? q4_k_m_file_type : static_cast<uint32_t>(GGML_FTYPE_MOSTLY_Q8_0));
-    if (k) gguf_set_val_str(output.get(), "clap.quantization_policy", "q4_k_m-v1-all-v-ffn-down-projection-q6_k");
+    if (k) gguf_set_val_str(output.get(), "clap.quantization_policy", clap::detail::encoder_architecture(architecture) ?
+        "q4_k_m-v2-encoder-dense-v-ffn-down-projection-q6_k" : "q4_k_m-v1-all-v-ffn-down-projection-q6_k");
     gguf_set_val_u32(output.get(), "general.quantization_version", GGML_QNT_VERSION);
     size_t count = 0;
     for (int64_t i = 0; i < gguf_get_n_tensors(input.get()); ++i) {

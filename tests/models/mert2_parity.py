@@ -107,7 +107,8 @@ state = {}
 for name, value in model.state_dict().items():
     state[name] = value.half().float() if value.ndim > 1 and not name.startswith("feature_extractor.") else value
 rounded.load_state_dict(state, strict=True)
-f16 = fixture_for(rounded, 2e-3)
+# F16 weights retain F32 activations; expose unintended F16 input packing.
+f16 = fixture_for(rounded, 2e-5)
 (out / "fixture-f16.json").write_text(json.dumps(f16))
 subprocess.run([sys.executable, str(converter), str(out), str(out / "model-f16.gguf"),
                 "--dtype", "f16", *common], check=True)

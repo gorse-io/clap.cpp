@@ -110,7 +110,7 @@ for dtype in ('f32','f16'):
     import numpy as np
     np.save(out/'unsupported-features.npy',np.zeros((2,8),dtype=np.float32))
     rejected=subprocess.run(cli+['--audio-features',str(out/'unsupported-features.npy')],capture_output=True,text=True)
-    assert rejected.returncode!=0 and 'raw waveform' in rejected.stderr,rejected
+    assert rejected.returncode!=0 and '--audio-features' in rejected.stderr,rejected
     for flag in (['--frames'],['--clamp3-features'],['--crop-offset','1'],['--crop-offset','0'],['--mert-model',str(target)]):
         result=subprocess.run(cli+['--audio',str(wav)]+flag,capture_output=True,text=True)
         assert result.returncode!=0,(flag,result)

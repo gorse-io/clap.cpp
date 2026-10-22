@@ -1,4 +1,4 @@
-"""MuQ quantized storage is explicitly unsupported; never crash or publish."""
+"""MuQ non-dense quantized storage is unsupported; never crash or publish."""
 from pathlib import Path
 import struct
 import subprocess
@@ -23,10 +23,10 @@ with tempfile.TemporaryDirectory(prefix='MuQ quantized ') as temporary:
         source.write_bytes(header + bytes(-len(header) % 32) + bytes(size))
         result = subprocess.run([str(native), '--model', str(source), '--text', 'unused'],
                                 capture_output=True, text=True, timeout=30)
-        assert result.returncode > 0 and 'MuQ requires F32/F16 weights' in result.stderr, (name, result)
+        assert result.returncode > 0 and 'quantized non-dense/embedding tensor' in result.stderr, (name, result)
         destination = output / (name + '-converted.gguf')
         result = subprocess.run([str(quantizer), 'quantize', str(source), str(destination)],
                                 capture_output=True, text=True, timeout=30)
         assert result.returncode > 0 and not destination.exists(), (name, result)
     assert not list(output.glob('*.tmp-*'))
-print('MuQ Q8_0/Q4_K/Q6_K rejection passed')
+print('MuQ non-dense Q8_0/Q4_K/Q6_K rejection passed')

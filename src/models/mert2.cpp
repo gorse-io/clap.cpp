@@ -1,4 +1,5 @@
 #include "models.h"
+#include "mert2-fft.h"
 
 #include <stdexcept>
 #include <algorithm>
@@ -9,30 +10,6 @@
 namespace clap::detail {
 using json = nlohmann::json;
 namespace {
-constexpr float pi = 3.14159265358979323846f;
-
-void fft(std::vector<std::complex<float>> &values) {
-    const size_t size = values.size();
-    for (size_t i = 1, j = 0; i < size; ++i) {
-        size_t bit = size >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit;
-        if (i < j) std::swap(values[i], values[j]);
-    }
-    for (size_t width = 2; width <= size; width <<= 1) {
-        const auto root = std::polar(1.0f, -2.0f * pi / static_cast<float>(width));
-        for (size_t offset = 0; offset < size; offset += width) {
-            std::complex<float> factor(1.0f);
-            for (size_t index = 0; index < width / 2; ++index) {
-                const auto left = values[offset + index];
-                const auto right = values[offset + index + width / 2] * factor;
-                values[offset + index] = left + right;
-                values[offset + index + width / 2] = left - right;
-                factor *= root;
-            }
-        }
-    }
-}
 
 float sigmoid(float value) {
     if (value >= 0) return 1.0f / (1.0f + std::exp(-value));
@@ -172,7 +149,7 @@ Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
             if (source >= static_cast<int>(pcm.size())) source = 2 * static_cast<int>(pcm.size()) - 2 - source;
             spectrum[index] = pcm[source] * scalar(window, index);
         }
-        fft(spectrum);
+        mert2_fft(spectrum);
         for (int frequency = 0; frequency < frequencies; ++frequency)
             power[frequency] = std::norm(spectrum[frequency]);
         for (int bin = 0; bin < bins; ++bin) {

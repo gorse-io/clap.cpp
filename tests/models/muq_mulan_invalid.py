@@ -21,7 +21,7 @@ def write(path, metadata, name='probe', dims=(1,), typ=0, value=0.):
 with tempfile.TemporaryDirectory() as temporary:
     path=Path(temporary)/'invalid.gguf'
     cases=[('non-finite',{},0,float('nan'),'probe'),('non-finite',{},0,float('inf'),'probe'),
-           ('F32/F16',{},8,0.,'probe'),('F32',{},1,0.,'frontend.window'),
+           ('quantized non-dense/embedding',{},8,0.,'probe'),('F32',{},1,0.,'frontend.window'),
            ('metadata',{},0,0.,'probe')]
     for message,meta,typ,value,name in cases:
         write(path,{'general.architecture':'muq_mulan',**meta},name=name,typ=typ,value=value,dims=(32,) if typ==8 else (1,))
@@ -107,7 +107,8 @@ with tempfile.TemporaryDirectory() as temporary:
     for arch in architectures:
         for name,raw in [('valid tiny',audio),('valid published',published(audio)),*malformed(audio)]:
             meta=dict(base_meta, **{'general.architecture':arch,'muq.config':json.dumps(raw)})
-            complete(path,meta,shapes)
+            geometry = shapes if arch == 'muq_mulan' else {k:v for k,v in shapes.items() if k.startswith(('frontend.','conv.','conformer.'))}
+            complete(path,meta,geometry)
             proc=subprocess.run([str(cli),'--model',str(path),'--text','a'],capture_output=True,text=True,timeout=15)
             if name=='valid tiny':
                 ok=proc.returncode==0 if arch=='muq_mulan' else 'no text encoder' in proc.stderr

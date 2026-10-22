@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
     quantize->add_option("--type", quantize_type, "Quantization preset")
         ->check(CLI::IsMember({"Q8_0", "Q4_K_M"}, CLI::ignore_case))
         ->capture_default_str();
-    quantize->add_option("INPUT.gguf", quantize_input, "CLAP/CLaMP3 input model")->required();
+    quantize->add_option("INPUT.gguf", quantize_input, "F32/F16 CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan model")->required();
     quantize->add_option("OUTPUT.gguf", quantize_output, "Output model (must not exist)")->required();
 
     CLI11_PARSE(app, argc, argv);
