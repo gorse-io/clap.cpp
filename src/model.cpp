@@ -20,12 +20,14 @@ struct Model::Impl {
         else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
         else if (name == "mert2") architecture = std::make_unique<detail::Mert2Model>(loader, threads);
         else if (name == "mert") architecture = std::make_unique<detail::MertModel>(loader, threads);
+        else if (name == "muq_mulan") architecture = std::make_unique<detail::MuqMulanModel>(loader, threads);
         else if (name == "muq") architecture = std::make_unique<detail::MuqModel>(loader, threads);
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
-        if (!architecture->is_waveform_encoder()) {
+        loader.validate_tensor_coverage();
+        if (architecture->has_text_encoder()) {
             const auto text = architecture->text_parameters();
             const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
-            if (name == "clamp3")
+            if (name == "clamp3" || name == "muq_mulan")
                 vocabulary = std::make_unique<detail::UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
             else
                 vocabulary = std::make_unique<detail::ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
@@ -56,6 +58,13 @@ std::vector<float> Model::audio_features(const std::vector<float> &features, int
     return impl_->architecture->audio_features(features, frames);
 }
 std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
+    if (impl_->architecture->has_waveform_embeddings()) {
+        if (crop_offset != 0) throw std::runtime_error("CLAP: MuLan crop offsets are unsupported");
+        if (sample_rate <= 0) throw std::runtime_error("CLAP: audio sample rate must be positive");
+        const int target = impl_->architecture->sample_rate();
+        if (sample_rate == target) return impl_->architecture->waveform_embedding(pcm);
+        return impl_->architecture->waveform_embedding(resample_audio({pcm, sample_rate}, target).samples);
+    }
     if (impl_->architecture->is_waveform_encoder()) {
         if (crop_offset != 0)
             throw std::runtime_error("CLAP: waveform encoders process the complete waveform; crop offsets are unsupported");

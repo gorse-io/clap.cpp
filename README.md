@@ -4,7 +4,8 @@
 [![Release](https://github.com/gorse-io/clap.cpp/actions/workflows/release.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/release.yml)
 
 C++17/ggml implementations of Hugging Face `laion/larger_clap_music`, CLaMP3,
-`m-a-p/MERT-v1-95M` and `m-a-p/MERT-v2-FullSong`, with native inference through `clap-model`. The
+`m-a-p/MERT-v1-95M`, `m-a-p/MERT-v2-FullSong`, OpenMuQ/MuQ and MuQ-MuLan,
+with native inference through `clap-model`. The
 original `clap` embedding command and HTTP server intentionally retain their dummy behavior.
 
 ## Requirements
@@ -134,7 +135,7 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
 | `src/model-ops.*` | Shared ggml matrix operations (CPU/optional Vulkan) and CPU normalization |
 | `src/audio.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
-| `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3, MERT-v1, MERT2 and MuQ specializations: hyperparameters, tensor contracts, encoders and projections |
+| `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3, MERT-v1, MERT2, MuQ and MuQ-MuLan specializations: hyperparameters, tensor contracts, encoders and projections |
 | `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
 | `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion CLI; no Python at inference |
 | `conversion/__init__.py` | Architecture-to-module map and lazy model-class lookup |
@@ -484,6 +485,150 @@ waveform or establish retrieval quality.
 Both oracle commands are offline and write generated audio/fixtures only to their
 output directories. Ordinary CTest also covers config/license metadata and
 quantized-storage rejection without requiring ML packages.
+
+### MuQ-MuLan-large (native joint audio/text embeddings)
+
+`OpenMuQ/MuQ-MuLan-large` has native, single-item text and raw-waveform
+inference through `clap::Model` and `clap-model`. Published embeddings have 512
+components. No Python, model source execution, or downloads occur at inference.
+The model revision is `2e01c796b71dca71b45251384c04cd7b237c9020`; the reviewed
+[official source](https://github.com/tencent-ailab/MuQ/tree/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a)
+is pinned to `28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a` (MIT). The
+[weights](https://huggingface.co/OpenMuQ/MuQ-MuLan-large/tree/2e01c796b71dca71b45251384c04cd7b237c9020)
+are **CC-BY-NC-4.0**, including the resulting GGUF. Attribution: Haina Zhu et al.,
+*MuQ: Self-Supervised Music Representation Learning with Mel Residual Vector
+Quantization*. This support does not change the repository's own license.
+
+Conversion requires these **local** files:
+
+- MuLan `config.json` and the complete `pytorch_model.bin` in the source directory.
+- The MuQ-large-msd-iter dependency's `config.json`, supplied with `--muq-config`
+  (default: `muq-config.json` in the source directory).
+- XLM-R-base `config.json`, supplied with `--text-config` (default:
+  `text-config.json` in the source directory), and its exact `tokenizer.json`,
+  supplied with `--tokenizer` (default: beside the checkpoint).
+
+The published checkpoint is 2,653,954,401 bytes, SHA256
+`d42ae3f7cb9b66759ee0089ddc70e2f28b130c2d8ba621457358272d32dd0444`.
+Use the XLM-R-base vocabulary with 250002 entries, hidden size 768, 12 backbone
+layers and 514 position entries. The MuQ backbone has hidden size 1024 and 12
+layers. Conversion validates the dependency dimensions against every inference
+tensor, rejects unknown tensors, and ignores only known unused/training
+namespaces. It uses `torch.load(weights_only=True, mmap=True)` and local JSON;
+it never instantiates a pretrained model or executes downloaded source. Missing
+dependency configs cause an error, rather than a hidden download.
+
+```bash
+python convert_hf_to_gguf.py /path/to/muq-mulan artifacts/muq-mulan-f16.gguf \
+  --dtype f16 \
+  --muq-mulan-revision 2e01c796b71dca71b45251384c04cd7b237c9020 \
+  --muq-config /path/to/muq/config.json \
+  --text-config /path/to/xlm-roberta-base/config.json \
+  --tokenizer /path/to/xlm-roberta-base/tokenizer.json
+
+artifacts/build/clap-model --model artifacts/muq-mulan-f16.gguf \
+  --text 'classical genres, hopeful mood, piano.' --threads 2
+artifacts/build/clap-model --model artifacts/muq-mulan-f16.gguf \
+  --text '一首适合海边风景的小提琴曲，节奏欢快' --threads 2
+artifacts/build/clap-model --model artifacts/muq-mulan-f16.gguf \
+  --audio music.flac --threads 2
+```
+
+```cpp
+clap::Model model("artifacts/muq-mulan-f16.gguf", 2);
+auto text = model.text("hopeful piano music");
+auto audio = clap::decode_audio("music.flac");
+auto music = model.audio(audio.samples, audio.sample_rate);
+// dot(music, text) is the official similarity operation.
+```
+
+Audio is mixed to mono and resampled to 24 kHz using the existing native helper.
+There is **no waveform amplitude normalization**. The helper's causal filter and
+linear resampling are not bit-equivalent to torchaudio/librosa; compare at a
+common, pre-resampled 24 kHz waveform for a backbone/projection parity check.
+The model splits successive ten-second windows. A final tail gets **one slice**
+from the recording prefix, of at most the missing length. A recording shorter
+than five seconds therefore produces a clip with `2*N` samples, rather than a
+repeated or zero-padded ten-second clip. Exactly ten seconds produces one clip.
+Each clip uses the final normalized MuQ layer, the 1024→768 affine audio
+projection, mean pooling, the learned 768→512 affine projection, and L2
+normalization. Clip vectors are averaged **without duration weighting or a
+second normalization**; a multi-clip result can have norm below one. At least
+1025 samples are needed **after** clipping: 513 original samples are accepted
+at 24 kHz, while 512 are rejected. Empty/nonfinite input is rejected.
+
+Text uses the existing exact XLM-R Unigram tokenizer and XLM-R-base backbone,
+followed by eight custom prenorm transformer blocks with cosine Q/K attention,
+learned Q/K scales, score multiplier 8 and GEGLU. The custom transformer has no
+additional padding mask for the single-item API, and no final adapter norm.
+Mean pooling includes special tokens, then the learned 768→512 affine
+projection and L2 normalization apply. Empty text is valid. Over-context text
+is rejected, rather than truncated or chunked; the published XLM-R table allows
+512 tokenizer IDs including specials. `Model::tokenize(text, max_length)` keeps
+its existing explicit truncation API; `Model::text(string)` tokenizes the full
+input and checks the context. Batch inference and other backbone/use-layer
+variants are unsupported.
+
+Both F32 and F16 GGUF are supported. Frontend buffers and 1D parameters remain
+F32. To preserve storage-rounded F32-activation semantics, F16 MuQ backbone
+weights expand into owned F32 compute buffers; text embeddings stay mapped,
+and F16 dense matrices expand only for the current operation. This saves disk
+and avoids expanding the entire joint model, but still requires roughly the
+MuQ backbone's F32 size in RAM, plus mapped working pages, activations, tokenizer
+and scratch. F16 is not an assurance that this large model fits in a small RAM
+budget without paging. MuLan currently uses the validated CPU dense path.
+Quantized MuLan GGUF is rejected. Frame output, CLaMP3 features, precomputed
+features, crop offsets, and `--mert-model` are unsupported for this joint model.
+
+The optional tiny oracle exercises official hash-checked components with
+nontrivial random learned weights; it does not establish published retrieval
+quality. The ordinary CTest contracts require only Python's standard library.
+
+```bash
+cmake -S . -B artifacts/build \
+  -DMUQ_MULAN_MODEL_PARITY=ON \
+  -DMUQ_MULAN_REFERENCE_SOURCE=/path/to/pinned/MuLan/source \
+  -DMUQ_REFERENCE_SOURCE=/path/to/pinned/MuQ/source-components
+cmake --build artifacts/build -j2
+ctest --test-dir artifacts/build -R muq_mulan --output-on-failure
+
+# Separate low-RAM published-checkpoint oracle. Each Torch branch runs in a
+# child process and exits before the native CLI starts; arrays/metrics are saved.
+python tests/models/muq_mulan_checkpoint_parity.py \
+  --checkpoint artifacts/checkpoint --gguf artifacts/muq-mulan-f16.gguf \
+  --dtype f16 --cli artifacts/build/clap-model \
+  --source artifacts/oracle --muq-source /path/to/pinned/MuQ/source-components \
+  --out artifacts/published-muq-mulan-f16 --audio music.wav
+```
+
+For the published oracle, the checkpoint directory contains dependency files
+named `muq_config.json`, `text_config.json`, and `tokenizer.json`. The script
+verifies the complete checkpoint's size/hash, constructs only one branch at a
+time on the meta device, assigns mmap weights, and checks F16 against
+storage-rounded F32 activations. It also reports the difference between native
+and Python resampling separately. Actual-weight parity requires running this
+oracle with the pinned checkpoint; synthetic fixtures alone do not supply that
+evidence.
+
+Published-checkpoint checks were run with the verified source/weight revisions
+above, five single-item text probes (English, Chinese, empty, combining Unicode
+and a special token), and identical 24 kHz PCM for a seeded 264137-sample
+synthetic waveform spanning two clips, including prefix-wrapped tail handling:
+
+| GGUF storage | Worst text absolute error | Audio absolute error |
+| --- | ---: | ---: |
+| F32 | 3.50177e-7 | 2.45869e-7 |
+| F16 (storage-rounded F32-activation reference) | 3.58094e-7 | 2.11410e-7 |
+
+All outputs have 512 components. The two-clip native audio norms are
+`0.979717080` (F32) and `0.979694188` (F16), rather than one, consistent with the
+official unnormalized clip mean. These are inference-parity probes, not a
+universal waveform error bound or an assessment of retrieval quality. A separate
+5041-sample two-tone diagnostic without added broadband energy measured audio
+errors of `1.84137e-4` (F32) and `1.89982e-4` (F16), both below the unchanged
+`5e-4` diagnostic limit but substantially above the broadband probe errors.
+The MuQ frontend FFT/noise-floor and resampler limitations described above
+still apply.
 
 ### MERT-v2-FullSong
 

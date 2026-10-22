@@ -144,4 +144,31 @@ private:
     TensorOps ops;
     nlohmann::json config, encoder;
 };
+
+// Joint MuQ-MuLan embeddings: the audio backbone remains the exact MuqModel.
+class MuqMulanModel final : public ModelArchitecture {
+public:
+    MuqMulanModel(const ModelLoader &loader, int threads);
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    std::vector<float> audio_features(const std::vector<float> &, int) const override;
+    AudioFrames audio_frames(const std::vector<float> &) const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm) const override;
+    TextParameters text_parameters() const override;
+    int projection_dimension() const override;
+    int mel_bins() const override { return 0; }
+    int sample_rate() const override { return 24000; }
+    bool is_waveform_encoder() const override { return false; }
+    bool has_waveform_embeddings() const override { return true; }
+private:
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    Matrix encode_text(const Matrix &x) const;
+    Matrix adapter(Matrix x) const;
+    Matrix biasless_norm(const Matrix &x, const std::string &name) const;
+    std::vector<float> project(const Matrix &x, const std::string &name) const;
+    const ModelLoader &loader;
+    TensorOps ops;
+    MuqModel audio_backbone;
+    nlohmann::json config, text_config;
+};
 } // namespace clap::detail

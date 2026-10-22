@@ -174,13 +174,27 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
     auto *w = loader.weight(name + ".weight");
     if (!(w->ne[0] == x.cols && w->ne[2] == 1 && w->ne[3] == 1))
         throw std::runtime_error("CLAP: linear shape: " + name);
+    // MuLan F16 is storage only. Promote one dense matrix for this operation;
+    // retaining the huge XLM-R embedding and other branches as mapped F16
+    // avoids a model-wide F32 copy and GGML's F16 activation packing.
+    std::vector<float> promoted;
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> alias(nullptr, ggml_free);
+    if (loader.f32_activation_compute() && w->type == GGML_TYPE_F16) {
+        promoted.resize(static_cast<size_t>(ggml_nelements(w)));
+        ggml_fp16_to_fp32_row(static_cast<const ggml_fp16_t *>(w->data), promoted.data(), ggml_nelements(w));
+        alias.reset(ggml_init({4096, nullptr, true}));
+        if (!alias) throw std::runtime_error("CLAP: MuLan dense alias allocation failed");
+        auto *temporary = ggml_new_tensor_2d(alias.get(), GGML_TYPE_F32, w->ne[0], w->ne[1]);
+        temporary->data = promoted.data();
+        w = temporary;
+    }
     Matrix result(x.rows, static_cast<int>(w->ne[1]));
     bool computed = false;
 #ifdef CLAP_USE_VULKAN
     std::lock_guard<std::mutex> lock(backend->mutex);
     backend->last_vulkan = false;
     try {
-        computed = backend->linear(x, w, result);
+        if (!loader.f32_activation_compute()) computed = backend->linear(x, w, result);
         backend->last_vulkan = computed;
     } catch (const std::exception &) {
         // Allocation/driver failures are recoverable: use the original CPU path.

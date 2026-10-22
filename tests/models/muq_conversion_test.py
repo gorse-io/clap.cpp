@@ -9,6 +9,7 @@ import unittest
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root))
 from conversion.muq import muq_inputs
+from muq_validation_cases import malformed, published
 revision = '0562a57814f6f8bbd9fdea0a25921a2fce1a841a'
 base = {'features': ['melspec_2048'], 'n_mels': 128, 'label_rate': 25, 'hop_length': 240,
         'encoder_dim': 8, 'encoder_depth': 2, 'conv_dim': 4,
@@ -33,6 +34,14 @@ class MuQConversion(unittest.TestCase):
         self.assertEqual(metadata['general.license'], 'cc-by-nc-4.0')
         self.assertEqual(metadata['muq.source_revision'], revision)
         self.assertEqual(json.loads(metadata['muq.config']), base)
+
+    def test_valid_published_dimensions(self):
+        self.convert(published(base))
+
+    def test_malformed_dependency(self):
+        for name, raw in malformed(base):
+            with self.subTest(case=name), self.assertRaises(ValueError):
+                self.convert(raw)
 
     def test_requires_supported_hop(self):
         raw = copy.deepcopy(base)

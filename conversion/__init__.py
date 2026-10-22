@@ -13,6 +13,7 @@ MODEL_MAP = {
     'mert': 'mert',
     'mert2': 'mert2',
     'muq': 'muq',
+    'muq_mulan': 'muq_mulan',
 }
 
 
