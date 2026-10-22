@@ -44,7 +44,6 @@ int main(int argc, char **argv) {
         compare(m.audio(wave,48000), m.audio(clap::resample_audio({wave,48000},24000).samples,24000),0,"automatic native resampling");
         reject([&]{m.audio_frames(wave,24000);},"frames");
         reject([&]{m.clamp3_features(wave,24000);},"clamp3");
-        reject([&]{m.audio_features({0},1);},"features");
         reject([&]{m.audio(wave,24000,1);},"crop");
         reject([&]{m.audio(wave,0);},"rate");
         reject([&]{m.audio({},24000);},"empty");

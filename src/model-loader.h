@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <utility>
 #include <unordered_set>
 #include <vector>
 
@@ -15,6 +16,11 @@ namespace clap::detail {
 class ModelLoader {
 public:
     ModelLoader() = default;
+    // Non-owning namespace view: the source mapping must outlive this view.
+    ModelLoader(const ModelLoader &source, std::string tensor_prefix, std::string metadata_prefix)
+        : source(&source), tensor_prefix(std::move(tensor_prefix)), metadata_prefix(std::move(metadata_prefix)) {}
+    bool has_metadata_prefix(const std::string &prefix) const;
+    bool has_tensor_prefix(const std::string &prefix) const;
     ~ModelLoader();
     ModelLoader(const ModelLoader &) = delete;
     ModelLoader &operator=(const ModelLoader &) = delete;
@@ -28,6 +34,9 @@ public:
     bool f32_activation_compute() const { return mulan; }
     void validate_tensor_coverage() const;
 private:
+    const ModelLoader *source = nullptr;
+    std::string tensor_prefix, metadata_prefix;
+    bool bundled = false;
     bool mulan = false;
     mutable std::unordered_set<std::string> validated_shapes;
     gguf_context *gguf = nullptr;

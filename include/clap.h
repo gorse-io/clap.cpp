@@ -41,8 +41,8 @@ std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 4800
 // memory-mapped on POSIX platforms; MuQ F16 weights expand to owned F32 buffers.
 // Each call embeds one item; methods on the same instance are not thread-safe.
 // CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
-// pooled projections from MERT-v1-95M features. Chain a separate MERT Model's
-// clamp3_features() into audio_features() for native raw-audio inference.
+// pooled projections. Its mandatory bundled MERT-v1-95M frontend handles
+// waveform preprocessing internally; no separate feature-input API is exposed.
 // MERT-v1 audio_frames() exposes final-layer frames; audio() mean-pools them.
 // Neither is the all-layer CLaMP3 representation: use clamp3_features() for that.
 // MERT-v2-FullSong and MuQ audio() mean-pool the complete input's final frames;
@@ -64,10 +64,8 @@ public:
     std::vector<int> tokenize(const std::string &utf8, std::size_t max_length = 512) const;
     std::vector<float> text(const std::vector<int> &token_ids);
     std::vector<float> text(const std::string &utf8);
-    // CLAP: [frames, audio_config.num_mel_bins], channel count = 1.
-    // CLaMP3: time-major [windows, audio_feature_dim] MERT features (published: 768).
-    // MERT waveform encoders do not accept precomputed features.
-    std::vector<float> audio_features(const std::vector<float> &features, int frames);
+    // Mono waveform input; automatically resampled for the model.
+    // CLaMP3 GGUFs must contain the bundled MERT-v1-95M frontend.
     std::vector<float> audio(const std::vector<float> &pcm, int sample_rate = 48000,
                               std::size_t crop_offset = 0);
     AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);

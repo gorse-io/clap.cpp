@@ -18,6 +18,7 @@ using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 // unrelated MOSTLY_Q4_K value (12).
 constexpr uint32_t q4_k_m_file_type = 15;
 ggml_type target_type(const ggml_tensor *w, bool k, const std::string &architecture) {
+    if (std::string(w->name).rfind("mert.", 0) == 0) return w->type;
     const auto base = k ? GGML_TYPE_Q4_K : GGML_TYPE_Q8_0;
     if (ggml_n_dims(w) <= 1 || w->ne[0] % ggml_blck_size(base) != 0) return w->type;
     if (!k) return base;

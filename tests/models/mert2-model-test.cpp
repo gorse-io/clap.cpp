@@ -71,10 +71,6 @@ int main(int argc, char **argv) {
         try { model.text("MERT2 has no text tower"); }
         catch (const std::exception &) { rejected = true; }
         require(rejected, "MERT2 text input must be rejected");
-        rejected = false;
-        try { model.audio_features({0}, 1); }
-        catch (const std::exception &) { rejected = true; }
-        require(rejected, "MERT2 precomputed feature input must be rejected");
         std::cout << "Native MERT-v2-FullSong parity passed\n";
         return 0;
     } catch (const std::exception &error) {

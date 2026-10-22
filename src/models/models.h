@@ -14,14 +14,17 @@ class ClapModel final : public ModelArchitecture {
 public:
     ClapModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
-    std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+    bool has_waveform_embeddings() const override { return true; }
 private:
+    friend struct FeatureTestAccess;
+    std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
     Matrix attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
@@ -33,13 +36,15 @@ private:
     nlohmann::json config, a, t;
 };
 
-// CLaMP3 text (XLM-R) and feature-input audio (BERT) encoders. Raw waveform
-// extraction uses a separate MertModel; the optional symbolic encoder is external.
+// CLaMP3 text (XLM-R) and audio (BERT), optionally with a bundled MERT frontend.
+class MertModel;
 class Clamp3Model final : public ModelArchitecture {
 public:
     Clamp3Model(const ModelLoader &loader, int threads);
+    ~Clamp3Model() override;
+    bool has_waveform_embeddings() const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
     std::vector<float> text(const std::vector<int> &ids) const override;
-    std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
@@ -47,6 +52,8 @@ public:
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
 private:
+    friend struct FeatureTestAccess;
+    std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
     Matrix encode(const Matrix &embeddings, const std::vector<int> &mask,
@@ -61,6 +68,7 @@ private:
     const ModelLoader &loader;
     TensorOps ops;
     nlohmann::json config, audio_config, text_config;
+    std::unique_ptr<MertModel> frontend;
 };
 
 // Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,
@@ -69,7 +77,6 @@ class Mert2Model final : public ModelArchitecture {
 public:
     Mert2Model(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
-    std::vector<float> audio_features(const std::vector<float> &features, int frames) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
@@ -92,9 +99,9 @@ private:
 // post-layer-normalized transformer. CLaMP3 pooling is a separate contract.
 class MertModel final : public ModelArchitecture {
 public:
-    MertModel(const ModelLoader &loader, int threads);
+    MertModel(const ModelLoader &loader, int threads,
+              const std::string &tensor_prefix = "", const std::string &metadata_prefix = "");
     std::vector<float> text(const std::vector<int> &) const override;
-    std::vector<float> audio_features(const std::vector<float> &, int) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override { return {0,0,0}; }
@@ -111,7 +118,7 @@ private:
                        int stride, int padding, int groups, bool bias) const;
     Matrix linear(const Matrix &x, const std::string &name) const;
     Matrix attention(const Matrix &x, const std::string &name) const;
-    const ModelLoader &loader;
+    ModelLoader loader;
     TensorOps ops;
     nlohmann::json config;
     int minimum_samples = 0;
@@ -123,7 +130,6 @@ class MuqModel final : public ModelArchitecture {
 public:
     MuqModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &) const override;
-    std::vector<float> audio_features(const std::vector<float> &, int) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
@@ -150,9 +156,8 @@ class MuqMulanModel final : public ModelArchitecture {
 public:
     MuqMulanModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
-    std::vector<float> audio_features(const std::vector<float> &, int) const override;
     AudioFrames audio_frames(const std::vector<float> &) const override;
-    std::vector<float> waveform_embedding(const std::vector<float> &pcm) const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override { return 0; }

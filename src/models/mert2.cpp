@@ -151,9 +151,6 @@ std::vector<float> Mert2Model::text(const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MERT-v2-FullSong has no text encoder");
 }
 
-std::vector<float> Mert2Model::audio_features(const std::vector<float> &, int) const {
-    throw std::runtime_error("CLAP: MERT-v2-FullSong requires raw waveform input");
-}
 
 Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
     const int fft_size = config.at("n_fft"), hop = config.at("hop_length");

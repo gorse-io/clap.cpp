@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "feature-test.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -45,22 +46,16 @@ int main(int argc, char **argv) {
                         test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
         }
         for (const auto &test : fixture.at("audio_cases"))
-            compare(model.audio_features(test.at("features").get<std::vector<float>>(), test.at("frames")),
+            compare(clap::detail::FeatureTestAccess::encode(argv[1], test.at("features").get<std::vector<float>>(), test.at("frames")),
                     test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
 
         bool rejected = false;
-        try { model.audio(std::vector<float>(48000, 0), 48000); }
-        catch (const std::exception &e) {
-            rejected = std::string(e.what()).find("MERT-v1-95M") != std::string::npos;
-        }
-        require(rejected, "CLaMP3 raw waveform must clearly direct users to MERT-v1-95M features");
-        rejected = false;
-        try { model.audio_features({0}, 1); } catch (const std::exception &) { rejected = true; }
+        try { clap::detail::FeatureTestAccess::encode(argv[1], {0}, 1); } catch (const std::exception &) { rejected = true; }
         require(rejected, "incorrect MERT feature shape must be rejected");
         rejected = false;
         auto nonfinite = fixture.at("audio_cases").at(0).at("features").get<std::vector<float>>();
         nonfinite[0] = std::numeric_limits<float>::quiet_NaN();
-        try { model.audio_features(nonfinite, fixture.at("audio_cases").at(0).at("frames")); }
+        try { clap::detail::FeatureTestAccess::encode(argv[1], nonfinite, fixture.at("audio_cases").at(0).at("frames")); }
         catch (const std::exception &) { rejected = true; }
         require(rejected, "non-finite MERT features must be rejected");
         std::cout << "Native CLaMP3 parity passed\n";

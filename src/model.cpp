@@ -54,16 +54,12 @@ std::vector<float> Model::text(const std::string &utf8) {
 std::vector<float> Model::text(const std::vector<int> &ids) {
     return impl_->architecture->text(ids);
 }
-std::vector<float> Model::audio_features(const std::vector<float> &features, int frames) {
-    return impl_->architecture->audio_features(features, frames);
-}
 std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
     if (impl_->architecture->has_waveform_embeddings()) {
-        if (crop_offset != 0) throw std::runtime_error("CLAP: MuLan crop offsets are unsupported");
         if (sample_rate <= 0) throw std::runtime_error("CLAP: audio sample rate must be positive");
         const int target = impl_->architecture->sample_rate();
-        if (sample_rate == target) return impl_->architecture->waveform_embedding(pcm);
-        return impl_->architecture->waveform_embedding(resample_audio({pcm, sample_rate}, target).samples);
+        if (sample_rate == target) return impl_->architecture->waveform_embedding(pcm, crop_offset);
+        return impl_->architecture->waveform_embedding(resample_audio({pcm, sample_rate}, target).samples, crop_offset);
     }
     if (impl_->architecture->is_waveform_encoder()) {
         if (crop_offset != 0)
@@ -75,11 +71,7 @@ std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, 
                 pooled[column] += sequence.values[static_cast<size_t>(frame) * sequence.dimension + column] / sequence.frames;
         return pooled;
     }
-    if (impl_->architecture->mel_bins() == 0)
-        throw std::runtime_error("CLAP: CLaMP3 waveform input requires --mert-model or MERT-v1-95M features via audio_features/--audio-features");
-    if (impl_->architecture->mel_bins() != 64)
-        throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
-    return audio_features(log_mel(pcm, sample_rate, crop_offset), 1001);
+    throw std::runtime_error("CLAP: this model has no waveform audio encoder");
 }
 
 AudioFrames Model::audio_frames(const std::vector<float> &pcm, int sample_rate) {

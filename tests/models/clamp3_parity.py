@@ -22,6 +22,8 @@ if out.exists():
 out.mkdir(parents=True)
 torch.set_num_threads(2)
 torch.manual_seed(314159)
+from mert_cache import tiny
+tiny(out/'hf-cache',256)
 
 vocab = [
     ('<s>', 0.0), ('<pad>', 0.0), ('</s>', 0.0), ('<unk>', 0.0),

@@ -131,9 +131,6 @@ bool MuqModel::is_waveform_encoder() const { return true; }
 std::vector<float> MuqModel::text(const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MuQ has no text encoder");
 }
-std::vector<float> MuqModel::audio_features(const std::vector<float> &, int) const {
-    throw std::runtime_error("CLAP: MuQ requires raw waveform input");
-}
 Matrix MuqModel::frontend(const std::vector<float> &pcm) const {
     const int frames = static_cast<int>(pcm.size() / 240);
     Matrix mel(frames, 128);

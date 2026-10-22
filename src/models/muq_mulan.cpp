@@ -94,7 +94,6 @@ TextParameters MuqMulanModel::text_parameters() const {
 }
 int MuqMulanModel::projection_dimension() const { return config.at("mulan").at("dim_latent"); }
 AudioFrames MuqMulanModel::audio_frames(const std::vector<float> &) const { throw std::runtime_error("CLAP: MuLan exposes embeddings, not frames"); }
-std::vector<float> MuqMulanModel::audio_features(const std::vector<float> &,int) const { throw std::runtime_error("CLAP: MuLan requires raw waveform input"); }
 Matrix MuqMulanModel::encode_text(const Matrix &embeddings) const {
     const int heads=text_config.at("num_attention_heads"), hd=embeddings.cols/heads;
     const float eps=text_config.at("layer_norm_eps");
@@ -180,7 +179,8 @@ std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
     }
     return project(adapter(encode_text(x)),"text_proj");
 }
-std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &pcm) const {
+std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    if (crop_offset != 0) throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
     if(pcm.empty() || pcm.size()>(size_t{1}<<28) || !std::all_of(pcm.begin(),pcm.end(),[](float v){return std::isfinite(v);}))
         throw std::runtime_error("CLAP: MuLan requires finite nonempty waveform of at most 1 GiB");
     const size_t delta=24000*config.at("mulan").at("clip_secs").get<size_t>();

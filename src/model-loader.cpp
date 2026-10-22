@@ -20,12 +20,14 @@ ModelLoader::~ModelLoader() {
 }
 
 ggml_tensor *ModelLoader::weight(const std::string &name) const {
+    if (source) return source->weight(tensor_prefix + name);
     auto *w = ggml_get_tensor(weights, name.c_str());
     if (w == nullptr)
         throw std::runtime_error("CLAP: missing tensor " + name);
     return w;
 }
 void ModelLoader::shape(const std::string &name, std::initializer_list<int64_t> dims) const {
+    if (source) { source->shape(tensor_prefix + name, dims); return; }
     const auto *w = weight(name);
     validated_shapes.insert(name);
     if (mulan && dims.size()==1 && w->type!=GGML_TYPE_F32)
@@ -43,18 +45,32 @@ void ModelLoader::norm_shape(const std::string &name, int dim) const {
 }
 
 void ModelLoader::validate_tensor_coverage() const {
-    if (!mulan) return;
+    if (!mulan && !bundled) return;
     for (int64_t i=0;i<gguf_get_n_tensors(gguf);++i) {
         const std::string name=gguf_get_tensor_name(gguf,i);
-        if (validated_shapes.count(name)==0) throw std::runtime_error("CLAP: unrecognized MuLan tensor: " + name);
+        if (validated_shapes.count(name)==0) throw std::runtime_error(std::string(bundled ? "CLAP: unrecognized model tensor: " : "CLAP: unrecognized MuLan tensor: ") + name);
     }
 }
 
 std::string ModelLoader::metadata(const char *key) const {
+    if (source) return source->metadata((metadata_prefix + key).c_str());
     const auto id = gguf_find_key(gguf, key);
     if (!(id >= 0 && gguf_get_kv_type(gguf, id) == GGUF_TYPE_STRING))
         throw std::runtime_error(std::string("CLAP: missing string metadata: ") + key);
     return std::string(gguf_get_val_str(gguf, id));
+}
+
+bool ModelLoader::has_metadata_prefix(const std::string &prefix) const {
+    if (source) return source->has_metadata_prefix(metadata_prefix + prefix);
+    for (int64_t i = 0; i < gguf_get_n_kv(gguf); ++i)
+        if (std::string(gguf_get_key(gguf, i)).rfind(prefix, 0) == 0) return true;
+    return false;
+}
+bool ModelLoader::has_tensor_prefix(const std::string &prefix) const {
+    if (source) return source->has_tensor_prefix(tensor_prefix + prefix);
+    for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i)
+        if (std::string(gguf_get_tensor_name(gguf, i)).rfind(prefix, 0) == 0) return true;
+    return false;
 }
 
 void ModelLoader::load(const std::string &path) {
@@ -86,11 +102,18 @@ void ModelLoader::load(const std::string &path) {
     const bool muq = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING &&
                      metadata("general.architecture") == "muq";
     mulan = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING && metadata("general.architecture") == "muq_mulan";
+    const bool named = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING;
+    bundled = named && metadata("general.architecture") == "clamp3" && has_metadata_prefix("clamp3.audio_frontend");
+    const bool mert = named && metadata("general.architecture") == "mert";
     const auto data_offset = gguf_get_data_offset(gguf);
     if (!(data_offset <= mapping_size))
         throw std::runtime_error("CLAP: truncated GGUF data");
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         auto *w = weight(gguf_get_tensor_name(gguf, i));
+        const std::string tensor_name = gguf_get_tensor_name(gguf, i);
+        if ((mert || (bundled && tensor_name.rfind("mert.", 0) == 0)) &&
+            w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16)
+            throw std::runtime_error("CLAP: MERT supports F32/F16 weights only");
         // MuQ convolution layouts are validated only for floating-point storage.
         if ((muq || mulan) && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16)
             throw std::runtime_error(muq ? "CLAP: MuQ requires F32/F16 weights; quantized MuQ is unsupported" :

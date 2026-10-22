@@ -48,7 +48,6 @@ int main(int argc, char **argv) {
         require(model.audio_sample_rate() == 24000, "wrong MERT sample rate");
         rejects([&] { model.text("unsupported"); });
         rejects([&] { model.text(std::vector<int>{0}); });
-        rejects([&] { model.audio_features(std::vector<float>(16), 1); });
         rejects([&] { model.audio_frames({}); });
         rejects([&] { model.audio_frames(std::vector<float>(399), 24000); });
         rejects([&] { model.clamp3_features(std::vector<float>(23999), 24000); });

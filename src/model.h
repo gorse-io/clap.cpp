@@ -19,7 +19,6 @@ class ModelArchitecture {
 public:
     virtual ~ModelArchitecture() = default;
     virtual std::vector<float> text(const std::vector<int> &ids) const = 0;
-    virtual std::vector<float> audio_features(const std::vector<float> &features, int frames) const = 0;
     virtual AudioFrames audio_frames(const std::vector<float> &pcm) const = 0;
     virtual AudioFrames clamp3_features(const std::vector<float> &) const {
         throw std::runtime_error("CLaMP3 feature extraction requires a MERT-v1 model");
@@ -34,7 +33,7 @@ public:
     // A joint waveform model has a tokenizer and its own clip/embedding pooling.
     virtual bool has_text_encoder() const { return !is_waveform_encoder(); }
     virtual bool has_waveform_embeddings() const { return false; }
-    virtual std::vector<float> waveform_embedding(const std::vector<float> &) const {
+    virtual std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const {
         throw std::runtime_error("CLAP: this architecture has no waveform embeddings");
     }
 protected:

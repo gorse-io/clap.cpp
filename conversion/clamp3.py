@@ -76,4 +76,17 @@ class Clamp3Model(ModelBase):
         tokenizer = self.options.get('tokenizer')
         tensors, metadata = clamp3_inputs(self.source, Path(config) if config else None,
                                           Path(tokenizer) if tokenizer else None, torch)
+        from .mert import mert_inputs, resolve_mert_source
+        mert_source, revision = resolve_mert_source(self.options.get('mert_revision'))
+        frontend, frontend_metadata = mert_inputs(mert_source, revision, torch)
+        config = json.loads(metadata['clamp3.config'])
+        mert_config = json.loads(frontend_metadata['mert.config'])
+        if (type(config.get('audio_feature_dim')) is not int or
+            config['audio_feature_dim'] != mert_config['hidden_size'] or
+            config['audio_config']['hidden_size'] != mert_config['hidden_size']):
+            raise ValueError('CLaMP3/MERT feature dimension mismatch')
+        tensors.extend(('mert.' + name, value) for name, value in frontend)
+        metadata.update({'clamp3.audio_frontend': 'mert-v1',
+                         'clamp3.mert.config': frontend_metadata['mert.config'],
+                         'clamp3.mert.source_revision': frontend_metadata['mert.source_revision']})
         write_gguf(self.destination, tensors, metadata, self.dtype, np, torch)
