@@ -16,76 +16,61 @@ jobs:
           - os: macos-15
             asset: clap-macos-arm64
             binary: build/clap
-            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+            preset: macos-arm64
           - os: windows-2022
             asset: clap-windows-amd64-cpu.exe
             binary: build/Release/clap.exe
-            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+            preset: windows-amd64-cpu
           - os: windows-11-arm
             asset: clap-windows-arm64-cpu.exe
             binary: build/Release/clap.exe
-            cmake_args: -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+            preset: windows-arm64-cpu
           - os: windows-2022
             asset: clap-windows-amd64-cuda12.9.zip
             binary: build/clap-cuda.zip
-            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+            preset: windows-amd64-cuda12.9
           - os: windows-2022
             asset: clap-windows-amd64-vulkan.exe
             binary: build/Release/clap.exe
-            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF -DGGML_VULKAN=ON
+            preset: windows-amd64-vulkan
           - os: windows-11-arm
             asset: clap-windows-arm64-vulkan.exe
             binary: build/Release/clap.exe
-            cmake_args: >-
-              -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-              -DGGML_METAL=OFF -DGGML_VULKAN=ON
-              -DVulkan_LIBRARY="$VULKAN_SDK/Lib-arm64/vulkan-1.lib"
-              -DVulkan_GLSLC_EXECUTABLE="$VULKAN_SDK/Bin/glslc.exe"
+            preset: windows-arm64-vulkan
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cpu
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF
+            preset: linux-amd64-cpu
           - os: ubuntu-22.04-arm
             asset: clap-linux-arm64-cpu
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF
+            preset: linux-arm64-cpu
           - os: ubuntu-24.04
             asset: clap-linux-riscv64-cpu
             binary: build/clap
             target: riscv64
-            cmake_args: >-
-              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=riscv64
-              -DCMAKE_C_COMPILER=riscv64-linux-gnu-gcc-14
-              -DCMAKE_CXX_COMPILER=riscv64-linux-gnu-g++-14
-              -DCMAKE_EXE_LINKER_FLAGS=-static
-              -DGGML_METAL=OFF -DGGML_RVV=OFF -DGGML_RV_ZFH=OFF
-              -DGGML_RV_ZVFH=OFF -DGGML_RV_ZICBOP=OFF -DGGML_RV_ZIHINTPAUSE=OFF
+            preset: linux-riscv64-cpu
           - os: ubuntu-24.04
             asset: clap-linux-loong64-cpu
             binary: build/clap
             target: loongarch64
-            cmake_args: >-
-              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=loongarch64
-              -DCMAKE_C_COMPILER=loongarch64-linux-gnu-gcc-14
-              -DCMAKE_CXX_COMPILER=loongarch64-linux-gnu-g++-14
-              -DCMAKE_EXE_LINKER_FLAGS=-static
-              -DGGML_METAL=OFF -DGGML_LSX=OFF -DGGML_LASX=OFF
+            preset: linux-loong64-cpu
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cuda12.9
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+            preset: linux-amd64-cuda12.9
           - os: ubuntu-22.04-arm
             asset: clap-linux-arm64-cuda12.9
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+            preset: linux-arm64-cuda12.9
           - os: ubuntu-24.04
             asset: clap-linux-amd64-vulkan
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_VULKAN=ON
+            preset: linux-amd64-vulkan
           - os: ubuntu-24.04-arm
             asset: clap-linux-arm64-vulkan
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_VULKAN=ON
+            preset: linux-arm64-vulkan
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -130,19 +115,7 @@ jobs:
           "VULKAN_SDK=C:/VulkanSDK/$env:VULKAN_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
           "C:/VulkanSDK/$env:VULKAN_VERSION/Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Configure
-        run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=OFF
-          -DBUILD_SHARED_LIBS=OFF
-          -DGGML_NATIVE=OFF
-          -DGGML_BACKEND_DL=OFF
-          -DGGML_OPENMP=OFF
-          -DHTTPLIB_USE_OPENSSL_IF_AVAILABLE=OFF
-          -DHTTPLIB_USE_ZLIB_IF_AVAILABLE=OFF
-          -DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF
-          -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF
-          ${{ matrix.cmake_args }}
+        run: cmake --preset ${{ matrix.preset }}
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
 
