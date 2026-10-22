@@ -23,7 +23,8 @@ COPY . .
 RUN set -eu; \
     case "${TARGETARCH}" in amd64|arm64) ;; *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; esac; \
     case "${BACKEND}" in \
-        cpu|vulkan) variant="${BACKEND}"; jobs="${BUILD_JOBS:-2}" ;; \
+        cpu) variant=cpu; jobs="${BUILD_JOBS:-2}" ;; \
+        vulkan) variant=vulkan; jobs="${BUILD_JOBS:-1}" ;; \
         cuda) variant=cuda12.9; jobs="${BUILD_JOBS:-1}" ;; \
         *) echo "Unsupported backend: ${BACKEND}" >&2; exit 1 ;; \
     esac; \

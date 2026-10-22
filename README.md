@@ -140,8 +140,9 @@ IMAGE=ghcr.io/your-org/clap docker buildx bake cpu \
   --set '*.platform=linux/amd64' --set '*.platform+=linux/arm64' --push
 ```
 
-`BUILD_JOBS` is optional (CPU/Vulkan default to 2, CUDA to 1) and is also accepted
-by `docker build --build-arg BUILD_JOBS=4`. `IMAGE` sets the Bake image repository
+`BUILD_JOBS` is optional (CPU defaults to 2, CUDA/Vulkan to 1) and is also accepted
+by `docker build --build-arg BUILD_JOBS=4`. Vulkan shader compilation can use
+substantial memory; keep one build job on memory-constrained hosts. `IMAGE` sets the Bake image repository
 (default `clap`); tags are `cpu`, `cuda`, and `vulkan`. No GPU is needed to compile.
 The CUDA presets disable optional NCCL so the image does not depend on a shared
 NCCL library from the development image; CUDA runtime and cuBLAS remain static.
