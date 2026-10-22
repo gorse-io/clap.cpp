@@ -103,12 +103,19 @@ jobs:
           curl -fsSL --retry 3 https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/rocm.gpg > /dev/null
           echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4.3 jammy main' | sudo tee /etc/apt/sources.list.d/rocm.list
           printf 'Package: *\nPin: origin repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm
+          sudo apt-get update
       - name: Install ROCm build dependencies
         if: matrix.preset == 'linux-amd64-rocm'
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
-          packages: hip-dev hipblas-dev rocblas-dev
-          version: rocm-6.4.3-${{ matrix.os }}-v1
+          packages: hip-dev hipblas-dev rocblas-dev rocm-device-libs
+          version: rocm-6.4.3-${{ matrix.os }}-v2
+      - name: Restore ROCm installation prefix
+        if: matrix.preset == 'linux-amd64-rocm'
+        run: |
+          # The APT cache restores package files, not rocm-core's postinst link.
+          sudo ln -sfn /opt/rocm-6.4.3 /opt/rocm
+          test -x /opt/rocm/llvm/bin/clang++
       - name: Install Linux Vulkan build dependencies
         if: runner.os == 'Linux' && contains(matrix.asset, '-vulkan')
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3

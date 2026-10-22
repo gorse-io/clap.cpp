@@ -124,7 +124,8 @@ ROCm 6.4.3 and ggml's native HIP backend. The release preset explicitly targets
 `gfx908`, `gfx90a`, `gfx942`, `gfx1030`, `gfx1100`, `gfx1101`, `gfx1200`, and
 `gfx1201`, so compilation does not require a GPU on the build host.
 
-Install AMD's ROCm 6.4.3 packages `hip-dev`, `hipblas-dev`, and `rocblas-dev`, then:
+Install AMD's ROCm 6.4.3 packages `hip-dev`, `hipblas-dev`, `rocblas-dev`, and
+`rocm-device-libs`, then:
 
 ```sh
 cmake --preset linux-amd64-rocm
