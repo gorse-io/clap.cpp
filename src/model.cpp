@@ -19,8 +19,9 @@ struct Model::Impl {
         if (name == "clap") architecture = std::make_unique<detail::ClapModel>(loader, threads);
         else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
         else if (name == "mert2") architecture = std::make_unique<detail::Mert2Model>(loader, threads);
+        else if (name == "muq") architecture = std::make_unique<detail::MuqModel>(loader, threads);
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
-        if (name != "mert2") {
+        if (!architecture->is_waveform_encoder()) {
             const auto text = architecture->text_parameters();
             const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
             if (name == "clamp3")
@@ -56,7 +57,7 @@ std::vector<float> Model::audio_features(const std::vector<float> &features, int
 std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
     if (impl_->architecture->is_waveform_encoder()) {
         if (crop_offset != 0)
-            throw std::runtime_error("CLAP: MERT-v2-FullSong always processes the complete waveform; crop offsets are unsupported");
+            throw std::runtime_error("CLAP: waveform encoders process the complete waveform; crop offsets are unsupported");
         const auto sequence = audio_frames(pcm, sample_rate);
         std::vector<float> pooled(sequence.dimension);
         for (int frame = 0; frame < sequence.frames; ++frame)

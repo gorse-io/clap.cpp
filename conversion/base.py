@@ -57,10 +57,12 @@ def write_gguf(destination, tensors, metadata, dtype, np, torch):
     print(f'{destination}: {len(encoded)} tensors ({dtype}, {metadata["general.architecture"]})')
 
 
-def get_model_architecture(source, clamp3_config=None):
+def get_model_architecture(source, clamp3_config=None, muq_revision=None):
     """Detect the architecture using the existing checkpoint selection rules."""
     config_path = source / 'config.json'
     hparams = json.loads(config_path.read_text()) if source.is_dir() and config_path.exists() else {}
+    if muq_revision is not None or ('encoder_dim' in hparams and 'w2v2_config' in hparams):
+        return 'muq'
     if hparams.get('model_type') == 'mert2':
         return 'mert2'
     if clamp3_config is not None or source.is_file():
