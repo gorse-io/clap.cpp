@@ -117,6 +117,27 @@ This adds a CUDA-enabled release build, not new model-backend selection: native
 model linear dispatch remains CPU/optional Vulkan as documented above, and the
 released `clap` embedding/server interfaces still return dummy embeddings.
 
+### ROCm amd64 release build
+
+The release workflow builds `clap-linux-amd64-rocm` on Ubuntu 22.04 with
+ROCm 6.4.3 and ggml's native HIP backend. The release preset explicitly targets
+`gfx908`, `gfx90a`, `gfx942`, `gfx1030`, `gfx1100`, `gfx1101`, `gfx1200`, and
+`gfx1201`, so compilation does not require a GPU on the build host.
+
+Install AMD's ROCm 6.4.3 packages `hip-dev`, `hipblas-dev`, and `rocblas-dev`, then:
+
+```sh
+cmake --preset linux-amd64-rocm
+cmake --build build --config Release --target clap-cli --parallel 1
+```
+
+The executable requires the ROCm 6.4.3 HIP, hipBLAS, and rocBLAS shared libraries
+under `/opt/rocm/lib` at runtime; they are not bundled. ggml does not support
+static ROCm linking. GPU execution also requires a compatible AMD GPU and driver.
+This adds a release build, not HIP model dispatch: native model linear layers
+remain CPU/optional Vulkan, and the released `clap` embedding/server interfaces
+still return dummy embeddings. No ROCm inference or GPU tests are run.
+
 ## Native model layout
 
 The C++ organization follows `llama.cpp/src/models`: shared runtime services are

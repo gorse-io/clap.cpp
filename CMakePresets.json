@@ -155,6 +155,19 @@
       }
     },
     {
+      "name": "linux-amd64-rocm",
+      "inherits": "release-base",
+      "cacheVariables": {
+        "CMAKE_HIP_COMPILER": "/opt/rocm/llvm/bin/clang++",
+        "CMAKE_HIP_ARCHITECTURES": "gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201",
+        "CMAKE_BUILD_RPATH": "/opt/rocm/lib",
+        "GGML_METAL": "OFF",
+        "GGML_HIP": "ON",
+        "GGML_HIP_RCCL": "OFF",
+        "GGML_STATIC": "OFF"
+      }
+    },
+    {
       "name": "linux-amd64-vulkan",
       "inherits": "release-base",
       "cacheVariables": {

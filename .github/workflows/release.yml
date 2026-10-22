@@ -63,6 +63,10 @@ jobs:
             asset: clap-linux-arm64-cuda12.9
             binary: build/clap
             preset: linux-arm64-cuda12.9
+          - os: ubuntu-22.04
+            asset: clap-linux-amd64-rocm
+            binary: build/clap
+            preset: linux-amd64-rocm
           - os: ubuntu-24.04
             asset: clap-linux-amd64-vulkan
             binary: build/clap
@@ -93,6 +97,18 @@ jobs:
           method: network
           sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]' || '["nvcc"]' }}
           non-cuda-sub-packages: ${{ runner.os == 'Linux' && '["libcublas-dev"]' || '[]' }}
+      - name: Add ROCm 6.4.3 package repository
+        if: matrix.preset == 'linux-amd64-rocm'
+        run: |
+          curl -fsSL --retry 3 https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/rocm.gpg > /dev/null
+          echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4.3 jammy main' | sudo tee /etc/apt/sources.list.d/rocm.list
+          printf 'Package: *\nPin: origin repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm
+      - name: Install ROCm build dependencies
+        if: matrix.preset == 'linux-amd64-rocm'
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: hip-dev hipblas-dev rocblas-dev
+          version: rocm-6.4.3-${{ matrix.os }}-v1
       - name: Install Linux Vulkan build dependencies
         if: runner.os == 'Linux' && contains(matrix.asset, '-vulkan')
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3
@@ -117,7 +133,7 @@ jobs:
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
-        run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
+        run: cmake --build build --config Release --target clap-cli --parallel ${{ (contains(matrix.asset, '-cuda') || contains(matrix.asset, '-rocm')) && '1' || '' }}
 
       # CUDA on Windows has no static cuBLAS library. Ship its runtime DLLs
       # beside clap.exe rather than publishing an unusable standalone binary.
