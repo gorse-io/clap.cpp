@@ -13,14 +13,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - name: Install FFmpeg for test fixtures
+        if: matrix.os != 'windows-11-arm'
         uses: AnimMouse/setup-ffmpeg@v1
+      - name: Install ARM64 FFmpeg for test fixtures
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          winget install -e --id yt-dlp.FFmpeg --architecture arm64 --scope user --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg installation failed: $LASTEXITCODE" }
+          "$env:LOCALAPPDATA/Microsoft/WinGet/Links" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
