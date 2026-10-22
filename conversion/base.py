@@ -24,12 +24,12 @@ def load_checkpoint(path, torch):
     return weights
 
 
-def write_gguf(destination, tensors, metadata, dtype, np, torch):
+def write_gguf(destination, tensors, metadata, dtype, np, torch, keep_f32=None):
     encoded = []
     for name, value in tensors:
         if len(name.encode()) >= 64:
             raise ValueError(f'tensor name exceeds ggml limit: {name}')
-        half = dtype == 'f16' and value.ndim > 1
+        half = dtype == 'f16' and value.ndim > 1 and not (keep_f32 and keep_f32(name, value))
         encoded.append((name, value, np.dtype('<f2' if half else '<f4'), 1 if half else 0))
     header = b'GGUF' + struct.pack('<IQQ', 3, len(encoded), len(metadata))
     for key, value in metadata.items():
@@ -57,7 +57,7 @@ def write_gguf(destination, tensors, metadata, dtype, np, torch):
     print(f'{destination}: {len(encoded)} tensors ({dtype}, {metadata["general.architecture"]})')
 
 
-def get_model_architecture(source, clamp3_config=None, muq_revision=None):
+def get_model_architecture(source, clamp3_config=None, muq_revision=None, muq_mulan_revision=None):
     """Detect the architecture using the existing checkpoint selection rules."""
     config_path = source / 'config.json'
     hparams = json.loads(config_path.read_text()) if source.is_dir() and config_path.exists() else {}
@@ -67,6 +67,8 @@ def get_model_architecture(source, clamp3_config=None, muq_revision=None):
         return 'mert2'
     if hparams.get('model_type') == 'mert_model':
         return 'mert'
+    if muq_mulan_revision is not None or all(key in hparams for key in ('mulan', 'audio_model', 'text_model')):
+        return 'muq_mulan'
     if clamp3_config is not None or source.is_file():
         return 'clamp3'
     return 'clap'

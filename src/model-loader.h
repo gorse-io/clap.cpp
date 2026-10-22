@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace clap::detail {
@@ -24,7 +25,11 @@ public:
     void shape(const std::string &name, std::initializer_list<int64_t> dims) const;
     void linear_shape(const std::string &name, int in, int out, bool bias = true) const;
     void norm_shape(const std::string &name, int dim) const;
+    bool f32_activation_compute() const { return mulan; }
+    void validate_tensor_coverage() const;
 private:
+    bool mulan = false;
+    mutable std::unordered_set<std::string> validated_shapes;
     gguf_context *gguf = nullptr;
     ggml_context *weights = nullptr;
     void *mapping = nullptr;

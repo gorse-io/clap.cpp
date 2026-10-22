@@ -257,6 +257,26 @@ if(BUILD_TESTING)
                     "${MUQ_REFERENCE_SOURCE}")
         set_tests_properties(muq_model_parity PROPERTIES TIMEOUT 600)
     endif()
+    add_test(NAME muq_mulan_conversion_contract
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_conversion_test.py")
+    add_test(NAME muq_mulan_invalid
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_invalid.py" "$<TARGET_FILE:clap-model>")
+    option(MUQ_MULAN_MODEL_PARITY "Run tiny pinned official MuLan component oracles" OFF)
+    set(MUQ_MULAN_REFERENCE_SOURCE "" CACHE PATH "Pinned MuLan source directory")
+    if(MUQ_MULAN_MODEL_PARITY)
+        add_executable(muq-mulan-model-test tests/models/muq-mulan-model-test.cpp)
+        target_link_libraries(muq-mulan-model-test PRIVATE clap nlohmann_json::nlohmann_json)
+        add_test(NAME muq_mulan_model_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_parity.py"
+                "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/muq-mulan-fixture"
+                "${MUQ_MULAN_REFERENCE_SOURCE}" "${MUQ_REFERENCE_SOURCE}")
+        set_tests_properties(muq_mulan_model_parity PROPERTIES TIMEOUT 600)
+        add_test(NAME muq_mulan_oracle_pipeline
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_oracle_pipeline.py"
+                "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/muq-mulan-fixture"
+                "${MUQ_MULAN_REFERENCE_SOURCE}" "${MUQ_REFERENCE_SOURCE}")
+        set_tests_properties(muq_mulan_oracle_pipeline PROPERTIES DEPENDS muq_mulan_model_parity TIMEOUT 600)
+    endif()
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)

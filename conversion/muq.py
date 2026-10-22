@@ -8,35 +8,59 @@ import tempfile
 from .base import ModelBase, string
 
 
+def validate_muq_config(raw):
+    """Validate all inference fields before narrowing or generating schemas.
+
+    Keep limits in sync with MuqModel::load_arch_hparams. Training-only HF/RVQ
+    dimensions (including HF num_hidden_layers) are not consumed by inference.
+    """
+    def dimension(obj, key, maximum=65536):
+        value = obj[key]
+        if type(value) is not int or not 1 <= value <= maximum:
+            raise ValueError('invalid MuQ dimension: ' + key)
+        return value
+
+    for key, value in (('n_mels', 128), ('hop_length', 240), ('label_rate', 25)):
+        if dimension(raw, key) != value:
+            raise ValueError('invalid MuQ ' + key)
+    if raw.get('features') != ['melspec_2048'] or raw.get('is_flash', False):
+        raise ValueError('unsupported MuQ frontend/variant')
+    hidden = dimension(raw, 'encoder_dim')
+    depth = dimension(raw, 'encoder_depth', 256)
+    channels = dimension(raw, 'conv_dim')
+    cfg = raw['w2v2_config']
+    heads = dimension(cfg, 'num_attention_heads')
+    intermediate = dimension(cfg, 'intermediate_size')
+    kernel = dimension(cfg, 'conv_depthwise_kernel_size', 4095)
+    if hidden % heads or (hidden // heads) % 2 or kernel % 2 != 1:
+        raise ValueError('invalid MuQ attention/kernel geometry')
+    # Bound flattened tensor indexing and the whole schema's resource cost.
+    # Python integers are wide; the native version uses checked int64 inputs.
+    layer = 4*hidden*intermediate + 7*hidden*hidden + hidden*kernel + 64*hidden + 4*intermediate
+    budget = 54*channels*channels + 32*channels*hidden + depth*layer
+    if budget > 2147483647:
+        raise ValueError('invalid MuQ derived tensor products')
+    if cfg.get('position_embeddings_type') != 'rotary' or cfg.get('hidden_act') not in ('swish', 'silu'):
+        raise ValueError('MuQ requires rotary embeddings and swish activation')
+    def scalar(obj, key, positive=False):
+        value = obj[key]
+        # Test bounds before math.isfinite: arbitrarily large Python integers
+        # must produce ValueError rather than overflowing a conversion to float.
+        if (type(value) not in (int, float) or not -float.fromhex('0x1.fffffep127') <= value <= float.fromhex('0x1.fffffep127')
+                or not math.isfinite(value) or (value != 0 and abs(value) < 2**-149)
+                or (positive and value <= 0)):
+            raise ValueError('invalid MuQ scalar: ' + key)
+    scalar(cfg, 'layer_norm_eps', True)
+    scalar(cfg, 'rotary_embedding_base', True)
+    scalar(raw['stat'], 'melspec_2048_std', True)
+    scalar(raw['stat'], 'melspec_2048_mean')
+
+
 def muq_inputs(source, revision):
     if not revision or len(revision) != 40 or any(c not in '0123456789abcdef' for c in revision):
         raise ValueError('MuQ conversion requires --muq-revision with a full lowercase commit SHA')
     raw = json.loads((source / 'config.json').read_text())
-    if raw.get('features') != ['melspec_2048'] or raw.get('n_mels') != 128 or raw.get('label_rate') != 25:
-        raise ValueError('only MuQ 128-bin melspec_2048, 25 Hz output is supported')
-    if raw.get('is_flash', False):
-        raise ValueError('MuQ flash variant is unsupported')
-    if raw.get('hop_length') != 240:
-        raise ValueError('native MuQ requires hop_length 240')
-    for key in ('encoder_dim', 'encoder_depth', 'conv_dim', 'hop_length'):
-        if type(raw.get(key)) is not int or raw[key] <= 0:
-            raise ValueError('invalid MuQ dimension: ' + key)
-    cfg = raw['w2v2_config']
-    heads = cfg.get('num_attention_heads', 0)
-    if type(heads) is not int or heads <= 0 or raw['encoder_dim'] % heads or (raw['encoder_dim'] // heads) % 2:
-        raise ValueError('invalid MuQ attention head geometry')
-    if cfg.get('position_embeddings_type') != 'rotary' or cfg.get('hidden_act') not in ('swish', 'silu'):
-        raise ValueError('MuQ requires rotary embeddings and swish activation')
-    for key in ('intermediate_size', 'conv_depthwise_kernel_size'):
-        if type(cfg.get(key)) is not int or cfg[key] <= 0:
-            raise ValueError('invalid MuQ ' + key)
-    if cfg['conv_depthwise_kernel_size'] % 2 != 1:
-        raise ValueError('MuQ depthwise kernel must be odd')
-    for value in (cfg.get('layer_norm_eps'), cfg.get('rotary_embedding_base'), raw['stat'].get('melspec_2048_std')):
-        if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-            raise ValueError('invalid MuQ normalization/rotary configuration')
-    if not math.isfinite(raw['stat']['melspec_2048_mean']):
-        raise ValueError('invalid MuQ feature mean')
+    validate_muq_config(raw)
     metadata = {'general.architecture': 'muq', 'general.name': 'OpenMuQ/MuQ-large-msd-iter',
                 'general.license': 'cc-by-nc-4.0', 'muq.source_revision': revision,
                 'muq.config': json.dumps(raw, separators=(',', ':'))}

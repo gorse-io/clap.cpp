@@ -37,7 +37,7 @@ Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
                            std::size_t crop_offset = 0);
 
-// Native CLAP, CLaMP3, MERT-v1, MERT2 or MuQ, selected from GGUF metadata. Weights are
+// Native CLAP, CLaMP3, MERT-v1, MERT2, MuQ or MuQ-MuLan, selected from GGUF metadata. Weights are
 // memory-mapped on POSIX platforms; MuQ F16 weights expand to owned F32 buffers.
 // Each call embeds one item; methods on the same instance are not thread-safe.
 // CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
@@ -47,6 +47,11 @@ std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 4800
 // Neither is the all-layer CLaMP3 representation: use clamp3_features() for that.
 // MERT-v2-FullSong and MuQ audio() mean-pool the complete input's final frames;
 // audio_frames() returns the unpooled sequence (approximately 25 Hz for published weights).
+// MuQ-MuLan text() returns a single L2-normalized joint embedding. audio() uses
+// successive 10 s clips, one prefix slice for a tail, per-clip normalization and
+// an unweighted average without final normalization. No amplitude normalization.
+// MuLan supports neither frame/features APIs nor crop offsets; published width
+// is 512. Its text string API rejects over-context input without truncation.
 class Model {
 public:
     explicit Model(const std::string &gguf_path, int threads = 0);

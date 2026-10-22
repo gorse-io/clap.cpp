@@ -28,7 +28,15 @@ public:
     virtual int projection_dimension() const = 0;
     virtual int mel_bins() const = 0;
     virtual int sample_rate() const = 0;
+    // Historical name: this capability exposes waveform frame sequences.
+    // Joint models with their own clip pooling use has_waveform_embeddings().
     virtual bool is_waveform_encoder() const = 0;
+    // A joint waveform model has a tokenizer and its own clip/embedding pooling.
+    virtual bool has_text_encoder() const { return !is_waveform_encoder(); }
+    virtual bool has_waveform_embeddings() const { return false; }
+    virtual std::vector<float> waveform_embedding(const std::vector<float> &) const {
+        throw std::runtime_error("CLAP: this architecture has no waveform embeddings");
+    }
 protected:
     virtual void load_arch_hparams() = 0;
     virtual void load_arch_tensors() const = 0;

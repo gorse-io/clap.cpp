@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     int threads = 0;
     size_t crop = 0;
     bool frames = false, clamp3_features = false;
-    app.add_option("-m,--model", path, "Converted CLAP/CLaMP3/MERT-v1/MERT2/MuQ GGUF")->required()->check(CLI::ExistingFile);
+    app.add_option("-m,--model", path, "Converted CLAP/CLaMP3/MERT-v1/MERT2/MuQ/MuLan GGUF")->required()->check(CLI::ExistingFile);
     auto *text_option = app.add_option("-p,--text", text, "UTF-8 text to embed");
     auto *audio_option = app.add_option("-a,--audio", audio, "WAV, MP3 or FLAC (mixed to mono and resampled for the model)")->check(CLI::ExistingFile);
     auto *features_option = app.add_option("--audio-features", audio_features,
@@ -111,6 +111,8 @@ int main(int argc, char **argv) {
         NpyFeatures mert;
         if (features_option->count()) mert = load_npy(audio_features);
         clap::Model model(path, threads);
+        if (crop_option->count() && model.audio_sample_rate() != 48000)
+            throw std::runtime_error("--crop-offset requires a CLAP model");
         if (audio_option->count() && model.audio_sample_rate() > 0 && pcm_rate != model.audio_sample_rate()) {
             auto converted = clap::resample_audio({std::move(pcm), pcm_rate}, model.audio_sample_rate());
             pcm = std::move(converted.samples);

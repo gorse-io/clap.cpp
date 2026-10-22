@@ -42,28 +42,51 @@ MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), ops
 void MuqModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq.config"));
     encoder = config.at("w2v2_config");
-    if (!(config.at("features") == nlohmann::json::array({"melspec_2048"}) &&
-          config.at("n_mels") == 128 && config.at("hop_length") == 240 && config.at("label_rate") == 25 &&
-          !config.value("is_flash", false)))
+    // Validate exact JSON integer types and wide bounds before ANY int/float
+    // narrowing. This is also the MuLan dependency gate during construction.
+    auto dimension = [](const nlohmann::json &obj, const char *key, int64_t maximum = 65536) -> int64_t {
+        const auto &value = obj.at(key);
+        // Compare in JSON's numeric domain before extracting signed int64_t,
+        // so uint64 values cannot wrap through a signed conversion.
+        if (!value.is_number_integer() || value <= 0 || value > maximum)
+            throw std::runtime_error(std::string("CLAP: invalid MuQ dimension: ") + key);
+        return value.get<int64_t>();
+    };
+    for (const auto &field : {std::pair<const char *, int>{"n_mels", 128}, {"hop_length", 240}, {"label_rate", 25}})
+        if (dimension(config, field.first) != field.second)
+            throw std::runtime_error(std::string("CLAP: invalid MuQ ") + field.first);
+    if (config.at("features") != nlohmann::json::array({"melspec_2048"}) || config.value("is_flash", false))
         throw std::runtime_error("CLAP: unsupported MuQ frontend/variant");
-    const int hidden = config.at("encoder_dim"), heads = encoder.at("num_attention_heads");
-    if (!(hidden > 0 && heads > 0 && hidden % heads == 0 && (hidden / heads) % 2 == 0 &&
-          config.at("conv_dim").get<int>() > 0 && config.at("encoder_depth").get<int>() > 0 &&
-          encoder.at("intermediate_size").get<int>() > 0))
-        throw std::runtime_error("CLAP: invalid MuQ encoder dimensions");
+    const int64_t hidden = dimension(config, "encoder_dim"), heads = dimension(encoder, "num_attention_heads");
+    const int64_t channels = dimension(config, "conv_dim"), depth = dimension(config, "encoder_depth", 256);
+    const int64_t intermediate = dimension(encoder, "intermediate_size");
+    const int64_t kernel = dimension(encoder, "conv_depthwise_kernel_size", 4095);
+    if (hidden % heads || (hidden / heads) % 2 || kernel % 2 != 1)
+        throw std::runtime_error("CLAP: invalid MuQ attention/kernel geometry");
+    // All operands are bounded int64_t above. Even the largest budget fits
+    // int64_t; the signed-int ceiling bounds tensor products and schema cost.
+    // Keep these limits in sync with conversion/muq.py. Unused HF/RVQ fields
+    // (notably HF num_hidden_layers) do not define this inference backbone.
+    const int64_t layer = 4*hidden*intermediate + 7*hidden*hidden + hidden*kernel + 64*hidden + 4*intermediate;
+    const int64_t budget = 54*channels*channels + 32*channels*hidden + depth*layer;
+    if (budget > std::numeric_limits<int>::max())
+        throw std::runtime_error("CLAP: invalid MuQ derived tensor products");
     if (!(encoder.at("position_embeddings_type") == "rotary" &&
           (encoder.at("hidden_act") == "swish" || encoder.at("hidden_act") == "silu")))
         throw std::runtime_error("CLAP: MuQ requires rotary/swish encoder");
-    const int kernel = encoder.at("conv_depthwise_kernel_size");
-    if (!(kernel > 0 && kernel % 2 == 1))
-        throw std::runtime_error("CLAP: invalid MuQ depthwise kernel");
-    for (float value : {encoder.at("rotary_embedding_base").get<float>(),
-                        encoder.at("layer_norm_eps").get<float>(),
-                        config.at("stat").at("melspec_2048_std").get<float>()})
-        if (!(std::isfinite(value) && value > 0))
-            throw std::runtime_error("CLAP: invalid MuQ normalization/rotary configuration");
-    if (!(std::isfinite(config.at("stat").at("melspec_2048_mean").get<float>())))
-        throw std::runtime_error("CLAP: invalid MuQ feature mean");
+    auto scalar = [](const nlohmann::json &obj, const char *key, bool positive) {
+        const auto &value = obj.at(key);
+        if (!value.is_number())
+            throw std::runtime_error(std::string("CLAP: invalid MuQ scalar: ") + key);
+        const double wide = value.get<double>();
+        if (!std::isfinite(wide) || std::abs(wide) > std::numeric_limits<float>::max() ||
+            (wide != 0 && std::abs(wide) < std::numeric_limits<float>::denorm_min()) || (positive && wide <= 0))
+            throw std::runtime_error(std::string("CLAP: invalid MuQ scalar: ") + key);
+    };
+    scalar(encoder, "rotary_embedding_base", true);
+    scalar(encoder, "layer_norm_eps", true);
+    scalar(config.at("stat"), "melspec_2048_std", true);
+    scalar(config.at("stat"), "melspec_2048_mean", false);
 }
 void MuqModel::load_arch_tensors() const {
     loader.shape("frontend.window", {2048}); loader.shape("frontend.filters", {128, 1025});
