@@ -27,8 +27,6 @@ jobs:
         shell: pwsh
         run: |
           winget install -e --id yt-dlp.FFmpeg --architecture arm64 --scope user --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
-          if ($LASTEXITCODE -ne 0) { throw "FFmpeg installation failed: $LASTEXITCODE" }
-          "$env:LOCALAPPDATA/Microsoft/WinGet/Links" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
