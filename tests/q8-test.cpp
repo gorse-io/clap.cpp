@@ -152,9 +152,12 @@ static void verify(const std::string &source, const std::string &output, bool k 
 }
 // Test-only canonical storage oracle exporter. Not linked into production CLI.
 static void decode(const std::string &source, const std::string &destination) {
-    ModelLoader loader; loader.load(source);
+    ModelLoader loader; loader.load(source, false);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> input(gguf_init_from_file(source.c_str(), {true, nullptr}), gguf_free);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> output(gguf_init_empty(), gguf_free);
+    gguf_set_kv(output.get(), input.get());
+    gguf_set_val_u32(output.get(), "general.alignment", gguf_get_alignment(output.get()));
+    gguf_set_val_u32(output.get(), "general.file_type", GGML_FTYPE_ALL_F32);
     const auto count = gguf_get_n_tensors(input.get());
     std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({static_cast<size_t>(count + 1) * ggml_tensor_overhead(), nullptr, true}), ggml_free);
     std::vector<std::vector<float>> values(static_cast<size_t>(count));

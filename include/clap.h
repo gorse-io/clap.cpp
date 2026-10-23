@@ -1,11 +1,16 @@
 #pragma once
 
+#include <complex>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace clap {
+
+// In-place, unnormalized forward FFT with double-precision intermediates.
+// The input length must be a nonzero power of two; otherwise throws invalid_argument.
+void fft(std::vector<std::complex<double>> &values);
 
 struct Audio {
     std::vector<float> samples; // Mono float PCM; channels are averaged when decoding.

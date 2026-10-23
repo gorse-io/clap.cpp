@@ -153,7 +153,7 @@ Matrix MertModel::convolution(const Matrix &x, const std::string &name, int kern
 // compounds through 12 encoder layers. Expand one dense weight at a time.
 Matrix MertModel::linear(const Matrix &x, const std::string &name) const {
     const auto *weight = loader.weight(name + ".weight");
-    if (weight->type == GGML_TYPE_F32) return ops.linear(x, name);
+    if (weight->type == GGML_TYPE_F32 || ggml_is_quantized(weight->type)) return ops.linear(x, name);
     if (weight->type != GGML_TYPE_F16)
         throw std::runtime_error("MERT supports F32/F16 weights only");
     Matrix result(x.rows, static_cast<int>(weight->ne[1]));

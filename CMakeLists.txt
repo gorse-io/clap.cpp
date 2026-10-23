@@ -89,6 +89,11 @@ if(BUILD_TESTING)
     target_include_directories(clap-quantize-output-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME clap_quantize_publication
         COMMAND clap-quantize-output-test "${CMAKE_CURRENT_BINARY_DIR}/quantize-publication-fixture")
+    add_executable(all-quantization-test tests/all-quantization-test.cpp src/quantize.cpp)
+    target_include_directories(all-quantization-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(all-quantization-test PRIVATE clap)
+    add_test(NAME all_architecture_quantization COMMAND all-quantization-test "${CMAKE_CURRENT_BINARY_DIR}/all-quantization-fixture")
+    set_tests_properties(all_architecture_quantization PROPERTIES TIMEOUT 120)
     add_executable(clap-q8-test tests/q8-test.cpp)
     target_include_directories(clap-q8-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(clap-q8-test PRIVATE clap)
@@ -142,6 +147,10 @@ if(BUILD_TESTING)
         add_test(NAME clap_tensor_ops_vulkan
             COMMAND tensor-ops-test "${CMAKE_CURRENT_BINARY_DIR}/tensor-ops-vulkan.gguf" --require-vulkan)
     endif()
+    add_executable(mert2-fft-test tests/models/mert2-fft-test.cpp)
+    target_compile_features(mert2-fft-test PRIVATE cxx_std_17)
+    target_link_libraries(mert2-fft-test PRIVATE clap)
+    add_test(NAME mert2_fft_precision COMMAND mert2-fft-test)
     add_executable(ggml-smoke tests/ggml-smoke.cpp)
     target_compile_features(ggml-smoke PRIVATE cxx_std_17)
     target_link_libraries(ggml-smoke PRIVATE ggml)
@@ -294,6 +303,13 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/muq-mulan-fixture"
                 "${MUQ_MULAN_REFERENCE_SOURCE}" "${MUQ_REFERENCE_SOURCE}")
         set_tests_properties(muq_mulan_oracle_pipeline PROPERTIES DEPENDS muq_mulan_model_parity TIMEOUT 600)
+    endif()
+    if(MERT_MODEL_PARITY AND MERT2_MODEL_PARITY AND MUQ_MODEL_PARITY AND MUQ_MULAN_MODEL_PARITY)
+        add_test(NAME encoder_quantized_parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/encoder_quantized.py"
+                "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/encoder-quantized-fixture"
+                "${MERT_REFERENCE_SOURCE}" "${MERT2_REFERENCE_SOURCE}" "${MUQ_REFERENCE_SOURCE}" "${MUQ_MULAN_REFERENCE_SOURCE}")
+        set_tests_properties(encoder_quantized_parity PROPERTIES TIMEOUT 600)
     endif()
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")

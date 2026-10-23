@@ -25,19 +25,21 @@ public:
     ModelLoader(const ModelLoader &) = delete;
     ModelLoader &operator=(const ModelLoader &) = delete;
 
-    void load(const std::string &path);
+    // Storage tools must not promote F16 bytes before conversion/copying.
+    void load(const std::string &path, bool inference = true);
     std::string metadata(const char *key) const;
     ggml_tensor *weight(const std::string &name) const;
     void shape(const std::string &name, std::initializer_list<int64_t> dims) const;
     void linear_shape(const std::string &name, int in, int out, bool bias = true) const;
     void norm_shape(const std::string &name, int dim) const;
-    bool f32_activation_compute() const { return mulan; }
+    bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
     void validate_tensor_coverage() const;
 private:
     const ModelLoader *source = nullptr;
     std::string tensor_prefix, metadata_prefix;
     bool bundled = false;
     bool mulan = false;
+    bool f32_activations = false;
     mutable std::unordered_set<std::string> validated_shapes;
     gguf_context *gguf = nullptr;
     ggml_context *weights = nullptr;

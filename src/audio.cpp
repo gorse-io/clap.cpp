@@ -27,8 +27,12 @@
 namespace clap {
 namespace {
 constexpr double pi = 3.14159265358979323846;
+} // namespace
+
 void fft(std::vector<std::complex<double>> &a) {
     const size_t n = a.size();
+    if (n == 0 || (n & (n - 1)) != 0)
+        throw std::invalid_argument("FFT length must be a nonzero power of two");
     for (size_t i = 1, j = 0; i < n; ++i) {
         size_t bit = n >> 1;
         for (; j & bit; bit >>= 1) j ^= bit;
@@ -46,6 +50,8 @@ void fft(std::vector<std::complex<double>> &a) {
         }
     }
 }
+
+namespace {
 double hz_to_mel(double hz) {
     return hz < 1000 ? hz / (200.0 / 3) : 15 + std::log(hz / 1000) / (std::log(6.4) / 27);
 }

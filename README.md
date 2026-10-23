@@ -157,7 +157,7 @@ contents rather than extension. Channels are averaged to mono, then automaticall
 resampled to 48 kHz for inference. `--crop-offset` is measured in samples of the
 resampled 48 kHz waveform.
 
-### Q8_0 and Q4_K_M quantization (CLAP and CLaMP3)
+### Q8_0 and Q4_K_M quantization (all architectures)
 
 Builds include the native `clap quantize` subcommand. First convert the checkpoint
 with the existing Python converter (F32 recommended to avoid double rounding),
@@ -173,7 +173,9 @@ python convert_hf_to_gguf.py checkpoint/ model-f32.gguf --dtype f32
 # CLaMP3 also accepts --audio; its bundled MERT tensors remain F32/F16.
 ```
 
-Q8_0 is **mixed precision**: tensors with ggml rank greater than one and a
+All six native architectures (`clap`, `clamp3`, `mert`, `mert2`, `muq`,
+`muq_mulan`) accept both presets. For CLAP/CLaMP3, the existing policy remains
+unchanged. Their Q8_0 is **mixed precision**: tensors with ggml rank greater than one and a
 contiguous row width (`ne[0]`, the last PyTorch dimension) divisible by 32 are
 quantized. All other tensors retain their original F32/F16 bytes, including
 biases, normalization vectors and CLAP's 4x4 patch convolution. Embeddings and
@@ -211,8 +213,34 @@ the policy string above in `clap.quantization_policy`. The pinned standalone
 ggml enum has no `GGML_FTYPE_MOSTLY_Q4_K_M`; its `MOSTLY_Q4_K = 12` is **not**
 the interoperable mixed-model identifier.
 
-The loader keeps Q8/K weights mapped (Windows uses its existing file buffer);
-linear layers use native ggml quantized matrix multiplication. Scalar reads
+For MERT, MERT2, MuQ and MuQ-MuLan, only recognized **2D dense/embedding**
+weights are eligible: contiguous input width must be divisible by 32 (Q8) or
+256 (K). Convolutions (including pointwise Conv1d), frontend/mel buffers,
+normalization, GRN, vectors and incompatible widths retain their original bytes.
+Quantized convolution/frontend/normalization layouts are rejected, and every
+loaded tensor must be covered by the architecture's shape schema.
+
+Their K policy is `q4_k_m-v2-encoder-dense-v-ffn-down-projection-q6_k`:
+
+| Architecture | Eligible roles protected with Q6_K (all layers) |
+| --- | --- |
+| MERT | attention V, FFN output, feature projection |
+| MERT2 | attention V, both Conformer FFN outputs, ConvNeXt dense output |
+| MuQ | attention V, both FFN outputs, subsampler dense projection |
+| MuQ-MuLan | all MuQ roles, XLM-R V/FFN output, adapter fused KV/GEGLU output, audio/text latent and audio adapter projections |
+
+Other eligible dense/embedding matrices use Q4_K. The fused MuLan KV matrix
+protects both K and V because they share one tensor. There is no Q8 fallback.
+CLaMP3's mandatory bundled MERT is deliberately **not** quantized; its original
+F32/F16 bytes and the pre-existing CLAP/CLaMP3 policy are preserved.
+
+The loader keeps Q8/K weights mapped (Windows uses its existing file buffer).
+CLAP/CLaMP3 linear layers use native ggml quantized matrix multiplication.
+MERT/MERT2/MuQ/MuLan retain **F32 activations**: each dense operation decodes only
+its current quantized operand to F32 scratch, runs native ggml F32 matmul, then
+releases that scratch. This avoids hidden Q8 activation packing and is not a
+whole-model expansion or a promise of faster inference. Temporary operands
+never enter the persistent GPU weight cache. Scalar reads
 decode only the containing block; embedding hotpaths decode one row at a time,
 not a K block per channel. There is no whole-model dequantization.
 Graph execution allocates the actual planned scratch size, including activation
@@ -240,6 +268,20 @@ The oracle also approximates native Q8_0/Q8_K activation packing; CLAP normalize
 embedding absolute tolerance is 0.01 and CLaMP3 raw-projection tolerance is 0.002.
 These storage-rounded checks isolate inference correctness from weight error;
 they are not quantization-quality benchmarks for published models.
+
+`all_architecture_quantization` adds default, ML-package-free canonical byte,
+role-policy, nonzero Q4/Q6, F16 byte-preservation, strict coverage and unsupported
+convolution tests for all four additional encoders. With all four encoder oracle
+options enabled, `encoder_quantized_parity` builds 256-wide complete networks,
+tests both presets from F32/F16 sources, checks against independent
+storage-rounded F32-activation references and exercises canonical F32 decoded
+model roundtrips through the real CLI. It saves numerical metrics in the build
+tree. These synthetic checks do **not** measure published-model quantization loss.
+An all-equal, zero-statistics tiny MERT2 frontend has a known silence sensitivity:
+the unquantized F32 reference discrepancy is approximately 0.0121 max absolute.
+The suite retains that official-reference failure as an explicit diagnostic,
+not accepted parity, while requiring strict quantized/decoded-native roundtrip
+agreement for silence. Broadband official-reference checks remain strict.
 
 A local `laion/larger_clap_music` F32 smoke converted 180 matrices: the GGUF shrank
 from **777,060,800** to **128,926,752 bytes** (about 6.03x smaller). Against the
@@ -418,7 +460,7 @@ one-second broadband, six-second/two-window audio and resampled input. These
 synthetic-waveform checks establish inference parity, not retrieval quality.
 
 Scope: MERT-v1-95M only; the 330M variant, stable-layer-norm/DeepNorm, CQT frontend,
-quantized MERT GGUF, batching, arbitrary layer selection and full GPU execution
+batching, arbitrary layer selection and full GPU execution
 are not supported. Full-recording `--frames`/pooled inference has quadratic
 attention time cost; prefer the bounded five-second `--clamp3-features` path for
 CLaMP3/long recordings. This does not change MERT-v2-FullSong behavior.
@@ -472,9 +514,10 @@ disk space, **not runtime weight RAM**; it does not retain F32's lazy mmap weigh
 behavior and may use additional RAM for the original file buffer on Windows.
 Conversion streams one safetensors tensor at a time, excluding training-only
 RVQ/classifier/CLS tensors and positional-convolution parameters unused by the
-official inference forward. Quantized MuQ weights are explicitly rejected;
-`clap quantize` remains CLAP/CLaMP3-only. Stable dense weights use the shared
-CPU/optional Vulkan linear backend; convolutions, frontend and attention remain
+official inference forward. Q8_0 and mixed Q4_K_M dense weights are supported
+with operation-local F32 scratch (see quantization above); noneligible F16
+convolutions retain the existing promotion behavior. Dense weights use the shared
+CPU linear backend in F32-activation mode; convolutions, frontend and attention remain
 CPU operations. This is not end-to-end GPU inference.
 
 The optional oracle uses SHA-verified `conv.py` and `features.py` from official
@@ -604,7 +647,8 @@ and avoids expanding the entire joint model, but still requires roughly the
 MuQ backbone's F32 size in RAM, plus mapped working pages, activations, tokenizer
 and scratch. F16 is not an assurance that this large model fits in a small RAM
 budget without paging. MuLan currently uses the validated CPU dense path.
-Quantized MuLan GGUF is rejected. Frame output, CLaMP3 features, precomputed
+Q8_0 and mixed Q4_K_M dense/embedding storage are supported (see quantization
+above), without expanding the entire quantized model. Frame output, CLaMP3 features, precomputed
 features and crop offsets are unsupported for this joint model.
 
 The optional tiny oracle exercises official hash-checked components with
@@ -696,9 +740,17 @@ has quadratic time/memory cost in the output frame count, so long CPU runs can b
 expensive. `--crop-offset` is intentionally rejected for MERT2.
 
 For F16 conversion, matrix and convolution weights use F16 storage while vector
-parameters and all official float32 frontend tensors remain F32. The converter
+parameters and all official float32 frontend tensors remain F32. MERT2 CPU
+matmuls expand only the current F16 operand to F32 scratch, preserving F32
+activation semantics. The FFT uses double intermediates and rounds its output
+to F32 to avoid repeated-twiddle drift in the spectral noise floor; a direct-DFT
+regression covers 2048-point complex and log-power errors. This incorporates the
+previously separate MERT2 FFT/activation-precision correction into the runtime;
+it does not retroactively validate old binaries or promise bitwise agreement
+with every Torch FFT backend. The converter
 streams safetensors one at a time rather than materializing the 632M-parameter
-checkpoint in RAM. Quantized GGUF types, batching, intermediate hidden-state
+checkpoint in RAM. Q8_0 and mixed Q4_K_M dense storage are supported (see above).
+Batching, intermediate hidden-state
 output, GPU backends and the 30-second MERT2 variant are not supported.
 
 The deterministic tiny official-model suite covers the waveform frontend,

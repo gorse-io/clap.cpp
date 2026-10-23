@@ -15,6 +15,27 @@
 #endif
 
 namespace clap::detail {
+namespace {
+// Storage-only precision: retain mapped bytes, decode just the current dense
+// operand, and never insert this temporary alias in the persistent GPU cache.
+struct MatmulWeight {
+    std::vector<float> values;
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
+    ggml_tensor *tensor;
+    MatmulWeight(ggml_tensor *weight, bool preserve_inputs) : tensor(weight) {
+        if (!preserve_inputs || weight->type == GGML_TYPE_F32) return;
+        const auto *traits = ggml_get_type_traits(weight->type);
+        if (!ggml_is_contiguous(weight) || !traits || !traits->to_float)
+            throw std::runtime_error("CLAP: unsupported storage-only matmul operand");
+        values.resize(static_cast<size_t>(ggml_nelements(weight)));
+        traits->to_float(weight->data, values.data(), ggml_nelements(weight));
+        context.reset(ggml_init({4096, nullptr, true}));
+        if (!context) throw std::runtime_error("CLAP: matmul alias allocation failed");
+        tensor = ggml_new_tensor(context.get(), GGML_TYPE_F32, ggml_n_dims(weight), weight->ne);
+        tensor->data = values.data();
+    }
+};
+} // namespace
 
 struct TensorOps::BackendState {
 #ifdef CLAP_USE_VULKAN
@@ -174,20 +195,7 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
     auto *w = loader.weight(name + ".weight");
     if (!(w->ne[0] == x.cols && w->ne[2] == 1 && w->ne[3] == 1))
         throw std::runtime_error("CLAP: linear shape: " + name);
-    // MuLan F16 is storage only. Promote one dense matrix for this operation;
-    // retaining the huge XLM-R embedding and other branches as mapped F16
-    // avoids a model-wide F32 copy and GGML's F16 activation packing.
-    std::vector<float> promoted;
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> alias(nullptr, ggml_free);
-    if (loader.f32_activation_compute() && w->type == GGML_TYPE_F16) {
-        promoted.resize(static_cast<size_t>(ggml_nelements(w)));
-        ggml_fp16_to_fp32_row(static_cast<const ggml_fp16_t *>(w->data), promoted.data(), ggml_nelements(w));
-        alias.reset(ggml_init({4096, nullptr, true}));
-        if (!alias) throw std::runtime_error("CLAP: MuLan dense alias allocation failed");
-        auto *temporary = ggml_new_tensor_2d(alias.get(), GGML_TYPE_F32, w->ne[0], w->ne[1]);
-        temporary->data = promoted.data();
-        w = temporary;
-    }
+    MatmulWeight operand(w, loader.f32_activation_compute());
     Matrix result(x.rows, static_cast<int>(w->ne[1]));
     bool computed = false;
 #ifdef CLAP_USE_VULKAN
@@ -208,7 +216,7 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
             throw std::runtime_error("CLAP: ggml allocation failed");
         auto *input = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, x.cols, x.rows);
         std::memcpy(input->data, x.data.data(), x.data.size() * sizeof(float));
-        auto *output = ggml_mul_mat(ctx.get(), w, input);
+        auto *output = ggml_mul_mat(ctx.get(), operand.tensor, input);
         auto *graph = ggml_new_graph_custom(ctx.get(), 32, false);
         ggml_build_forward_expand(graph, output);
         auto plan = ggml_graph_plan(graph, n_threads, nullptr);
@@ -250,6 +258,7 @@ Matrix TensorOps::conv1d(const Matrix &x, const std::string &name, int kernel,
             throw std::runtime_error("CLAP: ggml convolution alias allocation failed");
         auto *flat = ggml_new_tensor_2d(alias_context.get(), w->type, x.cols, output_columns);
         flat->data = w->data;
+        MatmulWeight operand(flat, loader.f32_activation_compute());
         const size_t bytes = (x.data.size() + static_cast<size_t>(rows) * output_columns) * sizeof(float) +
                              2 * 1024 * 1024;
         std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes, nullptr, false}), ggml_free);
@@ -257,7 +266,7 @@ Matrix TensorOps::conv1d(const Matrix &x, const std::string &name, int kernel,
             throw std::runtime_error("CLAP: ggml convolution allocation failed");
         auto *input = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, x.cols, x.rows);
         std::memcpy(input->data, x.data.data(), x.data.size() * sizeof(float));
-        auto *output = ggml_mul_mat(ctx.get(), flat, input);
+        auto *output = ggml_mul_mat(ctx.get(), operand.tensor, input);
         auto *graph = ggml_new_graph_custom(ctx.get(), 32, false);
         ggml_build_forward_expand(graph, output);
         if (ggml_graph_compute_with_ctx(ctx.get(), graph, n_threads) != GGML_STATUS_SUCCESS)
