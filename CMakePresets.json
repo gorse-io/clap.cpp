@@ -59,8 +59,8 @@
       "inherits": "release-base",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "toolset": "cuda=$env{CUDA_PATH}",
       "cacheVariables": {
+        "CMAKE_GENERATOR_TOOLSET": "cuda=$env{CUDA_PATH}",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
@@ -72,8 +72,8 @@
       "inherits": "release-base",
       "generator": "Visual Studio 18 2026",
       "architecture": "ARM64",
-      "toolset": "cuda=$env{CUDA_PATH}",
       "cacheVariables": {
+        "CMAKE_GENERATOR_TOOLSET": "cuda=$env{CUDA_PATH}",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real",
         "GGML_NATIVE": "ON",
