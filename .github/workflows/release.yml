@@ -172,19 +172,16 @@ jobs:
           version: vulkan-${{ matrix.os }}-${{ runner.arch }}-v1
       - name: Install Windows Vulkan SDK
         if: runner.os == 'Windows'
+        uses: MinoruSekine/setup-scoop@v5.0.1
+        with:
+          apps: vulkan
+      - name: Configure Windows Vulkan SDK environment
+        if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          VULKAN_VERSION: '1.4.321.1'
         run: |
-          $installer = "$env:RUNNER_TEMP/VulkanSDK-Installer.exe"
-          curl.exe --fail --location --retry 3 --output $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
-          if ($LASTEXITCODE -ne 0) { throw 'Vulkan SDK download failed' }
-          $arguments = @('--accept-licenses', '--default-answer', '--confirm-command', 'install')
-          if ('${{ runner.arch }}' -eq 'ARM64') { $arguments += 'com.lunarg.vulkan.arm64' }
-          $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Vulkan SDK installation failed: $($process.ExitCode)" }
-          "VULKAN_SDK=C:/VulkanSDK/$env:VULKAN_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "C:/VulkanSDK/$env:VULKAN_VERSION/Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          $sdk = scoop prefix vulkan
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$sdk/Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build

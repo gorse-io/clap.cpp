@@ -86,9 +86,7 @@
       "cacheVariables": {
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
         "GGML_METAL": "OFF",
-        "GGML_VULKAN": "ON",
-        "Vulkan_LIBRARY": "$env{VULKAN_SDK}/Lib-arm64/vulkan-1.lib",
-        "Vulkan_GLSLC_EXECUTABLE": "$env{VULKAN_SDK}/Bin/glslc.exe"
+        "GGML_VULKAN": "ON"
       }
     },
     {
