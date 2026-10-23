@@ -62,6 +62,17 @@ Audio decoding requires no
 FFmpeg executable or system codec libraries to build or run the library and
 executables. Only the test fixture generation step uses FFmpeg.
 
+## Public C API
+
+`include/clap.h` is a pure C99 API with opaque model handles, plain parameter and
+result structs, explicit matching frees and status/error reporting. It preserves
+native text/audio inference, tokenization, decoding/resampling, log-mel/FFT and
+frame/feature extraction. Calls on one handle are serialized; C++ implementation
+types now live in a private, non-installed header. See [C API and FFI guide](docs/c-api.md)
+for ownership/threading contracts, CMake installation, a C example and ctypes
+verification. This intentionally replaces the former public `clap::Model` C++ API;
+a CPython extension is not part of this change.
+
 ## Build and test
 
 ```sh

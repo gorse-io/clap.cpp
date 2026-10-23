@@ -3,7 +3,29 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <stdexcept>
-#include <utility>
+#include <vector>
+
+namespace {
+void check(clap_status status) {
+    if (status != CLAP_STATUS_SUCCESS) throw std::runtime_error(clap_last_error());
+}
+struct Model {
+    clap_model *value = nullptr;
+    ~Model() { clap_model_free(value); }
+};
+struct Audio {
+    clap_audio value{};
+    ~Audio() { clap_audio_free(&value); }
+};
+struct Buffer {
+    clap_float_buffer value{};
+    ~Buffer() { clap_float_buffer_free(&value); }
+};
+struct Frames {
+    clap_audio_frames value{};
+    ~Frames() { clap_audio_frames_free(&value); }
+};
+} // namespace
 
 int main(int argc, char **argv) {
     CLI::App app{"Native CLAP/CLaMP3 embeddings (separate from the legacy dummy clap CLI/server)"};
@@ -29,23 +51,35 @@ int main(int argc, char **argv) {
             throw std::runtime_error("--frames requires --audio and excludes --crop-offset");
         if (clamp3_features && (!audio_option->count() || frames || crop_option->count()))
             throw std::runtime_error("--clamp3-features requires --audio and excludes --frames/--crop-offset");
-        std::vector<float> pcm;
-        int pcm_rate = 0;
-        if (audio_option->count()) {
-            auto decoded = clap::decode_audio(audio);
-            pcm_rate = decoded.sample_rate;
-            pcm = std::move(decoded.samples);
-        }
-        clap::Model model(path, threads);
-        if (crop_option->count() && model.audio_sample_rate() != 48000)
+        Audio decoded;
+        if (audio_option->count()) check(clap_audio_decode(audio.c_str(), &decoded.value));
+        Model model;
+        auto params = clap_model_default_params();
+        params.n_threads = threads;
+        check(clap_model_load(path.c_str(), params, &model.value));
+        int32_t rate = 0;
+        check(clap_model_audio_sample_rate(model.value, &rate));
+        if (crop_option->count() && rate != 48000)
             throw std::runtime_error("--crop-offset requires a CLAP model");
         if (frames || clamp3_features) {
-            const auto sequence = clamp3_features ? model.clamp3_features(pcm, pcm_rate) : model.audio_frames(pcm, pcm_rate);
-            std::cout << nlohmann::json{{"frames", sequence.frames}, {"dimension", sequence.dimension},
-                                       {"values", sequence.values}}.dump() << '\n';
+            Frames sequence;
+            check(clamp3_features ?
+                  clap_model_clamp3_features(model.value, decoded.value.samples, decoded.value.n_samples,
+                                             decoded.value.sample_rate, &sequence.value) :
+                  clap_model_audio_frames(model.value, decoded.value.samples, decoded.value.n_samples,
+                                          decoded.value.sample_rate, &sequence.value));
+            const std::vector<float> values(sequence.value.values, sequence.value.values + sequence.value.n_values);
+            std::cout << nlohmann::json{{"frames", sequence.value.frames}, {"dimension", sequence.value.dimension},
+                                       {"values", values}}.dump() << '\n';
         } else {
-            const auto embedding = text_option->count() ? model.text(text) : model.audio(pcm, pcm_rate, crop);
-            std::cout << nlohmann::json(embedding).dump() << '\n';
+            Buffer embedding;
+            auto ap = clap_audio_default_params();
+            ap.sample_rate = decoded.value.sample_rate;
+            ap.crop_offset = crop;
+            check(text_option->count() ? clap_model_text(model.value, text.c_str(), &embedding.value) :
+                  clap_model_audio(model.value, decoded.value.samples, decoded.value.n_samples, ap, &embedding.value));
+            std::cout << nlohmann::json(std::vector<float>(embedding.value.data,
+                                                          embedding.value.data + embedding.value.size)).dump() << '\n';
         }
         if (!std::cout) throw std::runtime_error("Failed to write representations");
         return 0;

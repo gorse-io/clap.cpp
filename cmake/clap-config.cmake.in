@@ -1,0 +1,33 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+if(NOT @BUILD_SHARED_LIBS@)
+    find_dependency(ggml CONFIG)
+    if(NOT TARGET clap::ggml-runtime)
+        add_library(clap::ggml-runtime INTERFACE IMPORTED)
+        set_target_properties(clap::ggml-runtime PROPERTIES
+            INTERFACE_LINK_LIBRARIES ggml::ggml)
+    endif()
+    if(@CLAP_USE_SYSTEM_ICU@)
+        find_dependency(ICU COMPONENTS uc i18n)
+    endif()
+    include("${CMAKE_CURRENT_LIST_DIR}/clap-targets.cmake")
+elseif(NOT TARGET clap::clap)
+    # ggml uses its own handwritten package config, not an export set. Import
+    # just the public DLL here; its private shared dependencies resolve via RPATH.
+    unset(CLAP_LIBRARY CACHE)
+    unset(CLAP_LIBRARY)
+    find_library(CLAP_LIBRARY NAMES clap PATHS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@" NO_DEFAULT_PATH REQUIRED)
+    add_library(clap::clap SHARED IMPORTED)
+    if(WIN32)
+        set_target_properties(clap::clap PROPERTIES
+            IMPORTED_IMPLIB "${CLAP_LIBRARY}"
+            IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/clap.dll")
+    else()
+        set_target_properties(clap::clap PROPERTIES IMPORTED_LOCATION "${CLAP_LIBRARY}")
+    endif()
+    set_target_properties(clap::clap PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+        INTERFACE_COMPILE_DEFINITIONS CLAP_SHARED)
+endif()
+check_required_components(clap)

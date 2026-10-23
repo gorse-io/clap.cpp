@@ -1,5 +1,5 @@
 #include "models.h"
-#include "clap.h"
+#include "clap-internal.h"
 #include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>

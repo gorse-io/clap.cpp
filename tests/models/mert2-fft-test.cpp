@@ -1,5 +1,5 @@
 // Exercise the production FFT against a double direct DFT, not another FFT.
-#include "clap.h"
+#include "clap-internal.h"
 #include <algorithm>
 #include <complex>
 #include <vector>
