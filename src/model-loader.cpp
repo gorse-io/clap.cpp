@@ -3,6 +3,7 @@
 #include "model-ops.h"
 #include <stdexcept>
 #include <fstream>
+#include <filesystem>
 #include <cmath>
 #include <cstring>
 #ifndef _WIN32
@@ -91,7 +92,7 @@ void ModelLoader::load(const std::string &path, bool inference) {
     if (mapping == MAP_FAILED)
         throw std::runtime_error("CLAP: cannot mmap weights");
 #else
-    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    std::ifstream stream(std::filesystem::u8path(path), std::ios::binary | std::ios::ate);
     if (!(static_cast<bool>(stream)))
         throw std::runtime_error("CLAP: cannot open weights");
     mapping_size = static_cast<size_t>(stream.tellg()); storage.resize(mapping_size);

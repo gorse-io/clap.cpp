@@ -21,6 +21,7 @@
 #include <cmath>
 #include <complex>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <memory>
 
@@ -155,7 +156,14 @@ Audio decode_audio(const std::string &path) {
     // finite-sample check so a bad channel cannot be hidden by downmixing.
     auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
     ma_decoder decoder{};
-    if (ma_decoder_init_file(path.c_str(), &config, &decoder) == MA_SUCCESS) {
+#ifdef _WIN32
+    // Native paths are UTF-8; miniaudio's narrow file API uses the ANSI code page.
+    const auto native_path = std::filesystem::u8path(path);
+    const auto init_result = ma_decoder_init_file_w(native_path.c_str(), &config, &decoder);
+#else
+    const auto init_result = ma_decoder_init_file(path.c_str(), &config, &decoder);
+#endif
+    if (init_result == MA_SUCCESS) {
         const auto close = [](ma_decoder *value) { ma_decoder_uninit(value); };
         const std::unique_ptr<ma_decoder, decltype(close)> guard(&decoder, close);
         ma_uint32 channels = 0, sample_rate = 0;

@@ -62,6 +62,14 @@ Audio decoding requires no
 FFmpeg executable or system codec libraries to build or run the library and
 executables. Only the test fixture generation step uses FFmpeg.
 
+## Python bindings (CPU)
+
+Install from a recursive checkout with `python -m pip install ./python`.
+The [`python/` package](python/README.md) provides native text/audio embeddings,
+NumPy waveform input and output, audio decoding/resampling, and model lifetime
+management. It builds a self-contained CPU extension; no PyTorch or GPU runtime
+is needed for inference. See the package README for API examples and tests.
+
 ## Build and test
 
 ```sh
