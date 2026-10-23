@@ -81,7 +81,7 @@ private:
 } // namespace
 
 PYBIND11_MODULE(_clap_cpp, module) {
-    module.doc() = "Native CPU inference for clap.cpp";
+    module.doc() = "Native inference for clap.cpp";
     py::class_<Model>(module, "Model")
         .def(py::init<const std::filesystem::path &, int>(), py::arg("path"), py::arg("threads") = 0)
         .def_property_readonly("projection_dimension", [](Model &self) {

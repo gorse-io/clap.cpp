@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "clap-cpp"
 version = "0.1.0"
-description = "CPU Python bindings for clap.cpp audio and text embeddings"
+description = "Python bindings for clap.cpp audio and text embeddings"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -13,6 +13,9 @@ dependencies = ["numpy>=1.23"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+cuda = ["clap-cpp-cuda==0.1.0"]
+rocm = ["clap-cpp-rocm==0.1.0"]
+vulkan = ["clap-cpp-vulkan==0.1.0"]
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"

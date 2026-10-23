@@ -6,9 +6,13 @@
 #include <cstring>
 #include <memory>
 #include <thread>
-#ifdef CLAP_USE_VULKAN
+#ifdef CLAP_USE_GPU
 #include <ggml-backend.h>
+#if defined(CLAP_USE_CUDA) || defined(CLAP_USE_HIP)
+#include <ggml-cuda.h>
+#else
 #include <ggml-vulkan.h>
+#endif
 #include <cstdlib>
 #include <mutex>
 #include <unordered_map>
@@ -38,7 +42,7 @@ struct MatmulWeight {
 } // namespace
 
 struct TensorOps::BackendState {
-#ifdef CLAP_USE_VULKAN
+#ifdef CLAP_USE_GPU
     using Context = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
     using Buffer = std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)>;
     std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> gpu{nullptr, ggml_backend_free};
@@ -50,15 +54,25 @@ struct TensorOps::BackendState {
     // Declared after gpu: device buffers must be destroyed before the backend.
     std::unordered_map<const ggml_tensor *, std::unique_ptr<Weight>> weights;
     mutable std::mutex mutex;
-    bool last_vulkan = false;
+    bool last_gpu = false;
     bool enabled = true;
     size_t uploads = 0;
 
     BackendState() {
+#if defined(CLAP_USE_CUDA)
+        const auto *setting = std::getenv("CLAP_CUDA");
+#elif defined(CLAP_USE_HIP)
+        const auto *setting = std::getenv("CLAP_ROCM");
+#else
         const auto *setting = std::getenv("CLAP_VULKAN");
+#endif
         if (setting && std::strcmp(setting, "0") == 0) return;
         try {
+#if defined(CLAP_USE_CUDA) || defined(CLAP_USE_HIP)
+            if (ggml_backend_cuda_get_device_count() > 0) gpu.reset(ggml_backend_cuda_init(0));
+#else
             if (ggml_backend_vk_get_device_count() > 0) gpu.reset(ggml_backend_vk_init(0));
+#endif
         } catch (const std::exception &) {
             // An optional backend must not prevent loading on a CPU-only host.
         }
@@ -131,7 +145,7 @@ struct TensorOps::BackendState {
 bool TensorOps::last_linear_used_vulkan() const {
 #ifdef CLAP_USE_VULKAN
     std::lock_guard<std::mutex> lock(backend->mutex);
-    return backend->last_vulkan;
+    return backend->last_gpu;
 #else
     return false;
 #endif
@@ -186,7 +200,7 @@ void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
 }
 TensorOps::TensorOps(const ModelLoader &source, int threads) : loader(source),
     n_threads(threads > 0 ? threads : static_cast<int>(std::max(1u, std::min(8u, std::thread::hardware_concurrency())))) {
-#ifdef CLAP_USE_VULKAN
+#ifdef CLAP_USE_GPU
     backend = std::make_shared<BackendState>();
 #endif
 }
@@ -198,12 +212,12 @@ Matrix TensorOps::linear(const Matrix &x, const std::string &name, bool bias) co
     MatmulWeight operand(w, loader.f32_activation_compute());
     Matrix result(x.rows, static_cast<int>(w->ne[1]));
     bool computed = false;
-#ifdef CLAP_USE_VULKAN
+#ifdef CLAP_USE_GPU
     std::lock_guard<std::mutex> lock(backend->mutex);
-    backend->last_vulkan = false;
+    backend->last_gpu = false;
     try {
         if (!loader.f32_activation_compute()) computed = backend->linear(x, w, result);
-        backend->last_vulkan = computed;
+        backend->last_gpu = computed;
     } catch (const std::exception &) {
         // Allocation/driver failures are recoverable: use the original CPU path.
         backend->enabled = false;
