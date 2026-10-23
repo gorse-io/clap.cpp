@@ -32,7 +32,7 @@ jobs:
           "C:\Users\runneradmin\AppData\Local\Microsoft\WinGet\Links" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           winget install -e --id yt-dlp.FFmpeg --architecture arm64 --scope user --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.os == 'windows-11-arm' && '-T ClangCL' || '' }}
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
