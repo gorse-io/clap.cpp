@@ -29,7 +29,7 @@ jobs:
           Install-Module -Name Microsoft.WinGet.Client -Repository PSGallery -Force
           Repair-WinGetPackageManager -Latest -Force
           Write-Output "Winget Version: $(winget --version)"
-          "C:\Users\runneradmin\AppData\Local\Microsoft\WinGet\Links" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:LOCALAPPDATA\Microsoft\WinGet\Links" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           winget install -e --id yt-dlp.FFmpeg --architecture arm64 --scope user --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.os == 'windows-11-arm' && '-T ClangCL' || '' }}
