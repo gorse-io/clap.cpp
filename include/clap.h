@@ -1,89 +1,138 @@
-#pragma once
+#ifndef CLAP_H
+#define CLAP_H
 
-#include <complex>
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <vector>
+#include <stddef.h>
+#include <stdint.h>
 
-namespace clap {
+/* Define CLAP_SHARED when using a DLL outside the supplied CMake target.
+ * CLAP_BUILD is reserved for building the library itself. Static users need
+ * neither definition. No C++ or ggml headers are required by this interface. */
+#ifndef CLAP_API
+#  if defined(CLAP_SHARED) && defined(_WIN32)
+#    if defined(CLAP_BUILD)
+#      define CLAP_API __declspec(dllexport)
+#    else
+#      define CLAP_API __declspec(dllimport)
+#    endif
+#  elif defined(CLAP_SHARED) && defined(__GNUC__)
+#    define CLAP_API __attribute__((visibility("default")))
+#  else
+#    define CLAP_API
+#  endif
+#endif
 
-// In-place, unnormalized forward FFT with double-precision intermediates.
-// The input length must be a nonzero power of two; otherwise throws invalid_argument.
-void fft(std::vector<std::complex<double>> &values);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-struct Audio {
-    std::vector<float> samples; // Mono float PCM; channels are averaged when decoding.
-    int sample_rate = 0;
+struct clap_model;
+
+enum clap_status {
+    CLAP_STATUS_SUCCESS = 0,
+    CLAP_STATUS_INVALID_ARGUMENT = 1,
+    CLAP_STATUS_OUT_OF_MEMORY = 2,
+    CLAP_STATUS_ERROR = 3
 };
 
-// Time-major frame representations returned by waveform encoders such as
-// MERT-v1-95M/MERT-v2-FullSong. values has exactly frames * dimension elements.
-struct AudioFrames {
-    std::vector<float> values;
-    int frames = 0;
-    int dimension = 0;
+struct clap_model_params {
+    int32_t n_threads; /* 0: automatic; negative values are invalid. */
 };
-
-// Decode WAV, MP3 or FLAC by contents. Preserves the source sample rate
-// (no resampling); throws on unsupported, empty or invalid audio.
-Audio decode_audio(const std::string &path);
-
-// Mono linear resampling with an eighth-order anti-alias low-pass filter.
-// Output length is ceil(input length * target rate / source rate). The causal
-// filter adds startup latency; same-rate input is unchanged. Both rates must be
-// positive; empty/non-finite or >1 GiB PCM is rejected.
-Audio resample_audio(const Audio &audio, int sample_rate = 48000);
-
-// 48 kHz mono float PCM -> [1001, 64] Slaney log-power mel features.
-// HF repeatpad: repeat whole short clips, then zero-pad the remainder.
-// Long clips use an explicit crop offset (default: first 10 s), making inference
-// reproducible rather than depending on NumPy's random state.
-std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
-                           std::size_t crop_offset = 0);
-
-// Native CLAP, CLaMP3, MERT-v1, MERT2, MuQ or MuQ-MuLan, selected from GGUF metadata. Weights are
-// memory-mapped on POSIX platforms; MuQ F16 weights expand to owned F32 buffers.
-// Each call embeds one item; methods on the same instance are not thread-safe.
-// CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
-// pooled projections. Its mandatory bundled MERT-v1-95M frontend handles
-// waveform preprocessing internally; no separate feature-input API is exposed.
-// MERT-v1 audio_frames() exposes final-layer frames; audio() mean-pools them.
-// Neither is the all-layer CLaMP3 representation: use clamp3_features() for that.
-// MERT-v2-FullSong and MuQ audio() mean-pool the complete input's final frames;
-// audio_frames() returns the unpooled sequence (approximately 25 Hz for published weights).
-// MuQ-MuLan text() returns a single L2-normalized joint embedding. audio() uses
-// successive 10 s clips, one prefix slice for a tail, per-clip normalization and
-// an unweighted average without final normalization. No amplitude normalization.
-// MuLan supports neither frame/features APIs nor crop offsets; published width
-// is 512. Its text string API rejects over-context input without truncation.
-class Model {
-public:
-    explicit Model(const std::string &gguf_path, int threads = 0);
-    ~Model();
-    Model(Model &&) noexcept;
-    Model &operator=(Model &&) noexcept;
-    Model(const Model &) = delete;
-    Model &operator=(const Model &) = delete;
-
-    std::vector<int> tokenize(const std::string &utf8, std::size_t max_length = 512) const;
-    std::vector<float> text(const std::vector<int> &token_ids);
-    std::vector<float> text(const std::string &utf8);
-    // Mono waveform input; automatically resampled for the model.
-    // CLaMP3 GGUFs must contain the bundled MERT-v1-95M frontend.
-    std::vector<float> audio(const std::vector<float> &pcm, int sample_rate = 48000,
-                              std::size_t crop_offset = 0);
-    AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);
-    // MERT-v1 CLaMP3 --mean_features preprocessing: normalize the entire mono
-    // recording, split into non-overlapping 5 s windows, discard a final window
-    // shorter than 1 s, and average time then all hidden states (embedding +
-    // transformer layers). Returns one feature vector per retained window.
-    // At least one second is required. Resampling uses the native audio helper.
-    AudioFrames clamp3_features(const std::vector<float> &pcm, int sample_rate = 24000);
-    int audio_sample_rate() const;
-    int projection_dimension() const;
-private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+struct clap_audio_params {
+    int32_t sample_rate;
+    size_t crop_offset; /* Input offset in samples at the model's native rate. */
 };
-} // namespace clap
+struct clap_float_buffer { float *data; size_t size; };
+struct clap_token_buffer { int32_t *data; size_t size; };
+struct clap_audio { float *samples; size_t n_samples; int32_t sample_rate; };
+/* Time-major values: n_values == frames * dimension. */
+struct clap_audio_frames {
+    float *values;
+    size_t n_values;
+    int32_t frames;
+    int32_t dimension;
+};
+struct clap_complex { double real; double imag; };
+
+/* Lifetime and concurrency contract:
+ * - Strings are NUL-terminated UTF-8 (paths use the platform's native narrow
+ *   path encoding). Inputs are borrowed for the duration of a call only.
+ * - Initialize output structs to {0}. Status-returning functions reset outputs
+ *   before validation, leave them empty on failure, and allocate on success.
+ *   Free previous results BEFORE reusing an output. Inputs and outputs must
+ *   not alias. Never free or resize library buffers with the caller's allocator.
+ * - Use the matching *_free below. Free accepts NULL, resets buffer structs,
+ *   and is repeatable on the same reset struct. Do not copy owning structs
+ *   and free both copies. Model handles must be freed exactly once.
+ * - All calls on the same model are serialized internally (including getters
+ *   and tokenization). Different handles and standalone helpers may run in
+ *   parallel. The caller must prevent model_free from overlapping any use of
+ *   that handle, and must synchronize access to its own inputs/outputs.
+ * - No C++ exception crosses this API. Errors are per calling thread, in a
+ *   fixed-size buffer (messages may be truncated). clap_last_error() is borrowed
+ *   until the next status-returning call on that thread or thread exit; success
+ *   clears it.
+ *   Default-parameter functions, frees and clap_last_error do not change it.
+ * - NULL required pointers, nonpositive rates, non-finite PCM, empty or >1 GiB
+ *   PCM/token/FFT inputs are invalid arguments. Unsupported model capabilities,
+ *   malformed files and inference failures return CLAP_STATUS_ERROR. A valid
+ *   pointer must address the entire declared input; dangling handles and invalid
+ *   pointers cannot be diagnosed. */
+CLAP_API const char *clap_last_error(void);
+CLAP_API struct clap_model_params clap_model_default_params(void);
+CLAP_API struct clap_audio_params clap_audio_default_params(void); /* 48000 Hz, crop 0 */
+
+/* Native CLAP, CLaMP3, MERT-v1/v2, MuQ or MuQ-MuLan, selected by GGUF metadata.
+ * Weights are memory-mapped where supported; retain the file for handle lifetime.
+ * CLaMP3 requires its bundled MERT-v1 frontend. */
+CLAP_API enum clap_status clap_model_load(const char *gguf_path,
+    struct clap_model_params params, struct clap_model **out_model);
+CLAP_API void clap_model_free(struct clap_model *model);
+CLAP_API enum clap_status clap_model_audio_sample_rate(struct clap_model *model, int32_t *out_rate);
+CLAP_API enum clap_status clap_model_projection_dimension(struct clap_model *model, int32_t *out_dimension);
+/* Tokenization truncates according to the model tokenizer's max_length policy;
+ * use 512 for the old default. Models without text encoders reject these calls.
+ * The string inference call uses the model context (MuLan rejects overflow). */
+CLAP_API enum clap_status clap_model_tokenize(struct clap_model *model, const char *utf8,
+    size_t max_length, struct clap_token_buffer *out_tokens);
+CLAP_API enum clap_status clap_model_text_tokens(struct clap_model *model, const int32_t *tokens,
+    size_t n_tokens, struct clap_float_buffer *out_embedding);
+CLAP_API enum clap_status clap_model_text(struct clap_model *model, const char *utf8,
+    struct clap_float_buffer *out_embedding);
+/* Mono PCM, automatically resampled. CLAP projections are unit-normalized;
+ * CLaMP3 projections are unnormalized. MERT/MuQ mean-pool final frames.
+ * MuLan averages individually normalized 10 s clips without final normalization.
+ * Crop offsets are supported by CLAP only; waveform encoders process all input. */
+CLAP_API enum clap_status clap_model_audio(struct clap_model *model, const float *pcm,
+    size_t n_samples, struct clap_audio_params params, struct clap_float_buffer *out_embedding);
+/* Final-layer waveform-encoder frames (MERT-v1/v2, MuQ); not joint CLAP/MuLan. */
+CLAP_API enum clap_status clap_model_audio_frames(struct clap_model *model, const float *pcm,
+    size_t n_samples, int32_t sample_rate, struct clap_audio_frames *out_frames);
+/* Standalone MERT-v1 CLaMP3 preprocessing: whole-recording normalization,
+ * non-overlapping 5 s windows, drop tails <1 s, mean of time and ALL layers.
+ * At least one second is required; resamples to 24 kHz automatically. */
+CLAP_API enum clap_status clap_model_clamp3_features(struct clap_model *model, const float *pcm,
+    size_t n_samples, int32_t sample_rate, struct clap_audio_frames *out_frames);
+
+/* Decode WAV/MP3/FLAC by contents, averaging channels, preserving source rate. */
+CLAP_API enum clap_status clap_audio_decode(const char *path, struct clap_audio *out_audio);
+/* Linear resampling with eighth-order anti-alias LPF, causal startup latency.
+ * Output length ceil(n_samples * target_rate / source_rate); same-rate identity. */
+CLAP_API enum clap_status clap_audio_resample(const float *pcm, size_t n_samples,
+    int32_t source_rate, int32_t target_rate, struct clap_audio *out_audio);
+/* 48 kHz PCM -> [1001,64] Slaney log-power mel. Short clips repeatpad;
+ * long clips crop ten seconds at params.crop_offset. Rate must be 48000. */
+CLAP_API enum clap_status clap_log_mel(const float *pcm, size_t n_samples,
+    struct clap_audio_params params, struct clap_float_buffer *out_features);
+/* In-place, unnormalized forward FFT with double intermediates. Nonzero
+ * power-of-two length only. The input remains unchanged on failure. */
+CLAP_API enum clap_status clap_fft(struct clap_complex *values, size_t count);
+
+CLAP_API void clap_float_buffer_free(struct clap_float_buffer *buffer);
+CLAP_API void clap_token_buffer_free(struct clap_token_buffer *buffer);
+CLAP_API void clap_audio_free(struct clap_audio *audio);
+CLAP_API void clap_audio_frames_free(struct clap_audio_frames *frames);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+#endif /* CLAP_H */

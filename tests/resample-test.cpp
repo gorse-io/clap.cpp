@@ -1,4 +1,4 @@
-#include "clap.h"
+#include "clap-internal.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>

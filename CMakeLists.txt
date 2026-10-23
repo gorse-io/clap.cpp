@@ -31,7 +31,15 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio/miniaudio.h")
 endif()
 
 
-add_subdirectory(ggml EXCLUDE_FROM_ALL)
+include(GNUInstallDirs)
+# Installed CLIs and shared libraries must resolve their sibling dependencies,
+# independently of the build tree or LD_LIBRARY_PATH.
+if(APPLE)
+    set(CMAKE_INSTALL_RPATH "@loader_path;@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+elseif(UNIX)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif()
+add_subdirectory(ggml)
 add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
@@ -41,13 +49,14 @@ add_subdirectory(src)
 
 add_executable(clap-model examples/embedding/embedding.cpp)
 target_link_libraries(clap-model PRIVATE clap CLI11::CLI11 nlohmann_json::nlohmann_json)
+target_compile_features(clap-model PRIVATE cxx_std_17)
 set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
 
 # The CLI target differs from the core library target, while its executable
 # keeps the existing "clap" name and command-line behavior.
 add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
 target_compile_features(clap-cli PRIVATE cxx_std_17)
-target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
+target_link_libraries(clap-cli PRIVATE clap ggml CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
 set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
 
 if(MSVC)
@@ -58,7 +67,31 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(clap-c-api-test tests/c-api-test.c)
+    set_target_properties(clap-c-api-test PROPERTIES
+        C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX)
+    if(MSVC)
+        target_compile_options(clap-c-api-test PRIVATE /W4 /WX)
+    else()
+        target_compile_options(clap-c-api-test PRIVATE -Wall -Wextra -Werror -pedantic-errors)
+    endif()
+    target_link_libraries(clap-c-api-test PRIVATE clap)
+    add_test(NAME clap_c_api COMMAND clap-c-api-test)
+    if(NOT BUILD_SHARED_LIBS OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Executable operator-new interposition is reliable for the static
+        # library and Linux ELF shared libraries, not Windows DLLs/macOS dylibs.
+        add_executable(clap-c-api-oom-test tests/c-api-oom-test.cpp)
+        target_compile_features(clap-c-api-oom-test PRIVATE cxx_std_17)
+        target_link_libraries(clap-c-api-oom-test PRIVATE clap)
+        add_test(NAME clap_c_api_oom COMMAND clap-c-api-oom-test)
+    endif()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    if(BUILD_SHARED_LIBS)
+        add_test(NAME clap_c_api_ctypes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/c_api.py"
+                "$<TARGET_FILE:clap>" "$<TARGET_FILE:clap-model>" "$<TARGET_FILE:clap-c-api-test>")
+        set_tests_properties(clap_c_api_ctypes PROPERTIES TIMEOUT 120)
+    endif()
     add_test(NAME clap_conversion_imports
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(clap_conversion_imports PROPERTIES TIMEOUT 30)
@@ -316,4 +349,20 @@ if(BUILD_TESTING)
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
 endif()
 
-install(TARGETS clap-cli clap-model RUNTIME DESTINATION bin)
+# The implementation and numerical test runners deliberately use the private
+# C++ header. Do not expose its directory as a clap target usage requirement.
+if(BUILD_TESTING)
+    foreach(target IN ITEMS clap-resample-test clap-audio-test mert2-fft-test
+            clap-model-test feature-input-test clap-q8-test all-quantization-test
+            tensor-ops-test clamp3-model-test clap-unigram-test clamp3-bundled-test
+            mert-model-test mert2-model-test muq-model-test muq-mulan-model-test)
+        if(TARGET ${target})
+            target_link_libraries(${target} PRIVATE ggml)
+            target_compile_features(${target} PRIVATE cxx_std_17)
+            target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        endif()
+    endforeach()
+endif()
+
+include(cmake/install.cmake)
+install(TARGETS clap-cli clap-model RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

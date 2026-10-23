@@ -14,7 +14,7 @@
 #define MA_NO_GENERATION
 #include "miniaudio.h"
 
-#include "clap.h"
+#include "clap-internal.h"
 
 #include <stdexcept>
 #include <algorithm>

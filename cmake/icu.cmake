@@ -19,7 +19,8 @@ message(STATUS "Using bundled ICU 78.3 (static Unicode/regex-only build)")
 add_library(clap-icu-options INTERFACE)
 target_compile_features(clap-icu-options INTERFACE cxx_std_17)
 target_include_directories(clap-icu-options SYSTEM INTERFACE
-    "${CLAP_ICU_SOURCE}/common" "${CLAP_ICU_SOURCE}/i18n")
+    "$<BUILD_INTERFACE:${CLAP_ICU_SOURCE}/common>"
+    "$<BUILD_INTERFACE:${CLAP_ICU_SOURCE}/i18n>")
 target_compile_definitions(clap-icu-options INTERFACE
     U_STATIC_IMPLEMENTATION
     U_CHARSET_IS_UTF8=1
@@ -66,4 +67,8 @@ add_library(ICU::data ALIAS clap-icu-data)
 add_library(ICU::uc ALIAS clap-icu-uc)
 add_library(ICU::i18n ALIAS clap-icu-i18n)
 
+if(NOT BUILD_SHARED_LIBS)
+    install(TARGETS clap-icu-options clap-icu-data clap-icu-uc clap-icu-i18n
+        EXPORT clap-targets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 install(FILES "${CLAP_ICU_SOURCE}/../../LICENSE" DESTINATION share/licenses/clap/icu)
