@@ -1,0 +1,39 @@
+name: Python
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install build and test dependencies
+        run: python -m pip install build pytest numpy
+      # build's default path builds the wheel FROM the sdist, exercising both.
+      - name: Build source distribution and CPU wheel
+        run: python -m build python --outdir dist
+      - name: Install wheel
+        run: python -m pip install --no-deps --no-index --find-links dist clap-cpp
+      - name: Test installed CPU bindings
+        run: python -m pytest python/tests -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-${{ matrix.os }}
+          path: dist/*
