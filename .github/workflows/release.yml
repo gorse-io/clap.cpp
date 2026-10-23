@@ -73,6 +73,14 @@ jobs:
           gh release upload "$RELEASE_TAG" "$ASSET" --clobber
 
   build-cuda:
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/${{ matrix.preset }}/
+      SCCACHE_GHA_ENABLED: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +106,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash
+        shell: ${{ startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,8 +131,21 @@ jobs:
           $cuda = (scoop prefix cuda).Replace('\', '/')
           "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "$cuda/bin/${{ matrix.cuda_arch }}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Set up Windows build environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.cuda_arch }}
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: >-
+          cmake --preset ${{ matrix.preset }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel 1
 
@@ -137,13 +158,14 @@ jobs:
           BINARY: ${{ matrix.binary }}
         run: |
           $stage = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/clap-cuda"
-          Copy-Item 'build/Release/clap.exe' "$stage/clap.exe"
+          Copy-Item 'build/clap.exe' "$stage/clap.exe"
           foreach ($dll in @('cublas64_13.dll', 'cublasLt64_13.dll')) {
             Copy-Item "$env:CUDA_PATH/bin/${{ matrix.cuda_arch }}/$dll" $stage
           }
           Compress-Archive -Path "$stage/*" -DestinationPath $env:BINARY
 
       - name: Upload release asset
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -217,6 +239,14 @@ jobs:
           gh release upload "$RELEASE_TAG" "$ASSET" --clobber
 
   build-rocm:
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/${{ matrix.preset }}/
+      SCCACHE_GHA_ENABLED: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     strategy:
       fail-fast: false
       matrix:
@@ -232,7 +262,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash
+        shell: ${{ startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -269,12 +299,21 @@ jobs:
           Invoke-WebRequest -Uri 'https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-25.Q3-WinSvr2022-For-HIP.exe' -OutFile "$env:RUNNER_TEMP/hip-sdk.exe"
           Start-Process "$env:RUNNER_TEMP/hip-sdk.exe" -ArgumentList '-install' -NoNewWindow -Wait
           'ROCM_PATH=C:/Program Files/AMD/ROCm/6.4' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: >-
+          cmake --preset ${{ matrix.preset }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_HIP_COMPILER_LAUNCHER=sccache
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel 1
       # Both assets require the matching system HIP/BLAS runtime; see README.
       - name: Upload release asset
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

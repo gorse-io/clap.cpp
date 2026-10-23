@@ -57,11 +57,13 @@
     {
       "name": "windows-amd64-cuda13.4",
       "inherits": "release-base",
-      "generator": "Visual Studio 17 2022",
-      "architecture": "x64",
+      "generator": "Ninja",
       "cacheVariables": {
-        "CMAKE_GENERATOR_TOOLSET": "cuda=$env{CUDA_PATH}",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_CUDA_COMPILER": "$env{CUDA_PATH}/bin/nvcc.exe",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
         "GGML_STATIC": "ON"
@@ -70,12 +72,13 @@
     {
       "name": "windows-arm64-cuda13.4",
       "inherits": "release-base",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "ARM64",
+      "generator": "Ninja",
       "cacheVariables": {
-        "CMAKE_GENERATOR_TOOLSET": "cuda=$env{CUDA_PATH}",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_CUDA_COMPILER": "$env{CUDA_PATH}/bin/nvcc.exe",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
-        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real",
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real",
         "GGML_NATIVE": "ON",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
