@@ -1,5 +1,5 @@
 #include "models.h"
-#include "mert2-fft.h"
+#include "clap.h"
 
 #include <stdexcept>
 #include <algorithm>
@@ -140,7 +140,7 @@ Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
     const auto *filters = loader.weight("feature_extractor.mel_scale.fb");
     const auto *mean = loader.weight("feature_extractor.mel_mean");
     const auto *standard_deviation = loader.weight("feature_extractor.mel_std");
-    std::vector<std::complex<float>> spectrum(fft_size);
+    std::vector<std::complex<double>> spectrum(fft_size);
     std::vector<float> power(frequencies);
     for (int frame = 0; frame < frames; ++frame) {
         for (int index = 0; index < fft_size; ++index) {
@@ -149,9 +149,10 @@ Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
             if (source >= static_cast<int>(pcm.size())) source = 2 * static_cast<int>(pcm.size()) - 2 - source;
             spectrum[index] = pcm[source] * scalar(window, index);
         }
-        mert2_fft(spectrum);
+        clap::fft(spectrum);
         for (int frequency = 0; frequency < frequencies; ++frequency)
-            power[frequency] = std::norm(spectrum[frequency]);
+            // Preserve MERT2's F32 FFT output rounding before power computation.
+            power[frequency] = std::norm(static_cast<std::complex<float>>(spectrum[frequency]));
         for (int bin = 0; bin < bins; ++bin) {
             float value = 0;
             for (int frequency = 0; frequency < frequencies; ++frequency)

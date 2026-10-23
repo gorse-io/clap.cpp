@@ -1,5 +1,8 @@
 // Exercise the production FFT against a double direct DFT, not another FFT.
-#include "models/mert2-fft.h"
+#include "clap.h"
+#include <algorithm>
+#include <complex>
+#include <vector>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -13,7 +16,9 @@ int main() {
         const float window=static_cast<float>(.5-.5*std::cos(2*pi*i/n));
         input[i]=pcm*window;
     }
-    auto actual=input;clap::detail::mert2_fft(actual);
+    std::vector<std::complex<double>> transformed(input.begin(), input.end());
+    clap::fft(transformed);
+    std::vector<std::complex<float>> actual(transformed.begin(), transformed.end());
     double complex_error=0,log_error=0;
     for(std::size_t k=0;k<=n/2;++k) {
         std::complex<double> reference{};
@@ -26,4 +31,12 @@ int main() {
     }
     std::cout<<"FFT complex max_abs="<<complex_error<<" log_power max_abs_db="<<log_error<<'\n';
     if(complex_error>2e-5 || log_error>1e-3) return 1;
+    std::vector<std::complex<double>> singleton{{2, -3}};
+    clap::fft(singleton);
+    if (singleton[0] != std::complex<double>(2, -3)) return 1;
+    for (std::size_t size : {std::size_t{0}, std::size_t{3}}) {
+        std::vector<std::complex<double>> invalid(size);
+        try { clap::fft(invalid); return 1; }
+        catch (const std::invalid_argument &) {}
+    }
 }

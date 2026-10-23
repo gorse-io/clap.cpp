@@ -1,4 +1,5 @@
 #include "models.h"
+#include "clap.h"
 #include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>
@@ -16,25 +17,7 @@ float sigmoid(float value) {
     const float e = std::exp(value); return e / (1.0f + e);
 }
 void silu(Matrix &x) { for (float &v : x.data) v *= sigmoid(v); }
-void fft(std::vector<std::complex<double>> &x) {
-    const size_t n = x.size();
-    for (size_t i = 1, j = 0; i < n; ++i) {
-        size_t bit = n >> 1;
-        for (; j & bit; bit >>= 1) j ^= bit;
-        j ^= bit; if (i < j) std::swap(x[i], x[j]);
-    }
-    for (size_t width = 2; width <= n; width <<= 1) {
-        const auto root = std::polar(1.0, -2.0 * pi / static_cast<double>(width));
-        for (size_t start = 0; start < n; start += width) {
-            std::complex<double> factor(1.0f);
-            for (size_t i = 0; i < width / 2; ++i) {
-                const auto a = x[start + i], b = x[start + i + width / 2] * factor;
-                x[start + i] = a + b; x[start + i + width / 2] = a - b;
-                factor *= root;
-            }
-        }
-    }
-}
+
 }
 MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), ops(source, threads) {
     load_arch_hparams(); load_arch_tensors();
@@ -145,7 +128,7 @@ Matrix MuqModel::frontend(const std::vector<float> &pcm) const {
             if (source >= static_cast<int>(pcm.size())) source = 2 * static_cast<int>(pcm.size()) - 2 - source;
             spectrum[i] = pcm[source] * scalar(window, i);
         }
-        fft(spectrum);
+        clap::fft(spectrum);
         for (int i = 0; i < 1025; ++i) power[i] = std::norm(spectrum[i]);
         for (int bin = 0; bin < 128; ++bin) {
             float value = 0;
