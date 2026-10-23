@@ -13,6 +13,9 @@ dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest>=7", "mypy>=1.8", "typing_extensions>=4.2"]
+cuda = ["clap-cpp-cuda==0.1.0"]
+rocm = ["clap-cpp-rocm==0.1.0"]
+vulkan = ["clap-cpp-vulkan==0.1.0"]
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"
