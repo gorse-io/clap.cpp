@@ -78,9 +78,15 @@ jobs:
       matrix:
         include:
           - os: windows-2022
-            asset: clap-windows-amd64-cuda12.9.zip
+            asset: clap-windows-amd64-cuda13.4.zip
             binary: build/clap-cuda.zip
-            preset: windows-amd64-cuda12.9
+            preset: windows-amd64-cuda13.4
+            cuda_arch: x64
+          - os: windows-11-arm
+            asset: clap-windows-arm64-cuda13.4.zip
+            binary: build/clap-cuda.zip
+            preset: windows-arm64-cuda13.4
+            cuda_arch: arm64
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cuda12.9
             binary: build/clap
@@ -98,12 +104,25 @@ jobs:
         with:
           submodules: recursive
       - name: Install CUDA 12.9 build dependencies
+        if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: '12.9.2'
           method: network
-          sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "cudart", "cublas", "cublas_dev", "visual_studio_integration"]' || '["nvcc"]' }}
-          non-cuda-sub-packages: ${{ runner.os == 'Linux' && '["libcublas-dev"]' || '[]' }}
+          sub-packages: '["nvcc"]'
+          non-cuda-sub-packages: '["libcublas-dev"]'
+      - name: Install Windows CUDA toolkit
+        if: runner.os == 'Windows'
+        uses: MinoruSekine/setup-scoop@v5.0.1
+        with:
+          apps: cuda@13.4.3
+      - name: Configure Windows CUDA environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cuda = (scoop prefix cuda).Replace('\', '/')
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$cuda/bin/${{ matrix.cuda_arch }}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -119,8 +138,8 @@ jobs:
         run: |
           $stage = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/clap-cuda"
           Copy-Item 'build/Release/clap.exe' "$stage/clap.exe"
-          foreach ($dll in @('cublas64_12.dll', 'cublasLt64_12.dll')) {
-            Copy-Item "$env:CUDA_PATH/bin/$dll" $stage
+          foreach ($dll in @('cublas64_13.dll', 'cublasLt64_13.dll')) {
+            Copy-Item "$env:CUDA_PATH/bin/${{ matrix.cuda_arch }}/$dll" $stage
           }
           Compress-Archive -Path "$stage/*" -DestinationPath $env:BINARY
 
@@ -198,7 +217,19 @@ jobs:
           gh release upload "$RELEASE_TAG" "$ASSET" --clobber
 
   build-rocm:
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: clap-linux-amd64-rocm
+            binary: build/clap
+            preset: linux-amd64-rocm
+          - os: windows-2022
+            asset: clap-windows-amd64-rocm.exe
+            binary: build/clap.exe
+            preset: windows-amd64-rocm
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
@@ -207,30 +238,49 @@ jobs:
         with:
           submodules: recursive
       - name: Add ROCm 6.4.3 package repository
+        if: runner.os == 'Linux'
         run: |
           curl -fsSL --retry 3 https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/rocm.gpg > /dev/null
           echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4.3 jammy main' | sudo tee /etc/apt/sources.list.d/rocm.list
           printf 'Package: *\nPin: origin repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm
           sudo apt-get update
       - name: Install ROCm build dependencies
+        if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: hip-dev hipblas-dev rocblas-dev rocm-device-libs
           version: rocm-6.4.3-ubuntu-22.04-v2
       - name: Restore ROCm installation prefix
+        if: runner.os == 'Linux'
         run: |
           # The APT cache restores package files, not rocm-core's postinst link.
           sudo ln -sfn /opt/rocm-6.4.3 /opt/rocm
           test -x /opt/rocm/llvm/bin/clang++
+      - name: Set up Windows build environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Install Windows HIP SDK 6.4.2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # AMD's 25.Q3 Server 2022 installer supplies HIP SDK 6.4.2.
+          Invoke-WebRequest -Uri 'https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-25.Q3-WinSvr2022-For-HIP.exe' -OutFile "$env:RUNNER_TEMP/hip-sdk.exe"
+          Start-Process "$env:RUNNER_TEMP/hip-sdk.exe" -ArgumentList '-install' -NoNewWindow -Wait
+          'ROCM_PATH=C:/Program Files/AMD/ROCm/6.4' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Configure
-        run: cmake --preset linux-amd64-rocm
+        run: cmake --preset ${{ matrix.preset }}
       - name: Build
         run: cmake --build build --config Release --target clap-cli --parallel 1
+      # Both assets require the matching system HIP/BLAS runtime; see README.
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
         run: |
-          mv build/clap clap-linux-amd64-rocm
-          gh release upload "$RELEASE_TAG" clap-linux-amd64-rocm --clobber
+          mv "$BINARY" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber

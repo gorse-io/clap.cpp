@@ -113,6 +113,14 @@ cmake -S . -B build-cuda -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-cuda --config Release --target clap-cli --parallel 2
 ```
 
+Windows amd64 and arm64 releases use CUDA 13.4.3 installed with Scoop
+(`cuda@13.4.3`). Their `clap-windows-*-cuda13.4.zip` assets contain `clap.exe`
+and the matching cuBLAS/cuBLASLt runtime DLLs. The Windows presets select the
+Scoop toolkit with CMake's `cuda=` toolset option; Linux CUDA releases remain
+on CUDA 12.9. The ARM64 CUDA preset uses MSVC (required by the Windows CUDA
+host toolchain), enables ggml's native CPU feature probing, and explicitly
+sets GPU architectures so a build host does not need an NVIDIA GPU.
+
 This adds a CUDA-enabled release build, not new model-backend selection: native
 model linear dispatch remains CPU/optional Vulkan as documented above, and the
 released `clap` embedding/server interfaces still return dummy embeddings.
@@ -132,9 +140,23 @@ cmake --preset linux-amd64-rocm
 cmake --build build --config Release --target clap-cli --parallel 1
 ```
 
-The executable requires the ROCm 6.4.3 HIP, hipBLAS, and rocBLAS shared libraries
-under `/opt/rocm/lib` at runtime; they are not bundled. ggml does not support
-static ROCm linking. GPU execution also requires a compatible AMD GPU and driver.
+The Linux executable requires the ROCm 6.4.3 HIP, hipBLAS, and rocBLAS shared
+libraries under `/opt/rocm/lib` at runtime; they are not bundled.
+
+On Windows amd64, `clap-windows-amd64-rocm.exe` is built on Windows Server 2022
+with AMD HIP SDK 6.4.2 (the official 25.Q3 installer). Its Ninja preset uses the
+SDK's Clang compilers and explicitly targets `gfx1030`, `gfx1100`, `gfx1101`,
+`gfx1102`, `gfx1151`, `gfx1200`, and `gfx1201`, without detecting a local GPU.
+To build, use an x64 Visual Studio developer shell with Ninja available, set
+`ROCM_PATH` to `C:/Program Files/AMD/ROCm/6.4`, and configure with
+`cmake --preset windows-amd64-rocm`. To run the release executable, install
+[AMD HIP SDK 6.4.2](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html)
+including its HIP, hipBLAS, and rocBLAS runtime libraries, and add
+`C:\Program Files\AMD\ROCm\6.4\bin` to `PATH`. The DLLs and rocBLAS library data
+are not bundled; retain the SDK's installed directory layout.
+
+ggml does not support static ROCm linking. GPU execution also requires a
+compatible AMD GPU and driver.
 This adds a release build, not HIP model dispatch: native model linear layers
 remain CPU/optional Vulkan, and the released `clap` embedding/server interfaces
 still return dummy embeddings. No ROCm inference or GPU tests are run.

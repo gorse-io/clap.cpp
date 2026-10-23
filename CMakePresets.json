@@ -55,12 +55,28 @@
       }
     },
     {
-      "name": "windows-amd64-cuda12.9",
+      "name": "windows-amd64-cuda13.4",
       "inherits": "release-base",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
+      "toolset": "cuda=$env{CUDA_PATH}",
       "cacheVariables": {
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "GGML_METAL": "OFF",
+        "GGML_CUDA": "ON",
+        "GGML_STATIC": "ON"
+      }
+    },
+    {
+      "name": "windows-arm64-cuda13.4",
+      "inherits": "release-base",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "ARM64",
+      "toolset": "cuda=$env{CUDA_PATH}",
+      "cacheVariables": {
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real;121a-real",
+        "GGML_NATIVE": "ON",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
         "GGML_STATIC": "ON"
@@ -159,6 +175,21 @@
         "CMAKE_HIP_COMPILER": "/opt/rocm/llvm/bin/clang++",
         "CMAKE_HIP_ARCHITECTURES": "gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201",
         "CMAKE_BUILD_RPATH": "/opt/rocm/lib",
+        "GGML_METAL": "OFF",
+        "GGML_HIP": "ON",
+        "GGML_HIP_RCCL": "OFF",
+        "GGML_STATIC": "OFF"
+      }
+    },
+    {
+      "name": "windows-amd64-rocm",
+      "inherits": "release-base",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "$env{ROCM_PATH}/bin/clang.exe",
+        "CMAKE_CXX_COMPILER": "$env{ROCM_PATH}/bin/clang++.exe",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "GPU_TARGETS": "gfx1030;gfx1100;gfx1101;gfx1102;gfx1151;gfx1200;gfx1201",
         "GGML_METAL": "OFF",
         "GGML_HIP": "ON",
         "GGML_HIP_RCCL": "OFF",
