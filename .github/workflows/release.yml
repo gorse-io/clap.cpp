@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-cpu:
     strategy:
       fail-fast: false
       matrix:
@@ -16,35 +16,33 @@ jobs:
           - os: macos-15
             asset: clap-macos-arm64
             binary: build/clap
-            cmake_args: -DCMAKE_OSX_ARCHITECTURES=arm64 -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+            preset: macos-arm64
           - os: windows-2022
             asset: clap-windows-amd64-cpu.exe
             binary: build/Release/clap.exe
-            cmake_args: -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+            preset: windows-amd64-cpu
           - os: windows-11-arm
             asset: clap-windows-arm64-cpu.exe
             binary: build/Release/clap.exe
-            cmake_args: -A ARM64 -T ClangCL -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DGGML_METAL=OFF
+            preset: windows-arm64-cpu
           - os: ubuntu-22.04
             asset: clap-linux-amd64-cpu
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF
+            preset: linux-amd64-cpu
           - os: ubuntu-22.04-arm
             asset: clap-linux-arm64-cpu
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF
-          - os: ubuntu-22.04
-            asset: clap-linux-amd64-cuda12.9
-            binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_CUDA=ON -DGGML_STATIC=ON
+            preset: linux-arm64-cpu
           - os: ubuntu-24.04
-            asset: clap-linux-amd64-vulkan
+            asset: clap-linux-riscv64-cpu
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_VULKAN=ON
-          - os: ubuntu-24.04-arm
-            asset: clap-linux-arm64-vulkan
+            target: riscv64
+            preset: linux-riscv64-cpu
+          - os: ubuntu-24.04
+            asset: clap-linux-loong64-cpu
             binary: build/clap
-            cmake_args: -DGGML_METAL=OFF -DGGML_VULKAN=ON
+            target: loongarch64
+            preset: linux-loong64-cpu
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -53,38 +51,269 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Install cross-compilation tools
+        if: matrix.target != ''
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: gcc-14-${{ matrix.target }}-linux-gnu g++-14-${{ matrix.target }}-linux-gnu
+          version: cross-${{ matrix.os }}-${{ matrix.target }}-gcc14-v1
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build build --config Release --target clap-cli --parallel
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mv "$BINARY" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber
+
+  build-cuda:
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/${{ matrix.preset }}/
+      SCCACHE_GHA_ENABLED: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            asset: clap-windows-amd64-cuda13.4.zip
+            binary: build/clap-cuda.zip
+            preset: windows-amd64-cuda13.4
+            cuda_arch: x64
+          - os: windows-11-arm
+            asset: clap-windows-arm64-cuda13.4.zip
+            binary: build/clap-cuda.zip
+            preset: windows-arm64-cuda13.4
+            cuda_arch: arm64
+          - os: ubuntu-22.04
+            asset: clap-linux-amd64-cuda12.9
+            binary: build/clap
+            preset: linux-amd64-cuda12.9
+          - os: ubuntu-22.04-arm
+            asset: clap-linux-arm64-cuda12.9
+            binary: build/clap
+            preset: linux-arm64-cuda12.9
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Install CUDA 12.9 build dependencies
-        if: contains(matrix.asset, '-cuda')
+        if: runner.os == 'Linux'
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: '12.9.2'
           method: network
           sub-packages: '["nvcc"]'
           non-cuda-sub-packages: '["libcublas-dev"]'
-      - name: Install Vulkan build dependencies
-        if: endsWith(matrix.asset, '-vulkan')
+      - name: Install Windows CUDA toolkit
+        if: runner.os == 'Windows'
+        uses: MinoruSekine/setup-scoop@v5.0.1
+        with:
+          apps: cuda@13.4.3
+      - name: Configure Windows CUDA environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cuda = (scoop prefix cuda).Replace('\', '/')
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$cuda/bin/${{ matrix.cuda_arch }}" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Set up Windows build environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.cuda_arch }}
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
+      - name: Configure
+        run: >-
+          cmake --preset ${{ matrix.preset }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
+      - name: Build
+        run: cmake --build build --config Release --target clap-cli --parallel 1
+
+      # CUDA on Windows has no static cuBLAS library. Ship its runtime DLLs
+      # beside clap.exe rather than publishing an unusable standalone binary.
+      - name: Package Windows CUDA release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          BINARY: ${{ matrix.binary }}
+        run: |
+          $stage = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/clap-cuda"
+          Copy-Item 'build/clap.exe' "$stage/clap.exe"
+          foreach ($dll in @('cublas64_13.dll', 'cublasLt64_13.dll')) {
+            Copy-Item "$env:CUDA_PATH/bin/${{ matrix.cuda_arch }}/$dll" $stage
+          }
+          Compress-Archive -Path "$stage/*" -DestinationPath $env:BINARY
+
+      - name: Upload release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mv "$BINARY" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber
+
+  build-vulkan:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            asset: clap-windows-amd64-vulkan.exe
+            binary: build/Release/clap.exe
+            preset: windows-amd64-vulkan
+          - os: windows-11-arm
+            asset: clap-windows-arm64-vulkan.exe
+            binary: build/Release/clap.exe
+            preset: windows-arm64-vulkan
+          - os: ubuntu-24.04
+            asset: clap-linux-amd64-vulkan
+            binary: build/clap
+            preset: linux-amd64-vulkan
+          - os: ubuntu-24.04-arm
+            asset: clap-linux-arm64-vulkan
+            binary: build/clap
+            preset: linux-arm64-vulkan
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Linux Vulkan build dependencies
+        if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@v1.6.3
         with:
           packages: libvulkan-dev glslc spirv-headers
           version: vulkan-${{ matrix.os }}-${{ runner.arch }}-v1
+      - name: Install Windows Vulkan SDK
+        if: runner.os == 'Windows'
+        uses: MinoruSekine/setup-scoop@v5.0.1
+        with:
+          apps: vulkan
+      - name: Configure Windows Vulkan SDK environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdk = scoop prefix vulkan
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$sdk/Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build build --config Release --target clap-cli --parallel
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BINARY: ${{ matrix.binary }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mv "$BINARY" "$ASSET"
+          gh release upload "$RELEASE_TAG" "$ASSET" --clobber
+
+  build-rocm:
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/${{ matrix.preset }}/
+      SCCACHE_GHA_ENABLED: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: clap-linux-amd64-rocm
+            binary: build/clap
+            preset: linux-amd64-rocm
+          - os: windows-2022
+            asset: clap-windows-amd64-rocm.exe
+            binary: build/clap.exe
+            preset: windows-amd64-rocm
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ startsWith(matrix.os, 'windows-') && 'pwsh' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Add ROCm 6.4.3 package repository
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL --retry 3 https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/rocm.gpg > /dev/null
+          echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4.3 jammy main' | sudo tee /etc/apt/sources.list.d/rocm.list
+          printf 'Package: *\nPin: origin repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm
+          sudo apt-get update
+      - name: Install ROCm build dependencies
+        if: runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: hip-dev hipblas-dev rocblas-dev rocm-device-libs
+          version: rocm-6.4.3-ubuntu-22.04-v2
+      - name: Restore ROCm installation prefix
+        if: runner.os == 'Linux'
+        run: |
+          # The APT cache restores package files, not rocm-core's postinst link.
+          sudo ln -sfn /opt/rocm-6.4.3 /opt/rocm
+          test -x /opt/rocm/llvm/bin/clang++
+      - name: Set up Windows build environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Install Windows HIP SDK 6.4.2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # AMD's 25.Q3 Server 2022 installer supplies HIP SDK 6.4.2.
+          Invoke-WebRequest -Uri 'https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-25.Q3-WinSvr2022-For-HIP.exe' -OutFile "$env:RUNNER_TEMP/hip-sdk.exe"
+          Start-Process "$env:RUNNER_TEMP/hip-sdk.exe" -ArgumentList '-install' -NoNewWindow -Wait
+          'ROCM_PATH=C:/Program Files/AMD/ROCm/6.4' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
       - name: Configure
         run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=OFF
-          -DBUILD_SHARED_LIBS=OFF
-          -DGGML_NATIVE=OFF
-          -DGGML_BACKEND_DL=OFF
-          -DGGML_OPENMP=OFF
-          -DHTTPLIB_USE_OPENSSL_IF_AVAILABLE=OFF
-          -DHTTPLIB_USE_ZLIB_IF_AVAILABLE=OFF
-          -DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF
-          -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF
-          ${{ matrix.cmake_args }}
+          cmake --preset ${{ matrix.preset }}
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DCMAKE_HIP_COMPILER_LAUNCHER=sccache
       - name: Build
-        run: cmake --build build --config Release --target clap-cli --parallel ${{ contains(matrix.asset, '-cuda') && '1' || '' }}
-
+        run: cmake --build build --config Release --target clap-cli --parallel 1
+      # Both assets require the matching system HIP/BLAS runtime; see README.
       - name: Upload release asset
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
