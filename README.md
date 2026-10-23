@@ -121,7 +121,7 @@ and select `nvcc` from the Scoop toolkit; Linux CUDA releases remain on CUDA
 than the GitHub Actions cache. The ARM64 CUDA preset uses MSVC (required by
 the Windows CUDA host toolchain), enables ggml's native CPU feature probing,
 and explicitly sets GPU architectures so a build host does not need an NVIDIA GPU.
-Both Windows CUDA presets emit Hopper (`90`) as real and virtual code, retaining
+All CUDA release presets emit Hopper (`90`) as real and virtual code, retaining
 PTX while avoiding sccache 0.18.0's PTX-only `compute_90` parsing issue.
 
 This adds a CUDA-enabled release build, not new model-backend selection: native

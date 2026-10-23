@@ -157,6 +157,7 @@
       "name": "linux-amd64-cuda12.9",
       "inherits": "release-base",
       "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
         "GGML_STATIC": "ON"
@@ -166,6 +167,7 @@
       "name": "linux-arm64-cuda12.9",
       "inherits": "release-base",
       "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real",
         "GGML_METAL": "OFF",
         "GGML_CUDA": "ON",
         "GGML_STATIC": "ON"
