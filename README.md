@@ -5,8 +5,9 @@
 
 C++17/ggml implementations of Hugging Face `laion/larger_clap_music`, CLaMP3,
 `m-a-p/MERT-v1-95M`, `m-a-p/MERT-v2-FullSong`, OpenMuQ/MuQ and MuQ-MuLan,
-with native inference through `clap-model`. The
-original `clap` embedding command and HTTP server intentionally retain their dummy behavior.
+with native text/audio inference through `clap embedding` and a model-backed
+OpenAI-compatible text embeddings endpoint through `clap serve`. Both commands
+require a converted GGUF model; inference runs locally without Python or downloads.
 
 ## Requirements
 
@@ -88,7 +89,7 @@ sudo apt-get install libvulkan-dev glslc spirv-headers
 cmake -S . -B build-vulkan -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
 cmake --build build-vulkan --config Release --parallel
 ctest --test-dir build-vulkan -C Release --output-on-failure
-./build-vulkan/clap-model --model model.gguf --text 'A jazz quartet.'
+./build-vulkan/clap embedding --model model.gguf --text 'A jazz quartet.'
 ```
 
 The native model's linear layers use the first ggml Vulkan device, with weights
@@ -103,8 +104,8 @@ Published releases additionally build `clap-linux-amd64-vulkan` and
 `clap-linux-arm64-vulkan` on Ubuntu 24.04. They require the system Vulkan loader
 (`libvulkan1` on Debian/Ubuntu) and a compatible Vulkan ICD/driver; the SDK and
 `glslc` are build-time dependencies only. Like the CPU release assets, these
-`clap` executables still expose the dummy embedding/server interfaces described
-below; real model inference currently uses the separately built `clap-model`.
+`clap` executables expose the model-backed embedding/server interfaces described
+below, using the same native model runtime as local inference.
 
 ### CUDA 12.9 release build
 
@@ -134,8 +135,8 @@ All CUDA release presets emit Hopper (`90`) as real and virtual code, retaining
 PTX while avoiding sccache 0.18.0's PTX-only `compute_90` parsing issue.
 
 This adds a CUDA-enabled release build, not new model-backend selection: native
-model linear dispatch remains CPU/optional Vulkan as documented above, and the
-released `clap` embedding/server interfaces still return dummy embeddings.
+model linear dispatch remains CPU/optional Vulkan as documented above. The
+embedding command and server use that same native runtime.
 
 ### ROCm amd64 release build
 
@@ -170,8 +171,8 @@ are not bundled; retain the SDK's installed directory layout.
 ggml does not support static ROCm linking. GPU execution also requires a
 compatible AMD GPU and driver.
 This adds a release build, not HIP model dispatch: native model linear layers
-remain CPU/optional Vulkan, and the released `clap` embedding/server interfaces
-still return dummy embeddings. No ROCm inference or GPU tests are run.
+remain CPU/optional Vulkan. The embedding command and server use that same
+native runtime. No ROCm inference or GPU tests are run.
 
 ## Native model layout
 
@@ -179,9 +180,9 @@ The C++ organization follows `llama.cpp/src/models`: shared runtime services are
 separate from architecture-specific parameter/tensor loading and encoder code.
 
 `src/CMakeLists.txt` builds one `clap` core library from `CLAP_CORE_SOURCES` and
-`models/*.cpp`. Both executables and the model tests link this same core library;
-there is no separate models library. The `clap-cli` target keeps its executable
-name `clap`, while native model inference uses `clap-model` as before.
+`models/*.cpp`. The CLI and model tests link this same core library; there is no
+separate models library. The `clap-cli` target produces the `clap` executable,
+which provides the `embedding`, `serve` and `quantize` subcommands.
 
 | Path | Responsibility |
 | --- | --- |
@@ -191,7 +192,7 @@ name `clap`, while native model inference uses `clap-model` as before.
 | `src/model-ops.*` | Shared ggml matrix operations (CPU/optional Vulkan) and CPU normalization |
 | `src/audio.cpp`, `src/vocab.*` | Native audio frontend, Unicode byte-level BPE and XLM-R Unigram tokenization |
 | `src/models/models.h`, `src/models/*.cpp` | CLAP, CLaMP3, MERT-v1, MERT2, MuQ and MuQ-MuLan specializations: hyperparameters, tensor contracts, encoders and projections |
-| `examples/embedding/embedding.cpp` | Real text/audio inference executable (`clap-model`) |
+| `src/clap.cpp`, `src/embedding.*`, `src/server.*` | Model-backed `clap embedding` text/audio CLI and `clap serve` text embeddings endpoint |
 | `convert_hf_to_gguf.py` | Offline HuggingFace-to-GGUF conversion CLI; no Python at inference |
 | `conversion/__init__.py` | Architecture-to-module map and lazy model-class lookup |
 | `conversion/base.py` | Shared model base, architecture detection, safe checkpoint loading and GGUF serialization |
@@ -202,8 +203,8 @@ Convert a local `laion/larger_clap_music` checkpoint containing `config.json`,
 
 ```sh
 python convert_hf_to_gguf.py checkpoint/ model.gguf
-./build/clap-model --model model.gguf --text 'A jazz quartet playing saxophone.'
-./build/clap-model --model model.gguf --audio music.wav
+./build/clap embedding --model model.gguf --text 'A jazz quartet playing saxophone.'
+./build/clap embedding --model model.gguf --audio music.wav
 ```
 
 For CLAP, the native executable returns a normalized 512-dimensional JSON array. Audio
@@ -223,8 +224,8 @@ python convert_hf_to_gguf.py checkpoint/ model-f32.gguf --dtype f32
 ./build/clap quantize model-f32.gguf model-q8_0.gguf  # default remains Q8_0
 ./build/clap quantize --type Q4_K_M model-f32.gguf model-q4_k_m.gguf
 # --type Q8_0 is also accepted; preset names are case-insensitive.
-./build/clap-model --model model-q8_0.gguf --text 'A jazz quartet.'
-./build/clap-model --model model-q8_0.gguf --audio music.wav
+./build/clap embedding --model model-q8_0.gguf --text 'A jazz quartet.'
+./build/clap embedding --model model-q8_0.gguf --audio music.wav
 # CLaMP3 also accepts --audio; its bundled MERT tensors remain F32/F16.
 ```
 
@@ -365,8 +366,8 @@ test/custom config with `--clamp3-config` and tokenizer with `--tokenizer`:
 python convert_hf_to_gguf.py \
   checkpoint/weights_clamp3_saas_h_size_768_t_model_FacebookAI_xlm-roberta-base_t_length_128_a_size_768_a_layers_12_a_length_128_s_size_768_s_layers_12_p_size_64_p_length_512.pth \
   clamp3-f16.gguf --dtype f16
-./build/clap-model --model clamp3-f16.gguf --text 'A piano sonata.'
-./build/clap-model --model clamp3-f16.gguf --audio music.flac
+./build/clap embedding --model clamp3-f16.gguf --text 'A piano sonata.'
+./build/clap embedding --model clamp3-f16.gguf --audio music.flac
 ```
 
 Every CLaMP3 conversion **automatically bundles** `m-a-p/MERT-v1-95M`.
@@ -428,9 +429,9 @@ project's Apache-2.0 license does not relicense those weights.
 ```sh
 python convert_hf_to_gguf.py mert-checkpoint/ mert-v1-95m-f32.gguf \
   --dtype f32 --mert-revision 12af15fef9d0ac838c3f475bfbbf26d2060dd4f5
-./build/clap-model --model mert-v1-95m-f32.gguf --audio music.wav --frames
-./build/clap-model --model mert-v1-95m-f32.gguf --audio music.wav --clamp3-features
-./build/clap-model --model clamp3-f16.gguf --audio music.wav
+./build/clap embedding --model mert-v1-95m-f32.gguf --audio music.wav --frames
+./build/clap embedding --model mert-v1-95m-f32.gguf --audio music.wav --clamp3-features
+./build/clap embedding --model clamp3-f16.gguf --audio music.wav
 ```
 
 `--mert-revision` records the full source SHA in GGUF. Standalone local MERT
@@ -534,8 +535,8 @@ Convert a local safetensors snapshot pinned to Hugging Face revision
 python -m pip install -r requirements.txt
 python convert_hf_to_gguf.py checkpoint/ muq-f32.gguf \
   --muq-revision 0562a57814f6f8bbd9fdea0a25921a2fce1a841a
-./build/clap-model --model muq-f32.gguf --audio music.flac
-./build/clap-model --model muq-f32.gguf --audio music.flac --frames
+./build/clap embedding --model muq-f32.gguf --audio music.flac
+./build/clap embedding --model muq-f32.gguf --audio music.flac --frames
 # F16 saves disk space; MuQ expands it to F32 compute weights on load:
 python convert_hf_to_gguf.py checkpoint/ muq-f16.gguf --dtype f16 \
   --muq-revision 0562a57814f6f8bbd9fdea0a25921a2fce1a841a
@@ -614,7 +615,7 @@ quantized-storage rejection without requiring ML packages.
 ### MuQ-MuLan-large (native joint audio/text embeddings)
 
 `OpenMuQ/MuQ-MuLan-large` has native, single-item text and raw-waveform
-inference through `clap::Model` and `clap-model`. Published embeddings have 512
+inference through `clap::Model` and `clap embedding`. Published embeddings have 512
 components. No Python, model source execution, or downloads occur at inference.
 The model revision is `2e01c796b71dca71b45251384c04cd7b237c9020`; the reviewed
 [official source](https://github.com/tencent-ailab/MuQ/tree/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a)
@@ -651,11 +652,11 @@ python convert_hf_to_gguf.py /path/to/muq-mulan artifacts/muq-mulan-f16.gguf \
   --text-config /path/to/xlm-roberta-base/config.json \
   --tokenizer /path/to/xlm-roberta-base/tokenizer.json
 
-artifacts/build/clap-model --model artifacts/muq-mulan-f16.gguf \
+artifacts/build/clap embedding --model artifacts/muq-mulan-f16.gguf \
   --text 'classical genres, hopeful mood, piano.' --threads 2
-artifacts/build/clap-model --model artifacts/muq-mulan-f16.gguf \
+artifacts/build/clap embedding --model artifacts/muq-mulan-f16.gguf \
   --text '一首适合海边风景的小提琴曲，节奏欢快' --threads 2
-artifacts/build/clap-model --model artifacts/muq-mulan-f16.gguf \
+artifacts/build/clap embedding --model artifacts/muq-mulan-f16.gguf \
   --audio music.flac --threads 2
 ```
 
@@ -722,7 +723,7 @@ ctest --test-dir artifacts/build -R muq_mulan --output-on-failure
 # child process and exits before the native CLI starts; arrays/metrics are saved.
 python tests/models/muq_mulan_checkpoint_parity.py \
   --checkpoint artifacts/checkpoint --gguf artifacts/muq-mulan-f16.gguf \
-  --dtype f16 --cli artifacts/build/clap-model \
+  --dtype f16 --cli artifacts/build/clap \
   --source artifacts/oracle --muq-source /path/to/pinned/MuQ/source-components \
   --out artifacts/published-muq-mulan-f16 --audio music.wav
 ```
@@ -770,8 +771,8 @@ the full source SHA in GGUF metadata:
 ```sh
 python convert_hf_to_gguf.py checkpoint/ mert-v2-fullsong-f16.gguf \
   --dtype f16 --mert2-revision 7001f7657276238629e61c7746ce70735e0604c0
-./build/clap-model --model mert-v2-fullsong-f16.gguf --audio complete-song.flac
-./build/clap-model --model mert-v2-fullsong-f16.gguf --audio complete-song.flac --frames
+./build/clap embedding --model mert-v2-fullsong-f16.gguf --audio complete-song.flac
+./build/clap embedding --model mert-v2-fullsong-f16.gguf --audio complete-song.flac --frames
 ```
 
 Input is mixed to mono and resampled to the checkpoint's 24 kHz rate. The native
@@ -866,77 +867,80 @@ python tests/models/clamp3_checkpoint_parity.py build checkpoint/ build/publishe
   --dtype f16 --gguf clamp3-f16.gguf
 ```
 
-For raw music files, use the native `--mert-model` pipeline above. Alternatively,
-run `preprocessing/audio/extract_mert.py` in the official `sanderwood/clamp3`
-checkout with `--model_path m-a-p/MERT-v1-95M` and `--mean_features`, then pass
-its `.npy` to `--audio-features`. Existing dummy interfaces below are unchanged.
+For raw music files, use `clap embedding --model clamp3-f16.gguf --audio music.flac`.
+The bundled MERT frontend handles waveform feature extraction internally;
+external `--mert-model` and `--audio-features` inputs are not supported.
 
 ## Embedding command
 
-Generate dummy embeddings directly, without starting a server or loading a model:
+Load a converted GGUF and generate real native text or audio embeddings:
 
 ```sh
-./build/clap embedding -p "Hello World!"
-# 1.0000000 0.0000000 0.0000000
-
-./build/clap embedding -f prompts.txt --embd-output-format json
-./build/clap embedding -p 'hello<#sep#>world' \
-  --embd-separator '<#sep#>' --embd-output-format array
-# [[1.0,0.0,0.0],[1.0,0.0,0.0]]
+./build/clap embedding --model model.gguf --text 'A jazz quartet.'
+./build/clap embedding --model model.gguf --audio music.flac
 ```
 
-The input and output options follow llama.cpp's `llama-embedding` example:
+`--model` (`-m`) is required. Select exactly one input mode:
 
-- Exactly one of `-p/--prompt` or `-f/--file` is required. Input must not be empty.
-- `--embd-separator` splits input into prompts (default: an actual newline).
-  Empty segments, including a trailing segment, each receive an embedding.
-  The separator must not be empty.
-- `--embd-output-format` accepts `raw` (default, one space-separated vector per
-  line), `array` (an array of vectors), `json` (`object: "list"` with indexed
-  embedding objects), or `json+` (also includes `cosineSimilarity` for multiple
-  prompts). Structured output is written to stdout; errors go to stderr.
+- `--text` embeds one string, without separator splitting, and defaults to a
+  single JSON vector. Empty text is passed to the model, whose tokenizer and
+  architecture determine whether it is supported.
+- `-p/--prompt` or `-f/--file` embed separator-delimited text. Input must not be
+  empty. `--embd-separator` defaults to an actual newline and must not be empty;
+  empty segments, including a trailing segment, are passed to the model.
+- `-a/--audio` decodes WAV, MP3 or FLAC and defaults to a single JSON vector.
+  Architecture-specific `--frames`, `--clamp3-features` and `--crop-offset`
+  behavior is described above. There is no HTTP audio API.
 
-Every prompt receives the fixed vector `[1.0, 0.0, 0.0]`, just like the server.
-All cosine similarities are therefore `1.0`. This is only a subset of the
-llama.cpp CLI: model loading, tokenization, inference, pooling, and normalization
-options are not implemented. No model argument is needed.
+For prompt/file text input, `--embd-output-format` defaults to `raw` (one
+space-separated vector per line). It also accepts `array` (an array of vectors),
+`json` (an indexed OpenAI-style embedding list), and `json+` (also includes
+`cosineSimilarity` for multiple inputs). These are real model outputs: vector
+size, normalization and text/audio support depend on the loaded architecture.
+Text inputs are evaluated sequentially, not as a native batched forward pass.
+Structured output goes to stdout; errors go to stderr.
+
+```sh
+./build/clap embedding --model model.gguf -p "Hello World!"
+./build/clap embedding --model model.gguf -f prompts.txt --embd-output-format json
+./build/clap embedding --model model.gguf -p 'hello<#sep#>world' \
+  --embd-separator '<#sep#>' --embd-output-format array
+```
+
+`--threads` (`-t`) selects ggml CPU threads (`0` means automatic). No model is
+bundled with the executable, and a missing or invalid model is an error rather
+than a fallback to placeholder vectors.
 
 ## Embeddings server
 
-Start the server (defaults to `127.0.0.1:8080`):
+Start the server with a text-capable GGUF, such as CLAP, CLaMP3 or MuQ-MuLan
+(default listen address: `127.0.0.1:8080`):
 
 ```sh
-./build/clap serve --host 127.0.0.1 --port 8080
+./build/clap serve --model model.gguf --host 127.0.0.1 --port 8080
 ```
 
-Send a request following the llama.cpp `/v1/embeddings` JSON response shape:
+The model is loaded once at startup. Its API identifier is the GGUF **filename**
+(`model.gguf` in this example), not its full path or a Hugging Face repository ID.
+Send an OpenAI-compatible text embeddings request:
 
 ```sh
 curl http://127.0.0.1:8080/v1/embeddings \
   -H 'Content-Type: application/json' \
-  -d '{"model":"dummy","input":["hello","world"],"encoding_format":"float"}'
+  -d '{"model":"model.gguf","input":["hello","world"],"encoding_format":"float"}'
 ```
 
-```json
-{
-  "object": "list",
-  "data": [
-    {"object": "embedding", "index": 0, "embedding": [1.0, 0.0, 0.0]},
-    {"object": "embedding", "index": 1, "embedding": [1.0, 0.0, 0.0]}
-  ],
-  "model": "dummy",
-  "usage": {"prompt_tokens": 0, "total_tokens": 0}
-}
-```
+The response is an `object: "list"` with indexed `object: "embedding"` entries
+containing real floating-point vectors and the loaded model's filename in
+`model`. Embedding dimensions and normalization are those of the native model,
+not a fixed server vector. The server does not resize model embeddings.
 
-This is a stub: every input gets the same fixed 3-dimensional vector; no model
-is loaded and no tokenization or inference takes place. Usage counts are zero.
 `input` accepts one non-empty string or an array of 1–1024 non-empty strings.
-`model` is optional (defaults to `dummy`) and is echoed in the response.
-Only `encoding_format: "float"` (the default) and `dimensions: 3` are supported;
-token IDs, multimodal inputs and base64 encoding are not implemented.
-Invalid JSON or unsupported parameter values return HTTP 400 with a JSON
-`error` object. Request bodies are limited to 1 MiB.
+Only floating-point encoding is supported; token-ID inputs, base64 encoding and
+multimodal inputs are unsupported. This is a **text-only** endpoint: audio files
+must use `clap embedding --audio` or the C++ API, not an HTTP audio request.
+Invalid JSON or unsupported parameter values return HTTP 400 with a JSON `error`
+object. Request bodies are limited to 1 MiB.
 
 Running `clap` without a subcommand still prints `clap.cpp`.
 The executable is located at `build/clap` for single-configuration generators or

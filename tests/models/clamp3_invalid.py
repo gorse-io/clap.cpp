@@ -54,6 +54,6 @@ for name, branch, key, value, expected in cases:
     header += b'\0' * (-len(header) % 32)
     path = fixture / (name + '.gguf')
     path.write_bytes(header + payload)
-    result = subprocess.run([str(binary), '--model', str(path), '--text', 'ab'], capture_output=True, text=True)
+    result = subprocess.run([str(binary), 'embedding', '--model', str(path), '--text', 'ab'], capture_output=True, text=True)
     assert result.returncode != 0 and expected in result.stderr, (name, result.returncode, result.stderr)
 print('Malformed CLaMP3 metadata rejected:', len(cases), 'cases')

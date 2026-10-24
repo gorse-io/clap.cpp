@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix='MuQ quantized ') as temporary:
         header += string('quantized.weight') + struct.pack('<IQIQ', 1, 256, kind, 0)
         source = output / (name + '.gguf')
         source.write_bytes(header + bytes(-len(header) % 32) + bytes(size))
-        result = subprocess.run([str(native), '--model', str(source), '--text', 'unused'],
+        result = subprocess.run([str(native), 'embedding', '--model', str(source), '--text', 'unused'],
                                 capture_output=True, text=True, timeout=30)
         assert result.returncode > 0 and 'quantized non-dense/embedding tensor' in result.stderr, (name, result)
         destination = output / (name + '-converted.gguf')

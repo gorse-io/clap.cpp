@@ -48,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix='mert-invalid-') as temp:
     target=Path(temp)/'invalid.gguf'
     for key,value,message in cases:
         config=copy.deepcopy(base);config[key]=value;model(target,config)
-        result=subprocess.run([cli,'-m',str(target),'-p','invalid'],capture_output=True,text=True)
+        result=subprocess.run([cli, 'embedding','-m',str(target),'--text','invalid'],capture_output=True,text=True)
         assert result.returncode>0 and message in result.stderr, (key,result.returncode,result.stderr)
     print(f'{len(cases)} invalid MERT metadata cases rejected')
 

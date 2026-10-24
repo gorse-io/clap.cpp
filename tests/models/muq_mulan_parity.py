@@ -101,7 +101,7 @@ for dtype in ('f32','f16'):
     # Native CLI must return joint vectors and reject every unsupported input mode.
     x=waves[-1][1]; data=x.numpy().astype('<f4').tobytes(); wav=out/'input.wav'
     wav.write_bytes(b'RIFF'+struct.pack('<I',36+len(data))+b'WAVEfmt '+struct.pack('<IHHIIHH',16,3,1,24000,96000,4,32)+b'data'+struct.pack('<I',len(data))+data)
-    cli=[str(build/'clap-model'),'--model',str(target),'--threads','2']
+    cli=[str(build/'clap'), 'embedding','--model',str(target),'--threads','2']
     for args,expected in [(['--text',texts[0]],fixture['texts'][0]['expected']),(['--audio',str(wav)],fixture['audio'][-1]['expected'])]:
         result=subprocess.run(cli+args,check=True,capture_output=True,text=True)
         error=max(abs(a-b) for a,b in zip(json.loads(result.stdout),expected))

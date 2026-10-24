@@ -129,6 +129,6 @@ corruptions.append(('shape', bytes(shape_blob), 'shape'))
 for name, data, error in corruptions:
     path = out / (name + '.gguf')
     path.write_bytes(data)
-    result = subprocess.run([str(build / 'clap-model'), '--model', str(path), '--text', 'hello'], capture_output=True, text=True)
+    result = subprocess.run([str(build / 'clap'), 'embedding', '--model', str(path), '--text', 'hello'], capture_output=True, text=True)
     assert result.returncode == 1 and error in result.stderr.lower(), result.stderr
 print('Transformers F32/F16/Q8_0/Q4_K_M parity, malformed GGUF and unsupported-config rejection passed')

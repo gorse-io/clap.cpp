@@ -71,7 +71,7 @@ header = b'RIFF' + struct.pack('<I', 36 + len(raw)) + b'WAVEfmt ' + struct.pack(
 wav.write_bytes(header + b'data' + struct.pack('<I', len(raw)) + raw)
 for args, expected in [(['--text', cases[0]['text']], cases[0]['expected']),
                        (['--audio', str(wav)], fixture['expected_audio'])]:
-    p = subprocess.run([str(build / 'clap-model'), '--model', str(gguf), '--threads', '2', *args], capture_output=True, text=True)
+    p = subprocess.run([str(build / 'clap'), 'embedding', '--model', str(gguf), '--threads', '2', *args], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     actual = json.loads(p.stdout)
     assert len(actual) == 512

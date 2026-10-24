@@ -22,11 +22,11 @@ fixture = out / 'pipeline'
 source = out / 'source'
 tokenizer = build / 'clamp3-fixture/tokenizer.json'
 revision = '12af15fef9d0ac838c3f475bfbbf26d2060dd4f5'
-cli = str(build / 'clap-model')
+cli = str(build / 'clap')
 install(out/'bundle-cache',source)
 
 def run(model, *args, ok=True):
-    result = subprocess.run([cli, '-m', str(model), *map(str, args), '-t', '2'],
+    result = subprocess.run([cli, 'embedding', '-m', str(model), *map(str, args), '-t', '2'],
                             capture_output=True, text=True)
     assert (result.returncode == 0) == ok, (args, result.returncode, result.stderr)
     return json.loads(result.stdout) if ok else result.stderr

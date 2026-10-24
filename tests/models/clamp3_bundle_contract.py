@@ -5,7 +5,7 @@ import subprocess
 import sys
 root = Path(__file__).resolve().parents[2]
 cli = Path(sys.argv[1])
-help_text = subprocess.check_output([str(cli), '--help'], text=True)
+help_text = subprocess.check_output([str(cli), 'embedding', '--help'], text=True)
 assert '--audio-features' not in help_text, 'obsolete public feature CLI remains'
 assert '--mert-model' not in help_text, 'obsolete external-model fallback remains'
 help_text = subprocess.check_output([sys.executable, str(root/'convert_hf_to_gguf.py'), '--help'], text=True)

@@ -10,7 +10,7 @@ model = fixtures / "invalid.bin"
 
 
 def run(*args):
-    return subprocess.run([cli, "--model", str(model), *args],
+    return subprocess.run([cli, 'embedding', "--model", str(model), *args],
                           capture_output=True, text=True, timeout=10)
 
 

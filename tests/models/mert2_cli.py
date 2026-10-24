@@ -17,7 +17,7 @@ wav.write_bytes(b"RIFF" + struct.pack("<I", 36 + len(samples)) + b"WAVEfmt " +
                 b"data" + struct.pack("<I", len(samples)) + samples)
 
 def run(*extra):
-    result = subprocess.run([str(binary), "--model", str(fixture_dir / "model.gguf"),
+    result = subprocess.run([str(binary), 'embedding', "--model", str(fixture_dir / "model.gguf"),
                              "--threads", "2", "--audio", str(wav), *extra],
                             text=True, capture_output=True, timeout=120)
     assert result.returncode == 0, result.stderr

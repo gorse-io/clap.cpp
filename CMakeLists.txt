@@ -39,10 +39,6 @@ add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 include(cmake/icu.cmake)
 add_subdirectory(src)
 
-add_executable(clap-model examples/embedding/embedding.cpp)
-target_link_libraries(clap-model PRIVATE clap CLI11::CLI11 nlohmann_json::nlohmann_json)
-set_target_properties(clap-model PROPERTIES CXX_EXTENSIONS OFF)
-
 # The CLI target differs from the core library target, while its executable
 # keeps the existing "clap" name and command-line behavior.
 add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
@@ -123,7 +119,7 @@ if(BUILD_TESTING)
     target_link_libraries(feature-input-test PRIVATE clap nlohmann_json::nlohmann_json)
     target_include_directories(feature-input-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME clamp3_bundle_contract
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_bundle_contract.py" "$<TARGET_FILE:clap-model>")
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_bundle_contract.py" "$<TARGET_FILE:clap-cli>")
     add_executable(clap-model-test tests/models/model-test.cpp)
     target_link_libraries(clap-model-test PRIVATE clap nlohmann_json::nlohmann_json)
     target_include_directories(clap-model-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -160,7 +156,7 @@ if(BUILD_TESTING)
     set_tests_properties(clap_smoke PROPERTIES PASS_REGULAR_EXPRESSION "clap.cpp")
 
     add_test(NAME clap_audio_cli
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_cli.py" "$<TARGET_FILE:clap-model>"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_cli.py" "$<TARGET_FILE:clap-cli>"
                 "${CLAP_AUDIO_FIXTURE_DIR}")
     set_tests_properties(clap_audio_cli PROPERTIES TIMEOUT 30)
     add_test(NAME clap_embeddings
@@ -205,17 +201,17 @@ if(BUILD_TESTING)
         set_tests_properties(clamp3_model_native_f16 PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
         add_test(NAME clamp3_model_cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_cli.py"
-                    "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+                    "$<TARGET_FILE:clap-cli>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
         set_tests_properties(clamp3_model_cli PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
         add_test(NAME clamp3_invalid_metadata
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_invalid.py"
-                    "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+                    "$<TARGET_FILE:clap-cli>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
         set_tests_properties(clamp3_invalid_metadata PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
     endif()
     option(MERT2_MODEL_PARITY "Run optional official MERT-v2-FullSong oracle tests (torch/torchaudio/transformers/safetensors required)" OFF)
     add_test(NAME mert_invalid_metadata
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_invalid.py"
-                "$<TARGET_FILE:clap-model>")
+                "$<TARGET_FILE:clap-cli>")
     set_tests_properties(mert_invalid_metadata PROPERTIES TIMEOUT 30)
     option(MERT_MODEL_PARITY "Run optional reviewed official MERT-v1 numerical oracles" OFF)
     set(MERT_REFERENCE_SOURCE "" CACHE PATH "Reviewed pinned MERT-v1 source (modeling_MERT.py/configuration_MERT.py)")
@@ -261,14 +257,14 @@ if(BUILD_TESTING)
         set_tests_properties(mert2_model_parity PROPERTIES TIMEOUT 600)
         add_test(NAME mert2_model_cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert2_cli.py"
-                    "$<TARGET_FILE:clap-model>" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture")
+                    "$<TARGET_FILE:clap-cli>" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture")
         set_tests_properties(mert2_model_cli PROPERTIES DEPENDS mert2_model_parity TIMEOUT 180)
     endif()
     add_test(NAME muq_conversion_contract
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_conversion_test.py")
     add_test(NAME muq_quantized_rejection
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_quantized.py"
-                "$<TARGET_FILE:clap-model>" "$<TARGET_FILE:clap-cli>")
+                "$<TARGET_FILE:clap-cli>" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(muq_quantized_rejection PROPERTIES TIMEOUT 120)
     option(MUQ_MODEL_PARITY "Run optional MuQ official-component waveform oracle tests" OFF)
     set(MUQ_REFERENCE_SOURCE "" CACHE PATH "Pinned official MuQ conv.py/features.py directory")
@@ -287,7 +283,7 @@ if(BUILD_TESTING)
     add_test(NAME muq_mulan_conversion_contract
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_conversion_test.py")
     add_test(NAME muq_mulan_invalid
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_invalid.py" "$<TARGET_FILE:clap-model>")
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/muq_mulan_invalid.py" "$<TARGET_FILE:clap-cli>")
     option(MUQ_MULAN_MODEL_PARITY "Run tiny pinned official MuLan component oracles" OFF)
     set(MUQ_MULAN_REFERENCE_SOURCE "" CACHE PATH "Pinned MuLan source directory")
     if(MUQ_MULAN_MODEL_PARITY)
@@ -316,4 +312,4 @@ if(BUILD_TESTING)
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
 endif()
 
-install(TARGETS clap-cli clap-model RUNTIME DESTINATION bin)
+install(TARGETS clap-cli RUNTIME DESTINATION bin)

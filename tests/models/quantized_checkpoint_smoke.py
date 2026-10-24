@@ -24,7 +24,7 @@ vectors, results = {}, {}
 for label, path in [('f32', f32), ('quantized', quantized)]:
     results[label] = {'path': str(path), 'bytes': path.stat().st_size}
     for mode, value in [('text', prompt), ('audio', str(audio))]:
-        result = subprocess.run([str(build / 'clap-model'), '--model', str(path),
+        result = subprocess.run([str(build / 'clap'), 'embedding', '--model', str(path),
                                  '--threads', '2', '--' + mode, value],
                                 capture_output=True, text=True, timeout=900)
         assert result.returncode == 0, result.stderr

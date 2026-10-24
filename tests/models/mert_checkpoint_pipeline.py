@@ -43,7 +43,7 @@ def run(args):
     audio.embeddings.register_buffer('position_ids', torch.arange(128).expand(1,-1), persistent=False)
     audio.embeddings.register_buffer('token_type_ids', torch.zeros(1,128,dtype=torch.long), persistent=False)
     audio.eval()
-    cli = str(args.build/'clap-model')
+    cli = str(args.build/'clap')
     subprocess.run([str(args.build/'mert-model-test'), str(args.mert_gguf), str(args.output)], check=True)
     rng = np.random.default_rng(719)
     cases = {'broadband': rng.normal(.1,.12,24000).astype('float32'),
@@ -75,12 +75,12 @@ def run(args):
         # For the resampled case the oracle consumes the exact native-resampler control;
         # the actual CLI consumes 48 kHz input, not the pre-resampled waveform.
         actual_path = args.output/'resampled-input.wav' if name == 'resampled' else path
-        raw = json.loads(subprocess.check_output([cli,'-m',str(args.mert_gguf),'-a',str(actual_path),
+        raw = json.loads(subprocess.check_output([cli, 'embedding','-m',str(args.mert_gguf),'-a',str(actual_path),
                                                  '--clamp3-features','-t','2']))
         native_features = np.asarray(raw['values'],dtype='float32').reshape(raw['frames'],raw['dimension'])
         error(native_features,features.numpy(),name+'/MERT',0.00002)
         file_embedding = encode(args.build,args.clamp3_gguf,native_features.ravel(),raw['frames'],args.output)
-        actual = json.loads(subprocess.check_output([cli,'-m',str(args.clamp3_gguf),
+        actual = json.loads(subprocess.check_output([cli, 'embedding','-m',str(args.clamp3_gguf),
                 '-a',str(actual_path),'-t','2']))
         np.testing.assert_allclose(actual,file_embedding,rtol=0,atol=1e-6)
         error(actual,expected,name+'/published-pipeline',0.0005)
