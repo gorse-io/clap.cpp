@@ -70,6 +70,15 @@ NumPy waveform input and output, audio decoding/resampling, and model lifetime
 management. It builds a self-contained CPU extension; no PyTorch or GPU runtime
 is needed for inference. See the package README for API examples and tests.
 
+## Node.js bindings (CPU)
+
+Install from a recursive checkout with `npm install ./node`.
+The [`node/` package](node/README.md) provides native text/audio embeddings,
+`Float32Array` waveform input and output, frame representations, audio
+decoding/resampling, and TypeScript declarations. It builds a self-contained CPU
+addon. The synchronous API blocks the calling thread; use a worker thread for
+server applications. See the package README for API examples and tests.
+
 ## Build and test
 
 ```sh
