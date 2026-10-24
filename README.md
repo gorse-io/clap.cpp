@@ -71,6 +71,15 @@ NumPy waveform input and output, audio decoding/resampling, and model lifetime
 management. It builds a self-contained CPU extension; no PyTorch or GPU runtime
 is needed for inference. See the package README for API examples and tests.
 
+## Rust bindings (CPU)
+
+The [`rust/` crate](rust/README.md) provides safe model ownership, text/audio
+embeddings, frame/features APIs, decoding, resampling and log-mel preprocessing.
+Use it as a local path dependency from an initialized recursive checkout; it is
+intentionally not publishable until native-source vendoring is implemented.
+Run `cargo test --manifest-path rust/Cargo.toml -j 4` (Python 3 is needed only to
+generate tiny test fixtures). Inference requires no Python or GPU runtime.
+
 ## Build and test
 
 ```sh
