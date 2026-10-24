@@ -33,17 +33,25 @@ endif()
 
 add_subdirectory(ggml EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/CLI11 EXCLUDE_FROM_ALL)
+set(HTTPLIB_REQUIRE_OPENSSL ON CACHE BOOL "HF downloads require HTTPS" FORCE)
 add_subdirectory(thirdparty/cpp-httplib EXCLUDE_FROM_ALL)
 add_subdirectory(thirdparty/json EXCLUDE_FROM_ALL)
 
 include(cmake/icu.cmake)
 add_subdirectory(src)
 
+add_library(clap-hf STATIC src/hf.cpp)
+set_target_properties(clap-hf PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_EXTENSIONS OFF)
+target_compile_features(clap-hf PUBLIC cxx_std_17)
+target_include_directories(clap-hf PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(clap-hf PRIVATE httplib::httplib nlohmann_json::nlohmann_json)
+
+
 # The CLI target differs from the core library target, while its executable
 # keeps the existing "clap" name and command-line behavior.
 add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
 target_compile_features(clap-cli PRIVATE cxx_std_17)
-target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
+target_link_libraries(clap-cli PRIVATE clap clap-hf CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
 set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
 
 if(MSVC)
@@ -58,6 +66,11 @@ if(BUILD_TESTING)
     add_test(NAME clap_conversion_imports
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(clap_conversion_imports PROPERTIES TIMEOUT 30)
+    add_test(NAME clap_hf_download
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hf_download.py"
+                "$<TARGET_FILE:clap-cli>")
+    set_tests_properties(clap_hf_download PROPERTIES TIMEOUT 60)
+
     find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)
     set(CLAP_AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/audio")
     set(CLAP_AUDIO_FIXTURES
