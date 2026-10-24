@@ -81,6 +81,15 @@ intentionally not publishable until native-source vendoring is implemented.
 Run `cargo test --manifest-path rust/Cargo.toml -j 4` (Python 3 is needed only to
 generate tiny test fixtures). Inference requires no Python or GPU runtime.
 
+## Node.js bindings (CPU)
+
+Install from a recursive checkout with `npm install ./node`.
+The [`node/` package](node/README.md) provides native text/audio embeddings,
+`Float32Array` waveform input and output, frame representations, audio
+decoding/resampling, and TypeScript declarations. It builds a self-contained CPU
+addon. The synchronous API blocks the calling thread; use a worker thread for
+server applications. See the package README for API examples and tests.
+
 ## Build and test
 
 ```sh
