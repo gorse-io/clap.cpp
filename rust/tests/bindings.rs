@@ -110,8 +110,12 @@ fn mert_frames_features_and_pooling() {
     assert_eq!(frames.values.len(), frames.frames * frames.dimension);
     let pooled = model.audio(&pcm, 24000, 0).unwrap();
     for (i, value) in pooled.iter().enumerate() {
-        let mean =
-            frames.values.chunks_exact(4).map(|row| row[i]).sum::<f32>() / frames.frames as f32;
+        let mean = frames
+            .values
+            .chunks_exact(frames.dimension)
+            .map(|row| row[i])
+            .sum::<f32>()
+            / frames.frames as f32;
         assert!((mean - value).abs() < 1e-5);
     }
     let features = model.clamp3_features(&pcm, 24000).unwrap();
