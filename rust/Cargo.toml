@@ -1,0 +1,14 @@
+[package]
+name = "clap-cpp"
+version = "0.1.0"
+edition = "2021"
+description = "Safe CPU Rust bindings for clap.cpp"
+license = "Apache-2.0"
+repository = "https://github.com/gorse-io/clap.cpp"
+readme = "README.md"
+# Native sources are in the parent checkout and Git submodules, not this crate.
+publish = false
+
+[lib]
+name = "clap_cpp"
+path = "src/lib.rs"
