@@ -11,6 +11,7 @@
 
 int main(int argc, char **argv) {
     CLI::App app{"clap.cpp"};
+    argv = app.ensure_utf8(argv);
     std::string host = "127.0.0.1";
     int port = 8080;
     std::string server_model;

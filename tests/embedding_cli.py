@@ -126,7 +126,7 @@ class EmbeddingCLITest(unittest.TestCase):
         args = self.model_args()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prompts.txt"
-            path.write_text("你好\nworld", encoding="utf-8")
+            path.write_bytes("你好\nworld".encode("utf-8"))
             for flag in ("-f", "--file"):
                 actual = json.loads(self.success(*args, flag, path, "--embd-output-format", "array"))
                 self.assertEqual(actual, [self.vector("你好"), self.vector("world")])
