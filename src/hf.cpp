@@ -133,6 +133,10 @@ public:
         for (int redirect = 0; redirect < 10; ++redirect) {
             const auto u = parse_url(url);
             httplib::Client client(u.origin);
+            // Native Windows/macOS trust stores do not use OpenSSL's environment defaults.
+            // Honor an explicit CA bundle without disabling certificate or hostname checks.
+            const auto ca_file = env("SSL_CERT_FILE");
+            if (!ca_file.empty()) client.set_ca_cert_path(ca_file);
             client.set_connection_timeout(10);
             client.set_read_timeout(30);
             client.set_write_timeout(30);

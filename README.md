@@ -236,7 +236,9 @@ in shell history or process arguments. Tokens are sent as bearer credentials onl
 to the configured origin, never to a different redirect host. `HF_ENDPOINT`
 (default `https://huggingface.co`) accepts an HTTP(S) origin for mirrors or local
 testing. Use HTTPS for real credentials. TLS certificate verification remains
-enabled; OpenSSL 3 support is required at configure time.
+enabled; OpenSSL 3 support is required at configure time. Set `SSL_CERT_FILE` to a
+PEM CA bundle when using a private certificate authority; this overrides the default
+trust store without disabling certificate or hostname verification.
 
 Downloads stream into `.downloadInProgress` files, resume with validated HTTP
 Range responses, and publish completed blobs/snapshots atomically after size

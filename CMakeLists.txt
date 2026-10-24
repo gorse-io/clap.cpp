@@ -66,9 +66,13 @@ if(BUILD_TESTING)
     add_test(NAME clap_conversion_imports
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(clap_conversion_imports PROPERTIES TIMEOUT 30)
+    find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+    add_executable(clap-hf-tls-fixture tests/hf_tls_fixture.cpp)
+    target_compile_features(clap-hf-tls-fixture PRIVATE cxx_std_17)
+    target_link_libraries(clap-hf-tls-fixture PRIVATE OpenSSL::Crypto)
     add_test(NAME clap_hf_download
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/hf_download.py"
-                "$<TARGET_FILE:clap-cli>")
+                "$<TARGET_FILE:clap-cli>" "$<TARGET_FILE:clap-hf-tls-fixture>")
     set_tests_properties(clap_hf_download PROPERTIES TIMEOUT 60)
 
     find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)

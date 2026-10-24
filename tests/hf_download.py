@@ -4,6 +4,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import ssl
 import struct
 import subprocess
 import sys
@@ -12,7 +13,8 @@ import threading
 import unittest
 
 CLI = sys.argv[1]
-sys.argv = sys.argv[:1] + sys.argv[2:]
+TLS_FIXTURE = sys.argv[2]
+sys.argv = sys.argv[:1] + sys.argv[3:]
 COMMIT = "a" * 40
 DATA = b"GGUF" + struct.pack("<IQQ", 3, 0, 0) + b"\0" * 2048
 OID = hashlib.sha256(DATA).hexdigest()
@@ -38,6 +40,13 @@ class FixtureServer(http.server.ThreadingHTTPServer):
 class Handler(http.server.BaseHTTPRequestHandler):
     server: FixtureServer
 
+    def handle(self):
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            # Certificate/hostname rejection can close TLS before an HTTP request.
+            pass
+
     def log_message(self, format, *args):
         pass
 
@@ -56,7 +65,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     rows = rows[1:]
                 else:
                     rows = rows[:1]
-                    headers["Link"] = f'<http://127.0.0.1:{self.server.server_port}/api/models/test/model/tree/{COMMIT}?cursor=second>; rel="next"'
+                    scheme = "https" if isinstance(self.connection, ssl.SSLSocket) else "http"
+                    headers["Link"] = f'<{scheme}://127.0.0.1:{self.server.server_port}/api/models/test/model/tree/{COMMIT}?cursor=second>; rel="next"'
             self.send(200, json.dumps(rows).encode(), headers)
         elif self.path == "/redirected":
             self.send(200, data)
@@ -97,6 +107,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 class Download(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tls = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
+        cls.addClassCleanup(cls.tls.cleanup)
+        subprocess.run([TLS_FIXTURE, cls.tls.name], check=True, capture_output=True)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
         self.cache = Path(self.tmp.name) / "cache"
@@ -108,6 +124,73 @@ class Download(unittest.TestCase):
         self.thread.start()
         self.env = dict(os.environ, CLAP_CACHE=str(self.cache), HF_ENDPOINT=f"http://127.0.0.1:{self.server.server_port}")
         self.env.pop("HF_TOKEN", None)
+        self.env.pop("SSL_CERT_FILE", None)
+
+    def start_server(self, tls=False):
+        server = FixtureServer(("127.0.0.1", 0), Handler)
+        if tls:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(Path(self.tls.name) / "server.pem",
+                                    Path(self.tls.name) / "server-key.pem")
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def use_https(self):
+        server = self.start_server(tls=True)
+        self.env["HF_ENDPOINT"] = f"https://127.0.0.1:{server.server_port}"
+        self.env["SSL_CERT_FILE"] = str(Path(self.tls.name) / "ca.pem")
+        return server
+
+    def test_https_download(self):
+        server = self.use_https()
+        server.paginate = True
+        path = Path(self.download("-hft", "private-token").stdout.strip())
+        self.assertEqual(path.read_bytes(), DATA)
+        self.assertEqual(path.name, "model-Q4_K_M.gguf")
+        self.assertTrue(any("cursor=second" in p for p, _ in server.requests))
+        self.assertTrue(any("/resolve/" in p for p, _ in server.requests))
+        self.assertTrue(all(h.get("Authorization") == "Bearer private-token"
+                            for _, h in server.requests))
+
+    def test_https_untrusted_certificate_rejected(self):
+        server = self.use_https()
+        del self.env["SSL_CERT_FILE"]
+        self.download(ok=False)
+        self.assertEqual(server.requests, [])
+        self.assertFalse((self.repo / "refs/main").exists())
+
+    def test_https_hostname_mismatch_rejected(self):
+        server = self.use_https()
+        self.env["HF_ENDPOINT"] = f"https://localhost:{server.server_port}"
+        self.download(ok=False)
+        self.assertEqual(server.requests, [])
+        self.assertFalse((self.repo / "refs/main").exists())
+
+    def test_https_cross_origin_redirect_does_not_leak_token(self):
+        server = self.use_https()
+        other = self.start_server(tls=True)
+        server.redirect = f"https://127.0.0.1:{other.server_port}/redirected"
+        self.assertEqual(Path(self.download("-hft", "private-token").stdout.strip()).read_bytes(), DATA)
+        self.assertTrue(server.requests)
+        self.assertTrue(all(h.get("Authorization") == "Bearer private-token"
+                            for _, h in server.requests))
+        self.assertTrue(other.requests)
+        self.assertTrue(all("Authorization" not in h for _, h in other.requests))
+
+    def test_https_downgrade_rejected(self):
+        server = self.use_https()
+        server.redirect = f"http://127.0.0.1:{self.server.server_port}/redirected"
+        p = self.download("-hft", "private-token", ok=False)
+        self.assertIn("Refusing HTTPS downgrade", p.stderr)
+        self.assertTrue(any("/resolve/" in p for p, _ in server.requests))
+        self.assertEqual(self.server.requests, [])
+        self.assertFalse((self.repo / "blobs" / OID).exists())
+        self.assertFalse((self.repo / "refs/main").exists())
 
     def tearDown(self):
         self.server.shutdown()
