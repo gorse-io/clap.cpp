@@ -111,7 +111,8 @@ class Download(unittest.TestCase):
     def setUpClass(cls):
         cls.tls = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
         cls.addClassCleanup(cls.tls.cleanup)
-        subprocess.run([TLS_FIXTURE, cls.tls.name], check=True, capture_output=True)
+        # Inherit output so CTest reports the helper's diagnostics on setup failure.
+        subprocess.run([TLS_FIXTURE, cls.tls.name], check=True)
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(dir=Path(tempfile.gettempdir()).resolve())
