@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory() as temporary:
            ('metadata',{},0,0.,'probe')]
     for message,meta,typ,value,name in cases:
         write(path,{'general.architecture':'muq_mulan',**meta},name=name,typ=typ,value=value,dims=(32,) if typ==8 else (1,))
-        p=subprocess.run([str(cli),'--model',str(path),'--text','a'],capture_output=True,text=True)
+        p=subprocess.run([str(cli), 'embedding','--model',str(path),'--text','a'],capture_output=True,text=True)
         assert p.returncode>0 and message in p.stderr,(message,p.returncode,p.stderr)
         print(message,'rejected:',p.stderr.strip())
 
@@ -67,7 +67,7 @@ def complete(path,meta,geometry,alter=None,half_name=None):
 with tempfile.TemporaryDirectory() as temporary:
     path=Path(temporary)/'complete.gguf'
     complete(path,base_meta,shapes)
-    baseline=subprocess.run([str(cli),'--model',str(path),'--text',''],capture_output=True,text=True)
+    baseline=subprocess.run([str(cli), 'embedding','--model',str(path),'--text',''],capture_output=True,text=True)
     assert baseline.returncode==0,(baseline.returncode,baseline.stderr)
     assert json.loads(baseline.stdout)==[0.]*6
     cases=[]
@@ -84,15 +84,15 @@ with tempfile.TemporaryDirectory() as temporary:
     cases.append((base_meta,shapes,('conv.conv.0.bn1.running_var',-1.),'variance'))
     for meta,geometry,alter,message in cases:
         complete(path,meta,geometry,alter)
-        proc=subprocess.run([str(cli),'--model',str(path),'--text','a'],capture_output=True,text=True)
+        proc=subprocess.run([str(cli), 'embedding','--model',str(path),'--text','a'],capture_output=True,text=True)
         assert proc.returncode>0 and message in proc.stderr,(message,proc.returncode,proc.stderr)
     overflow=copy.deepcopy(cfg);overflow['text_transformer']['tf_depth']=4294967296
     complete(path,dict(base_meta,**{'muq_mulan.config':json.dumps(overflow)}),
              {k:v for k,v in shapes.items() if not k.startswith('adapter.')})
-    proc=subprocess.run([str(cli),'--model',str(path),'--text','a'],capture_output=True,text=True)
+    proc=subprocess.run([str(cli), 'embedding','--model',str(path),'--text','a'],capture_output=True,text=True)
     assert proc.returncode>0 and 'dimensions' in proc.stderr, ('depth overflow must fail',proc.returncode,proc.stderr)
     complete(path,base_meta,shapes,half_name='conformer.layer_norm.weight')
-    proc=subprocess.run([str(cli),'--model',str(path),'--text','a'],capture_output=True,text=True)
+    proc=subprocess.run([str(cli), 'embedding','--model',str(path),'--text','a'],capture_output=True,text=True)
     assert proc.returncode>0 and 'F32' in proc.stderr, ('F16 norm must fail',proc.returncode,proc.stderr)
     print('Complete tiny MuLan: legacy tokenizer accepted;',len(cases),'malformed contracts rejected')
 
@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory() as temporary:
             meta=dict(base_meta, **{'general.architecture':arch,'muq.config':json.dumps(raw)})
             geometry = shapes if arch == 'muq_mulan' else {k:v for k,v in shapes.items() if k.startswith(('frontend.','conv.','conformer.'))}
             complete(path,meta,geometry)
-            proc=subprocess.run([str(cli),'--model',str(path),'--text','a'],capture_output=True,text=True,timeout=15)
+            proc=subprocess.run([str(cli), 'embedding','--model',str(path),'--text','a'],capture_output=True,text=True,timeout=15)
             if name=='valid tiny':
                 ok=proc.returncode==0 if arch=='muq_mulan' else 'no text encoder' in proc.stderr
             elif name=='valid published':

@@ -78,7 +78,7 @@ wav = args.output / 'published.wav'
 wav.write_bytes(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' +
                 struct.pack('<IHHIIHH', 16, 3, 1, 24000, 96000, 4, 32) +
                 b'data' + struct.pack('<I', len(data)) + data)
-command = [str(args.build / 'clap-model'), '--model', str(gguf), '--threads', '2', '--audio', str(wav)]
+command = [str(args.build / 'clap'), 'embedding', '--model', str(gguf), '--threads', '2', '--audio', str(wav)]
 summary = {'model_revision': MODEL_REVISION, 'source_revision': SOURCE_REVISION,
            'samples': len(wave), 'sample_rate': 24000, 'frames': 6, 'dimension': 1024,
            'dtype': args.dtype, 'tone_diagnostic': args.tone_diagnostic,

@@ -33,15 +33,15 @@ c=dict(model_type='clamp3',variant='synthetic-pipeline',projection_dim=6,chunk_l
 (fixture/'config.json').write_text(json.dumps(c))
 subprocess.run([sys.executable,str(root/'convert_hf_to_gguf.py'),str(fixture/'model.pth'),str(fixture/'model.gguf'),
                '--clamp3-config',str(fixture/'config.json'),'--tokenizer',str(build/'clamp3-fixture/tokenizer.json')],check=True)
-cli=str(build/'clap-model')
+cli=str(build/'clap')
 for dtype in ['f32']:
     mert=str(out/f'model-{dtype}.gguf')
     for case in ['broadband','two_chunks','discard_tail','resampled-input']:
         wave=out/f'{case}.wav'
-        data=json.loads(subprocess.check_output([cli,'-m',mert,'-a',str(wave),'--clamp3-features','-t','2']))
+        data=json.loads(subprocess.check_output([cli, 'embedding','-m',mert,'-a',str(wave),'--clamp3-features','-t','2']))
         features=np.asarray(data['values'],dtype='float32').reshape(data['frames'],hidden)
         expected=encode(build,fixture/'model.gguf',features.ravel(),data['frames'],fixture)
-        actual=json.loads(subprocess.check_output([cli,'-m',str(fixture/'model.gguf'),
+        actual=json.loads(subprocess.check_output([cli, 'embedding','-m',str(fixture/'model.gguf'),
                                                   '-a',str(wave),'-t','2']))
         np.testing.assert_allclose(actual,expected,rtol=0,atol=1e-6)
         with torch.no_grad():
@@ -65,6 +65,6 @@ for arguments in [
     ['-m',clamp,'-a',wave,'--audio-features','obsolete.npy'],
     ['-m',clamp,'-a',wave,'--mert-model',mert],
 ]:
-    result = subprocess.run([cli,*arguments], capture_output=True, text=True)
+    result = subprocess.run([cli, 'embedding',*arguments], capture_output=True, text=True)
     assert result.returncode > 0 and result.stderr, (arguments,result.returncode,result.stderr[:1000])
 print('Native pipeline and CLI validation passed')

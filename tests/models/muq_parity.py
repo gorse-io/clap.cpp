@@ -73,7 +73,7 @@ for dtype, tolerance in [('f32', 3e-4), ('f16', 3e-3)]:
     wav.write_bytes(b'RIFF' + struct.pack('<I', 36 + len(data)) + b'WAVEfmt ' +
                     struct.pack('<IHHIIHH', 16, 3, 1, 24000, 96000, 4, 32) +
                     b'data' + struct.pack('<I', len(data)) + data)
-    command = [str(build / 'clap-model'), '--model', str(gguf), '--threads', '2', '--audio', str(wav)]
+    command = [str(build / 'clap'), 'embedding', '--model', str(gguf), '--threads', '2', '--audio', str(wav)]
     for frames in [False, True]:
         result = subprocess.run(command + (['--frames'] if frames else []), check=True,
                                 capture_output=True, text=True, timeout=120)

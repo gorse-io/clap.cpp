@@ -140,7 +140,7 @@ def main(args):
                     silence = waves[1][1]
                     reference_silence = model(silence[None]).last_hidden_state[0].numpy().ravel()
                 baseline_wav = out/'baseline-silence.wav'; wav(baseline_wav,silence.numpy(),rate)
-                baseline = json.loads(subprocess.check_output([str(args.build/'clap-model'),'-m',str(source),'-a',str(baseline_wav),'--frames','-t','2'],text=True))
+                baseline = json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding','-m',str(source),'-a',str(baseline_wav),'--frames','-t','2'],text=True))
                 baseline_error = float(np.max(np.abs(np.asarray(baseline['values'])-reference_silence)))
                 (out/f'{dtype}-baseline-silence.json').write_text(json.dumps(dict(max_abs=baseline_error,official_acceptance=baseline_error<3e-4)))
                 print('MERT2 unquantized',dtype,'silence official max_abs',baseline_error,flush=True)
@@ -162,7 +162,7 @@ def main(args):
                 run(args.build/'clap-q8-test','decode',target,roundtrip)
                 for label,wave in waves:
                     audio=out/f'{label}.wav'; wav(audio,wave.numpy(),rate)
-                    command=[str(args.build/'clap-model'),'-m',str(target),'-a',str(audio),'-t','2']
+                    command=[str(args.build/'clap'), 'embedding','-m',str(target),'-a',str(audio),'-t','2']
                     if arch!='muq_mulan':command+=['--frames']
                     actual=json.loads(subprocess.check_output(command,text=True))
                     control=json.loads(subprocess.check_output([str(roundtrip) if x==str(target) else x for x in command],text=True))
@@ -191,7 +191,7 @@ def main(args):
                     assert rt<2e-5,(arch,dtype,preset,label,rt)
                 if arch=='muq_mulan':
                     with torch.no_grad():expected=model.text_vector([0,4,5,2]).numpy()
-                    actual=json.loads(subprocess.check_output([str(args.build/'clap-model'),'-m',str(target),'--text','a','-t','2'],text=True))
+                    actual=json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding','-m',str(target),'--text','a','-t','2'],text=True))
                     delta=float(np.max(np.abs(actual-expected))); assert delta<3e-4,delta
                     print(arch,dtype,preset,'text storage-rounded max_abs',delta,flush=True)
     assert len(metrics)==32

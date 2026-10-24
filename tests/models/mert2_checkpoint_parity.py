@@ -104,7 +104,7 @@ wav.write_bytes(b"RIFF" + struct.pack("<I", 36 + len(raw_wave)) + b"WAVEfmt " +
                 struct.pack("<IHHIIHH", 16, 3, 1, config.sampling_rate,
                             config.sampling_rate * 4, 4, 32) +
                 b"data" + struct.pack("<I", len(raw_wave)) + raw_wave)
-result = subprocess.run([str(args.build / "clap-model"), "--model", str(gguf), "--threads", "2",
+result = subprocess.run([str(args.build / "clap"), 'embedding', "--model", str(gguf), "--threads", "2",
                          "--audio", str(wav), "--frames"], text=True, capture_output=True)
 assert result.returncode == 0, result.stderr
 actual = json.loads(result.stdout)

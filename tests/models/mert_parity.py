@@ -94,7 +94,7 @@ def run(args):
             normalized = processor(pcm, sampling_rate=24000, return_tensors='pt').input_values
             with torch.no_grad():
                 result = network(normalized, output_hidden_states=True)
-            actual = json.loads(subprocess.check_output([str(args.build/'clap-model'),'-m',str(target),
+            actual = json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding','-m',str(target),
                                  '-a',str(audio),'--frames','-t','2'], text=True))
             error(np.asarray(actual['values']).reshape(actual['frames'],actual['dimension']),
                   result.last_hidden_state[0].numpy(), f'{dtype}/{name}/frames', 0.0002)
@@ -106,19 +106,19 @@ def run(args):
                     with torch.no_grad():
                         states=network(chunk,output_hidden_states=True).hidden_states
                     chunks.append(torch.stack(states).mean(-2).mean(0)[0].numpy())
-                actual = json.loads(subprocess.check_output([str(args.build/'clap-model'),'-m',str(target),
+                actual = json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding','-m',str(target),
                                      '-a',str(audio),'--clamp3-features','-t','2'], text=True))
                 error(np.asarray(actual['values']).reshape(actual['frames'],actual['dimension']),
                       np.stack(chunks), f'{dtype}/{name}/clamp3', 0.00002)
                 if name == 'resampled':
-                    resampled = json.loads(subprocess.check_output([str(args.build/'clap-model'),
+                    resampled = json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding',
                         '-m',str(target),'-a',str(args.out/'resampled-input.wav'),
                         '--clamp3-features','-t','2'], text=True))
                     np.testing.assert_array_equal(resampled['values'], actual['values'])
                     print(f'{dtype}/48kHz CLI -> 24kHz MERT matches native-rate control', flush=True)
     for n in [0,399,23999]:
         path=args.out/f'short-{n}.wav';wav(path,np.zeros(n,dtype='float32'))
-        result=subprocess.run([str(args.build/'clap-model'),'-m',str(target),'-a',str(path),
+        result=subprocess.run([str(args.build/'clap'), 'embedding','-m',str(target),'-a',str(path),
                                '--clamp3-features'],capture_output=True,text=True)
         assert result.returncode != 0, (n,result.stdout)
     print('MERT-v1 numerical parity passed',flush=True)

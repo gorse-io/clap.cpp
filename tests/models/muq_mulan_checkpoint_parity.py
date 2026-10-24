@@ -2,7 +2,7 @@
 """Low-RAM, local-only, published MuLan oracle, one branch per subprocess.
 
 Example: python tests/models/muq_mulan_checkpoint_parity.py --checkpoint artifacts/checkpoint \
- --gguf artifacts/muq-mulan-f16.gguf --dtype f16 --cli artifacts/build/clap-model \
+ --gguf artifacts/muq-mulan-f16.gguf --dtype f16 --cli artifacts/build/clap \
  --source artifacts/oracle --muq-source /path/to/reviewed/MuQ --out artifacts/published \
  --audio /path/to/music.wav
 
@@ -162,7 +162,7 @@ def main():
         if branch=='audio':cases=[cases]
         metrics=[]
         for index,case in enumerate(cases):
-            command=[str(args.cli),'--model',str(args.gguf),'--threads','2']
+            command=[str(args.cli), 'embedding','--model',str(args.gguf),'--threads','2']
             command+=['--text',case['text']] if branch=='text' else ['--audio',case['wave']]
             proc=subprocess.run(command,check=True,capture_output=True,text=True)
             actual=json.loads(proc.stdout);expected=case['expected']
@@ -171,7 +171,7 @@ def main():
         if branch=='audio' and args.audio:
             # Characterize native decode/resampling separately; no claim of
             # bit equivalence to torchaudio/librosa resamplers.
-            original=subprocess.run([str(args.cli),'--model',str(args.gguf),'--threads','2','--audio',str(args.audio)],check=True,capture_output=True,text=True)
+            original=subprocess.run([str(args.cli), 'embedding','--model',str(args.gguf),'--threads','2','--audio',str(args.audio)],check=True,capture_output=True,text=True)
             vec=json.loads(original.stdout);control=json.loads((args.out/'audio-0-native.json').read_text())
             (args.out/'audio-original-native.json').write_text(json.dumps(vec))
             metrics.append({'resampler_control_max_abs':comparison_metrics(vec,control)['max_abs_error']})

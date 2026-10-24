@@ -18,7 +18,7 @@ for dtype in ('f32','f16'):
     out=fixture/('meta-oracle-'+dtype);out.mkdir(exist_ok=True)
     base=[sys.executable,str(root/'tests/models/muq_mulan_checkpoint_parity.py'),
           '--checkpoint',str(fixture),'--gguf',str(fixture/f'model-{dtype}.gguf'),
-          '--dtype',dtype,'--cli',str(build/'clap-model'),'--source',str(source),
+          '--dtype',dtype,'--cli',str(build/'clap'),'--source',str(source),
           '--muq-source',str(muq_source),'--out',str(out)]
     for branch in ('text','audio'):
         subprocess.run(base+['--branch',branch],check=True)
@@ -27,7 +27,7 @@ for dtype in ('f32','f16'):
         metrics=[]
         for index,case in enumerate(cases):
             args=['--text',case['text']] if branch=='text' else ['--audio',case['wave']]
-            result=subprocess.run([str(build/'clap-model'),'--model',str(fixture/f'model-{dtype}.gguf'),'--threads','2',*args],check=True,capture_output=True,text=True)
+            result=subprocess.run([str(build/'clap'), 'embedding','--model',str(fixture/f'model-{dtype}.gguf'),'--threads','2',*args],check=True,capture_output=True,text=True)
             actual=json.loads(result.stdout);expected=case['expected']
             error=max(abs(a-b) for a,b in zip(actual,expected))
             (out/f'{branch}-{index}-native.json').write_text(json.dumps(actual))
