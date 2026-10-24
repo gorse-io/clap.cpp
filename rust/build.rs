@@ -98,6 +98,8 @@ fn main() {
             target.contains("msvc"),
             "Windows requires the MSVC Rust toolchain"
         );
+        // Static ggml CPU detection and ICU timezone support use registry APIs.
+        println!("cargo:rustc-link-lib=advapi32");
     } else {
         for lib in ["stdc++", "pthread", "m", "dl"] {
             println!("cargo:rustc-link-lib={lib}");
