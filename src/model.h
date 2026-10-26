@@ -2,10 +2,12 @@
 
 #include "clap.h"
 #include <cstddef>
+#include <memory>
 #include <vector>
 #include <stdexcept>
 
 namespace clap::detail {
+class ModelContext;
 struct TextParameters {
     int bos;
     int eos;
@@ -37,6 +39,9 @@ public:
         throw std::runtime_error("CLAP: this architecture has no waveform embeddings");
     }
 protected:
+    // Architecture-local execution is constructed only after parameters and
+    // tensor contracts are validated, like llama.cpp build_arch_graph().
+    virtual std::unique_ptr<ModelContext> build_arch_context(int threads) const = 0;
     virtual void load_arch_hparams() = 0;
     virtual void load_arch_tensors() const = 0;
 };

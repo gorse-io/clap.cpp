@@ -1,4 +1,5 @@
 #include "models.h"
+#include "model-context.h"
 #include "clap.h"
 
 #include <stdexcept>
@@ -18,11 +19,36 @@ float sigmoid(float value) {
 }
 } // namespace
 
+// Execution is kept separate from the validated model/tensor contract below.
+struct Mert2Model::context final : ModelContext {
+    context(const Mert2Model &model, int threads)
+        : ModelContext(model.loader, threads),
+          model(model),
+          config(model.config) {}
+
+    Matrix frontend(const std::vector<float> &pcm) const;
+    Matrix subsample(Matrix hidden) const;
+    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
+    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+
+private:
+    const Mert2Model &model;
+    const nlohmann::json &config;
+};
+
+std::unique_ptr<ModelContext> Mert2Model::build_arch_context(int threads) const {
+    return std::make_unique<context>(*this, threads);
+}
+
 Mert2Model::Mert2Model(const ModelLoader &source, int threads)
-    : loader(source), ops(source, threads) {
+    : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
+    inference = build_arch_context(threads);
 }
+Mert2Model::~Mert2Model() = default;
 
 void Mert2Model::load_arch_hparams() {
     config = json::parse(loader.metadata("mert2.config"));
@@ -124,12 +150,12 @@ int Mert2Model::mel_bins() const { return config.at("num_mel_bins"); }
 int Mert2Model::sample_rate() const { return config.at("sampling_rate"); }
 bool Mert2Model::is_waveform_encoder() const { return true; }
 
-std::vector<float> Mert2Model::text(const std::vector<int> &) const {
+std::vector<float> Mert2Model::context::text(const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MERT-v2-FullSong has no text encoder");
 }
 
 
-Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
+Matrix Mert2Model::context::frontend(const std::vector<float> &pcm) const {
     const int fft_size = config.at("n_fft"), hop = config.at("hop_length");
     const int bins = config.at("num_mel_bins"), frequencies = fft_size / 2 + 1;
     const int frames = static_cast<int>(pcm.size() / static_cast<size_t>(hop));
@@ -165,7 +191,7 @@ Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
     return mel;
 }
 
-Matrix Mert2Model::subsample(Matrix hidden) const {
+Matrix Mert2Model::context::subsample(Matrix hidden) const {
     const auto channels = config.at("subsampling_channels");
     const auto depths = config.at("subsampling_depths");
     const float epsilon = config.at("subsampling_layer_norm_eps");
@@ -207,7 +233,7 @@ Matrix Mert2Model::subsample(Matrix hidden) const {
     return hidden;
 }
 
-Matrix Mert2Model::attention(const Matrix &hidden, const std::string &prefix) const {
+Matrix Mert2Model::context::attention(const Matrix &hidden, const std::string &prefix) const {
     Matrix query = ops.linear(hidden, prefix + ".query_proj");
     Matrix key = ops.linear(hidden, prefix + ".key_proj");
     const Matrix value = ops.linear(hidden, prefix + ".value_proj");
@@ -251,7 +277,7 @@ Matrix Mert2Model::attention(const Matrix &hidden, const std::string &prefix) co
     return ops.linear(attended, prefix + ".out_proj");
 }
 
-Matrix Mert2Model::conformer_convolution(const Matrix &hidden, const std::string &prefix) const {
+Matrix Mert2Model::context::conformer_convolution(const Matrix &hidden, const std::string &prefix) const {
     const int width = config.at("hidden_size"), kernel = config.at("conv_depthwise_kernel_size");
     auto value = ops.norm(hidden, prefix + ".layer_norm", config.at("layer_norm_eps"));
     value = ops.conv1d(value, prefix + ".conv_block.1", 1, 1, 0, 1, false);
@@ -264,7 +290,7 @@ Matrix Mert2Model::conformer_convolution(const Matrix &hidden, const std::string
     return ops.conv1d(value, prefix + ".conv_block.6", 1, 1, 0, 1, false);
 }
 
-AudioFrames Mert2Model::audio_frames(const std::vector<float> &pcm) const {
+AudioFrames Mert2Model::context::audio_frames(const std::vector<float> &pcm) const {
     const size_t maximum = (size_t{1} << 30) / sizeof(float);
     if (!(pcm.size() >= config.at("minimum_input_samples").get<size_t>()))
         throw std::runtime_error("CLAP: MERT2 waveform is shorter than minimum_input_samples");
@@ -291,5 +317,13 @@ AudioFrames Mert2Model::audio_frames(const std::vector<float> &pcm) const {
         hidden = ops.norm(hidden, prefix + ".final_layer_norm", epsilon);
     }
     return {std::move(hidden.data), hidden.rows, hidden.cols};
+}
+
+// Model-facing entry points preserve the existing internal/public facade.
+std::vector<float> Mert2Model::text(const std::vector<int> &ids) const {
+    return inference->text(ids);
+}
+AudioFrames Mert2Model::audio_frames(const std::vector<float> &pcm) const {
+    return inference->audio_frames(pcm);
 }
 } // namespace clap::detail

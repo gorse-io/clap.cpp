@@ -1,4 +1,5 @@
 #include "models.h"
+#include "model-context.h"
 #include "ggml-cpu.h"
 #include <algorithm>
 #include <cmath>
@@ -6,12 +7,43 @@
 #include <limits>
 
 namespace clap::detail {
+// Execution is kept separate from the validated model/tensor contract below.
+struct MertModel::context final : ModelContext {
+    context(const MertModel &model, int threads)
+        : ModelContext(model.loader, threads),
+          model(model),
+          config(model.config),
+          minimum_samples(model.minimum_samples) {}
+
+    int projection_dimension() const { return model.projection_dimension(); }
+    std::vector<float> normalize(const std::vector<float> &pcm) const;
+    Matrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
+    Matrix convolution(const Matrix &x, const std::string &name, int kernel,
+                       int stride, int padding, int groups, bool bias) const;
+    Matrix linear(const Matrix &x, const std::string &name) const;
+    Matrix attention(const Matrix &x, const std::string &name) const;
+    std::vector<float> text(const std::vector<int> &) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
+
+private:
+    const MertModel &model;
+    const nlohmann::json &config;
+    const int minimum_samples;
+};
+
+std::unique_ptr<ModelContext> MertModel::build_arch_context(int threads) const {
+    return std::make_unique<context>(*this, threads);
+}
+
 MertModel::MertModel(const ModelLoader &source, int threads, const std::string &tensor_prefix,
                      const std::string &metadata_prefix)
-    : loader(source, tensor_prefix, metadata_prefix), ops(loader, threads) {
+    : loader(source, tensor_prefix, metadata_prefix) {
     load_arch_hparams();
     load_arch_tensors();
+    inference = build_arch_context(threads);
 }
+MertModel::~MertModel() = default;
 
 void MertModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("mert.config"));
@@ -88,11 +120,11 @@ void MertModel::load_arch_tensors() const {
     }
 }
 
-std::vector<float> MertModel::text(const std::vector<int> &) const {
+std::vector<float> MertModel::context::text(const std::vector<int> &) const {
     throw std::runtime_error("MERT-v1 has no text encoder");
 }
 
-std::vector<float> MertModel::normalize(const std::vector<float> &pcm) const {
+std::vector<float> MertModel::context::normalize(const std::vector<float> &pcm) const {
     if (pcm.size() < static_cast<size_t>(minimum_samples) || pcm.size() > (1ULL << 28))
         throw std::runtime_error("MERT waveform is empty, too short or too large");
     double mean = 0, variance = 0;
@@ -110,7 +142,7 @@ std::vector<float> MertModel::normalize(const std::vector<float> &pcm) const {
 
 // Grouped im2col + GGML matrix multiply, bounded to one group's workspace.
 // Stored convolution weights [out,in/group,kernel] are already dense in tap order.
-Matrix MertModel::convolution(const Matrix &x, const std::string &name, int kernel,
+Matrix MertModel::context::convolution(const Matrix &x, const std::string &name, int kernel,
                              int stride, int padding, int groups, bool bias) const {
     const auto *weight = loader.weight(name + ".weight");
     const int outputs = static_cast<int>(weight->ne[2]);
@@ -151,7 +183,7 @@ Matrix MertModel::convolution(const Matrix &x, const std::string &name, int kern
 
 // F16 is storage-only: GGML's F16 dot path also rounds activations, which
 // compounds through 12 encoder layers. Expand one dense weight at a time.
-Matrix MertModel::linear(const Matrix &x, const std::string &name) const {
+Matrix MertModel::context::linear(const Matrix &x, const std::string &name) const {
     const auto *weight = loader.weight(name + ".weight");
     if (weight->type == GGML_TYPE_F32 || ggml_is_quantized(weight->type)) return ops.linear(x, name);
     if (weight->type != GGML_TYPE_F16)
@@ -178,7 +210,7 @@ Matrix MertModel::linear(const Matrix &x, const std::string &name) const {
     return result;
 }
 
-Matrix MertModel::attention(const Matrix &x, const std::string &name) const {
+Matrix MertModel::context::attention(const Matrix &x, const std::string &name) const {
     auto q = linear(x,name+".q_proj"), k = linear(x,name+".k_proj"), v = linear(x,name+".v_proj");
     Matrix out(x.rows,x.cols);
     const int heads = config.at("num_attention_heads"), width = x.cols / heads;
@@ -199,7 +231,7 @@ Matrix MertModel::attention(const Matrix &x, const std::string &name) const {
     return linear(out,name+".out_proj");
 }
 
-Matrix MertModel::forward(const std::vector<float> &pcm, std::vector<float> *layer_mean) const {
+Matrix MertModel::context::forward(const std::vector<float> &pcm, std::vector<float> *layer_mean) const {
     Matrix hidden(static_cast<int>(pcm.size()),1); hidden.data = pcm;
     const auto dims = config.at("conv_dim"), kernels = config.at("conv_kernel"), strides = config.at("conv_stride");
     for (size_t layer = 0; layer < dims.size(); ++layer) {
@@ -251,11 +283,11 @@ Matrix MertModel::forward(const std::vector<float> &pcm, std::vector<float> *lay
     return hidden;
 }
 
-AudioFrames MertModel::audio_frames(const std::vector<float> &pcm) const {
+AudioFrames MertModel::context::audio_frames(const std::vector<float> &pcm) const {
     auto output = forward(normalize(pcm),nullptr);
     return {std::move(output.data),output.rows,output.cols};
 }
-AudioFrames MertModel::clamp3_features(const std::vector<float> &pcm) const {
+AudioFrames MertModel::context::clamp3_features(const std::vector<float> &pcm) const {
     if (pcm.size() < 24000)
         throw std::runtime_error("CLaMP3 MERT extraction requires at least one second of audio");
     auto normalized = normalize(pcm);
@@ -269,5 +301,16 @@ AudioFrames MertModel::clamp3_features(const std::vector<float> &pcm) const {
         result.values.insert(result.values.end(),mean.begin(),mean.end()); ++result.frames;
     }
     return result;
+}
+
+// Model-facing entry points preserve the existing internal/public facade.
+std::vector<float> MertModel::text(const std::vector<int> &ids) const {
+    return inference->text(ids);
+}
+AudioFrames MertModel::audio_frames(const std::vector<float> &pcm) const {
+    return inference->audio_frames(pcm);
+}
+AudioFrames MertModel::clamp3_features(const std::vector<float> &pcm) const {
+    return inference->clamp3_features(pcm);
 }
 } // namespace clap::detail

@@ -1,4 +1,5 @@
 #include "models.h"
+#include "model-context.h"
 #include <stdexcept>
 #include <ggml-cpu.h>
 #include <algorithm>
@@ -18,10 +19,41 @@ float cubic(float x) {
 }
 } // namespace
 
-ClapModel::ClapModel(const ModelLoader &source, int threads) : loader(source), ops(source, threads) {
+// Execution is kept separate from the validated model/tensor contract below.
+struct ClapModel::context final : ModelContext {
+    context(const ClapModel &model, int threads)
+        : ModelContext(model.loader, threads),
+          model(model),
+          config(model.config),
+          a(model.a),
+          t(model.t) {}
+
+    int mel_bins() const { return model.mel_bins(); }
+    std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
+    Matrix attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
+                     const std::vector<int> *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
+    std::vector<float> project(const Matrix &pooled, const std::string &prefix) const;
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+
+private:
+    const ClapModel &model;
+    const nlohmann::json &config;
+    const nlohmann::json &a;
+    const nlohmann::json &t;
+};
+
+std::unique_ptr<ModelContext> ClapModel::build_arch_context(int threads) const {
+    return std::make_unique<context>(*this, threads);
+}
+
+ClapModel::ClapModel(const ModelLoader &source, int threads) : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
+    inference = build_arch_context(threads);
 }
+ClapModel::~ClapModel() = default;
 
 void ClapModel::load_arch_hparams() {
     config = json::parse(loader.metadata("clap.config"));
@@ -117,11 +149,11 @@ int ClapModel::projection_dimension() const { return config.at("projection_dim")
 int ClapModel::mel_bins() const { return a.at("num_mel_bins"); }
 int ClapModel::sample_rate() const { return 48000; }
 bool ClapModel::is_waveform_encoder() const { return false; }
-AudioFrames ClapModel::audio_frames(const std::vector<float> &) const {
+AudioFrames ClapModel::context::audio_frames(const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLAP exposes one pooled audio projection, not frame representations");
 }
 
-Matrix ClapModel::attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
+Matrix ClapModel::context::attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
                  const std::vector<int> *mask, int window, int shift, int grid) const {
     const auto q = ops.linear(x, prefix + ".query"), k = ops.linear(x, prefix + ".key"), v = ops.linear(x, prefix + ".value");
     Matrix result(x.rows, x.cols);
@@ -163,7 +195,7 @@ Matrix ClapModel::attention(const Matrix &x, const std::string &prefix, int head
     return result;
 }
 
-std::vector<float> ClapModel::project(const Matrix &pooled, const std::string &prefix) const {
+std::vector<float> ClapModel::context::project(const Matrix &pooled, const std::string &prefix) const {
     auto h = ops.linear(pooled, prefix + ".linear1");
     for (float &v : h.data) v = std::max(v, 0.0f);
     auto y = ops.linear(h, prefix + ".linear2");
@@ -176,7 +208,7 @@ std::vector<float> ClapModel::project(const Matrix &pooled, const std::string &p
     return y.data;
 }
 
-std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
+std::vector<float> ClapModel::context::text(const std::vector<int> &ids) const {
     const int dim = t.at("hidden_size"), pad = t.at("pad_token_id"), vocab = t.at("vocab_size");
     if (!(!ids.empty() && ids.size() <= static_cast<size_t>(t.at("max_position_embeddings").get<int>() - 2)))
         throw std::runtime_error("CLAP: text length outside model context");
@@ -217,12 +249,12 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
     return project(pooled, "text_proj");
 }
 
-std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+std::vector<float> ClapModel::context::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
     if (mel_bins() != 64) throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
     return encode_features(clap::log_mel(pcm, 48000, crop_offset), 1001);
 }
 
-std::vector<float> ClapModel::encode_features(const std::vector<float> &features, int frames) const {
+std::vector<float> ClapModel::context::encode_features(const std::vector<float> &features, int frames) const {
     const int bins = a.at("num_mel_bins"), spec = a.at("spec_size"), ratio = spec / bins;
     const int target_time = spec * ratio;
     if (!(frames > 0 && frames <= target_time && features.size() == static_cast<size_t>(frames) * bins))
@@ -327,4 +359,19 @@ std::vector<float> ClapModel::encode_features(const std::vector<float> &features
     Matrix pooled(1, x.cols);
     for (int r = 0; r < x.rows; ++r) for (int c = 0; c < x.cols; ++c) pooled[0][c] += x[r][c] / x.rows;
     return project(pooled, "audio_proj");
-}} // namespace clap::detail
+}
+
+// Model-facing entry points preserve the existing internal/public facade.
+std::vector<float> ClapModel::encode_features(const std::vector<float> &features, int frames) const {
+    return static_cast<const context &>(*inference).encode_features(features, frames);
+}
+std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
+    return inference->text(ids);
+}
+AudioFrames ClapModel::audio_frames(const std::vector<float> &pcm) const {
+    return inference->audio_frames(pcm);
+}
+std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    return inference->waveform_embedding(pcm, crop_offset);
+}
+} // namespace clap::detail
