@@ -1,4 +1,5 @@
 #include "models.h"
+#include "model-context.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -7,8 +8,44 @@
 namespace clap::detail {
 using json = nlohmann::json;
 
+// Execution is kept separate from the validated model/tensor contract below.
+struct Clamp3Model::context final : ModelContext {
+    context(const Clamp3Model &model, int threads)
+        : ModelContext(model.loader, threads),
+          model(model),
+          config(model.config),
+          audio_config(model.audio_config),
+          text_config(model.text_config),
+          frontend(model.frontend) {}
+
+    int projection_dimension() const { return model.projection_dimension(); }
+    std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
+    Matrix encode(const Matrix &embeddings, const std::vector<int> &mask,
+                  const nlohmann::json &branch, const std::string &prefix) const;
+    Matrix attention(const Matrix &x, const std::vector<int> &mask,
+                     const std::string &prefix, int heads) const;
+    std::vector<float> chunked_text(const std::vector<int> &ids) const;
+    std::vector<float> chunked_audio(const Matrix &features) const;
+    std::vector<float> pool_project(const Matrix &hidden, const std::vector<int> &mask,
+                                    const std::string &projection) const;
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+
+private:
+    const Clamp3Model &model;
+    const nlohmann::json &config;
+    const nlohmann::json &audio_config;
+    const nlohmann::json &text_config;
+    const std::unique_ptr<MertModel> &frontend;
+};
+
+std::unique_ptr<ModelContext> Clamp3Model::build_arch_context(int threads) const {
+    return std::make_unique<context>(*this, threads);
+}
+
 Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
-    : loader(source), ops(source, threads) {
+    : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
     if (loader.has_metadata_prefix("clamp3.audio_frontend")) {
@@ -25,10 +62,11 @@ Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
     } else {
         throw std::runtime_error("CLAP: CLaMP3 requires bundled MERT-v1-95M audio frontend metadata; reconvert the checkpoint");
     }
+    inference = build_arch_context(threads);
 }
 Clamp3Model::~Clamp3Model() = default;
 bool Clamp3Model::has_waveform_embeddings() const { return frontend != nullptr; }
-std::vector<float> Clamp3Model::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+std::vector<float> Clamp3Model::context::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
     if (crop_offset != 0) throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
     if (!frontend) throw std::runtime_error("CLAP: CLaMP3 requires MERT-v1-95M features");
     const auto features = frontend->clamp3_features(pcm);
@@ -117,11 +155,11 @@ int Clamp3Model::projection_dimension() const { return config.at("projection_dim
 int Clamp3Model::mel_bins() const { return 0; }
 int Clamp3Model::sample_rate() const { return frontend ? frontend->sample_rate() : 0; }
 bool Clamp3Model::is_waveform_encoder() const { return false; }
-AudioFrames Clamp3Model::audio_frames(const std::vector<float> &) const {
+AudioFrames Clamp3Model::context::audio_frames(const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLaMP3 requires precomputed MERT-v1-95M features");
 }
 
-Matrix Clamp3Model::attention(const Matrix &x, const std::vector<int> &mask,
+Matrix Clamp3Model::context::attention(const Matrix &x, const std::vector<int> &mask,
                               const std::string &prefix, int heads) const {
     const auto q = ops.linear(x, prefix + ".query");
     const auto k = ops.linear(x, prefix + ".key");
@@ -151,7 +189,7 @@ Matrix Clamp3Model::attention(const Matrix &x, const std::vector<int> &mask,
     return result;
 }
 
-Matrix Clamp3Model::encode(const Matrix &embeddings, const std::vector<int> &mask,
+Matrix Clamp3Model::context::encode(const Matrix &embeddings, const std::vector<int> &mask,
                            const json &branch, const std::string &prefix) const {
     Matrix x = ops.norm(embeddings, prefix + ".embeddings.LayerNorm", branch.at("layer_norm_eps"));
     for (int layer = 0; layer < branch.at("num_hidden_layers").get<int>(); ++layer) {
@@ -169,7 +207,7 @@ Matrix Clamp3Model::encode(const Matrix &embeddings, const std::vector<int> &mas
     return x;
 }
 
-std::vector<float> Clamp3Model::pool_project(const Matrix &hidden, const std::vector<int> &mask,
+std::vector<float> Clamp3Model::context::pool_project(const Matrix &hidden, const std::vector<int> &mask,
                                               const std::string &projection) const {
     int count = 0;
     Matrix pooled(1, hidden.cols);
@@ -183,7 +221,7 @@ std::vector<float> Clamp3Model::pool_project(const Matrix &hidden, const std::ve
     return ops.linear(pooled, projection).data;
 }
 
-std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const {
+std::vector<float> Clamp3Model::context::chunked_text(const std::vector<int> &ids) const {
     const int chunk = config.at("chunk_length"), dim = text_config.at("hidden_size");
     const int pad = text_config.at("pad_token_id"), vocab = text_config.at("vocab_size");
     const auto *words = loader.weight("text.embeddings.word_embeddings.weight");
@@ -223,7 +261,7 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
     return result;
 }
 
-std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
+std::vector<float> Clamp3Model::context::chunked_audio(const Matrix &features) const {
     const int chunk = config.at("chunk_length"), dim = audio_config.at("hidden_size");
     const auto *positions = loader.weight("audio.embeddings.position_embeddings.weight");
     const auto *types = loader.weight("audio.embeddings.token_type_embeddings.weight");
@@ -257,13 +295,13 @@ std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
     return result;
 }
 
-std::vector<float> Clamp3Model::text(const std::vector<int> &ids) const {
+std::vector<float> Clamp3Model::context::text(const std::vector<int> &ids) const {
     if (ids.empty())
         throw std::runtime_error("CLAP: text token sequence is empty");
     return chunked_text(ids);
 }
 
-std::vector<float> Clamp3Model::encode_features(const std::vector<float> &features, int frames) const {
+std::vector<float> Clamp3Model::context::encode_features(const std::vector<float> &features, int frames) const {
     const int dim = config.at("audio_feature_dim");
     if (!(frames > 0 && frames <= std::numeric_limits<int>::max() - 2 &&
           features.size() == static_cast<size_t>(frames) * dim))
@@ -273,5 +311,19 @@ std::vector<float> Clamp3Model::encode_features(const std::vector<float> &featur
     Matrix bordered(frames + 2, dim);
     std::copy(features.begin(), features.end(), bordered.data.begin() + dim);
     return chunked_audio(bordered);
+}
+
+// Model-facing entry points preserve the existing internal/public facade.
+std::vector<float> Clamp3Model::encode_features(const std::vector<float> &features, int frames) const {
+    return static_cast<const context &>(*inference).encode_features(features, frames);
+}
+std::vector<float> Clamp3Model::text(const std::vector<int> &ids) const {
+    return inference->text(ids);
+}
+AudioFrames Clamp3Model::audio_frames(const std::vector<float> &pcm) const {
+    return inference->audio_frames(pcm);
+}
+std::vector<float> Clamp3Model::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    return inference->waveform_embedding(pcm, crop_offset);
 }
 } // namespace clap::detail

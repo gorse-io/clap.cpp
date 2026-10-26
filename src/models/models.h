@@ -2,17 +2,18 @@
 
 #include "model.h"
 #include "model-loader.h"
-#include "model-ops.h"
 #include <nlohmann/json.hpp>
 
 namespace clap::detail {
 
 // Per-architecture declarations belong here, following llama.cpp/src/models.
-// GGUF I/O, tokenizer ownership, generic tensor operations and the public Model
-// facade are implemented in the core src/ files, not in this specialization.
+// Model specializations own validated configuration, tensor contracts and embedded
+// backbones. Their nested contexts (defined in each .cpp) own inference helpers
+// and execution state. GGUF I/O, vocabulary and the Model facade stay in core.
 class ClapModel final : public ModelArchitecture {
 public:
     ClapModel(const ModelLoader &loader, int threads);
+    ~ClapModel() override;
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
@@ -25,15 +26,14 @@ public:
 private:
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
+    struct context;
+    std::unique_ptr<ModelContext> build_arch_context(int threads) const override;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
-    Matrix attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
-                     const std::vector<int> *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
-    std::vector<float> project(const Matrix &pooled, const std::string &prefix) const;
 
     const ModelLoader &loader;
-    TensorOps ops;
     nlohmann::json config, a, t;
+    std::unique_ptr<ModelContext> inference;
 };
 
 // CLaMP3 text (XLM-R) and audio (BERT), optionally with a bundled MERT frontend.
@@ -54,21 +54,15 @@ public:
 private:
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
+    struct context;
+    std::unique_ptr<ModelContext> build_arch_context(int threads) const override;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
-    Matrix encode(const Matrix &embeddings, const std::vector<int> &mask,
-                  const nlohmann::json &branch, const std::string &prefix) const;
-    Matrix attention(const Matrix &x, const std::vector<int> &mask,
-                     const std::string &prefix, int heads) const;
-    std::vector<float> chunked_text(const std::vector<int> &ids) const;
-    std::vector<float> chunked_audio(const Matrix &features) const;
-    std::vector<float> pool_project(const Matrix &hidden, const std::vector<int> &mask,
-                                    const std::string &projection) const;
 
     const ModelLoader &loader;
-    TensorOps ops;
     nlohmann::json config, audio_config, text_config;
     std::unique_ptr<MertModel> frontend;
+    std::unique_ptr<ModelContext> inference;
 };
 
 // Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,
@@ -76,6 +70,7 @@ private:
 class Mert2Model final : public ModelArchitecture {
 public:
     Mert2Model(const ModelLoader &loader, int threads);
+    ~Mert2Model() override;
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
@@ -84,16 +79,14 @@ public:
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
 private:
+    struct context;
+    std::unique_ptr<ModelContext> build_arch_context(int threads) const override;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
-    Matrix frontend(const std::vector<float> &pcm) const;
-    Matrix subsample(Matrix hidden) const;
-    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
-    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
 
     const ModelLoader &loader;
-    TensorOps ops;
     nlohmann::json config;
+    std::unique_ptr<ModelContext> inference;
 };
 // MERT-v1-95M: normalized waveform, HuBERT convolutional frontend and
 // post-layer-normalized transformer. CLaMP3 pooling is a separate contract.
@@ -101,6 +94,7 @@ class MertModel final : public ModelArchitecture {
 public:
     MertModel(const ModelLoader &loader, int threads,
               const std::string &tensor_prefix = "", const std::string &metadata_prefix = "");
+    ~MertModel() override;
     std::vector<float> text(const std::vector<int> &) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
@@ -110,18 +104,14 @@ public:
     int sample_rate() const override { return 24000; }
     bool is_waveform_encoder() const override { return true; }
 private:
+    struct context;
+    std::unique_ptr<ModelContext> build_arch_context(int threads) const override;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
-    std::vector<float> normalize(const std::vector<float> &pcm) const;
-    Matrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
-    Matrix convolution(const Matrix &x, const std::string &name, int kernel,
-                       int stride, int padding, int groups, bool bias) const;
-    Matrix linear(const Matrix &x, const std::string &name) const;
-    Matrix attention(const Matrix &x, const std::string &name) const;
     ModelLoader loader;
-    TensorOps ops;
     nlohmann::json config;
     int minimum_samples = 0;
+    std::unique_ptr<ModelContext> inference;
 };
 
 // OpenMuQ/MuQ-large-msd-iter: native log-mel, residual 2D subsampling and
@@ -129,6 +119,7 @@ private:
 class MuqModel final : public ModelArchitecture {
 public:
     MuqModel(const ModelLoader &loader, int threads);
+    ~MuqModel() override;
     std::vector<float> text(const std::vector<int> &) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
@@ -137,24 +128,20 @@ public:
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
 private:
-    struct Image { int frequencies; int frames; Matrix values; };
+    struct context;
+    std::unique_ptr<ModelContext> build_arch_context(int threads) const override;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
-    Matrix frontend(const std::vector<float> &pcm) const;
-    Matrix subsample(const Matrix &mel) const;
-    Image conv2d(const Image &input, const std::string &prefix, int stride) const;
-    void batch_norm(Matrix &input, const std::string &prefix) const;
-    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
-    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
     const ModelLoader &loader;
-    TensorOps ops;
     nlohmann::json config, encoder;
+    std::unique_ptr<ModelContext> inference;
 };
 
 // Joint MuQ-MuLan embeddings: the audio backbone remains the exact MuqModel.
 class MuqMulanModel final : public ModelArchitecture {
 public:
     MuqMulanModel(const ModelLoader &loader, int threads);
+    ~MuqMulanModel() override;
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &) const override;
     std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
@@ -165,15 +152,13 @@ public:
     bool is_waveform_encoder() const override { return false; }
     bool has_waveform_embeddings() const override { return true; }
 private:
+    struct context;
+    std::unique_ptr<ModelContext> build_arch_context(int threads) const override;
     void load_arch_hparams() override;
     void load_arch_tensors() const override;
-    Matrix encode_text(const Matrix &x) const;
-    Matrix adapter(Matrix x) const;
-    Matrix biasless_norm(const Matrix &x, const std::string &name) const;
-    std::vector<float> project(const Matrix &x, const std::string &name) const;
     const ModelLoader &loader;
-    TensorOps ops;
     MuqModel audio_backbone;
     nlohmann::json config, text_config;
+    std::unique_ptr<ModelContext> inference;
 };
 } // namespace clap::detail

@@ -1,4 +1,5 @@
 #include "models.h"
+#include "model-context.h"
 #include "clap.h"
 #include <ggml-cpu.h>
 #include <algorithm>
@@ -19,9 +20,40 @@ float sigmoid(float value) {
 void silu(Matrix &x) { for (float &v : x.data) v *= sigmoid(v); }
 
 }
-MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), ops(source, threads) {
-    load_arch_hparams(); load_arch_tensors();
+// Execution is kept separate from the validated model/tensor contract below.
+struct MuqModel::context final : ModelContext {
+    context(const MuqModel &model, int threads)
+        : ModelContext(model.loader, threads),
+          model(model),
+          config(model.config),
+          encoder(model.encoder) {}
+
+    struct Image { int frequencies; int frames; Matrix values; };
+    Image conv2d(const Image &input, const std::string &prefix, int stride) const;
+    void batch_norm(Matrix &input, const std::string &prefix) const;
+    Matrix frontend(const std::vector<float> &pcm) const;
+    Matrix subsample(const Matrix &mel) const;
+    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
+    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
+    std::vector<float> text(const std::vector<int> &) const override;
+    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+
+private:
+    const MuqModel &model;
+    const nlohmann::json &config;
+    const nlohmann::json &encoder;
+};
+
+std::unique_ptr<ModelContext> MuqModel::build_arch_context(int threads) const {
+    return std::make_unique<context>(*this, threads);
 }
+
+MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source) {
+    load_arch_hparams(); load_arch_tensors();
+    inference = build_arch_context(threads);
+}
+MuqModel::~MuqModel() = default;
+
 void MuqModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq.config"));
     encoder = config.at("w2v2_config");
@@ -111,10 +143,10 @@ int MuqModel::projection_dimension() const { return config.at("encoder_dim"); }
 int MuqModel::mel_bins() const { return 128; }
 int MuqModel::sample_rate() const { return 24000; }
 bool MuqModel::is_waveform_encoder() const { return true; }
-std::vector<float> MuqModel::text(const std::vector<int> &) const {
+std::vector<float> MuqModel::context::text(const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MuQ has no text encoder");
 }
-Matrix MuqModel::frontend(const std::vector<float> &pcm) const {
+Matrix MuqModel::context::frontend(const std::vector<float> &pcm) const {
     const int frames = static_cast<int>(pcm.size() / 240);
     Matrix mel(frames, 128);
     const auto *window = loader.weight("frontend.window"), *filters = loader.weight("frontend.filters");
@@ -139,7 +171,7 @@ Matrix MuqModel::frontend(const std::vector<float> &pcm) const {
     }
     return mel;
 }
-void MuqModel::batch_norm(Matrix &x, const std::string &prefix) const {
+void MuqModel::context::batch_norm(Matrix &x, const std::string &prefix) const {
     const auto *weight = loader.weight(prefix + ".weight"), *bias = loader.weight(prefix + ".bias");
     const auto *mean = loader.weight(prefix + ".running_mean"), *variance = loader.weight(prefix + ".running_var");
     for (int column = 0; column < x.cols; ++column) {
@@ -148,7 +180,7 @@ void MuqModel::batch_norm(Matrix &x, const std::string &prefix) const {
             x[row][column] = (x[row][column] - scalar(mean, column)) * scale + scalar(bias, column);
     }
 }
-MuqModel::Image MuqModel::conv2d(const Image &input, const std::string &prefix, int stride) const {
+MuqModel::context::Image MuqModel::context::conv2d(const Image &input, const std::string &prefix, int stride) const {
     const auto *weight = loader.weight(prefix + ".weight"), *bias = loader.weight(prefix + ".bias");
     const int frequencies = (input.frequencies + stride - 1) / stride;
     const int frames = (input.frames + stride - 1) / stride;
@@ -192,7 +224,7 @@ MuqModel::Image MuqModel::conv2d(const Image &input, const std::string &prefix, 
     }
     return result;
 }
-Matrix MuqModel::subsample(const Matrix &mel) const {
+Matrix MuqModel::context::subsample(const Matrix &mel) const {
     Image value{128, mel.rows, Matrix(128 * mel.rows, 1)};
     for (int f = 0; f < 128; ++f) for (int t = 0; t < mel.rows; ++t) value.values[f * mel.rows + t][0] = mel[t][f];
     for (int stage = 0; stage < 2; ++stage) {
@@ -210,7 +242,7 @@ Matrix MuqModel::subsample(const Matrix &mel) const {
             flattened[t][c * value.frequencies + f] = value.values[f * value.frames + t][c];
     return ops.linear(flattened, "conv.linear");
 }
-Matrix MuqModel::attention(const Matrix &hidden, const std::string &prefix) const {
+Matrix MuqModel::context::attention(const Matrix &hidden, const std::string &prefix) const {
     const int heads = encoder.at("num_attention_heads"), dimension = hidden.cols / heads, half = dimension / 2;
     const float base = encoder.at("rotary_embedding_base");
     Matrix rotated = hidden;
@@ -245,7 +277,7 @@ Matrix MuqModel::attention(const Matrix &hidden, const std::string &prefix) cons
     }
     return ops.linear(attended, prefix + ".linear_out");
 }
-Matrix MuqModel::conformer_convolution(const Matrix &hidden, const std::string &prefix) const {
+Matrix MuqModel::context::conformer_convolution(const Matrix &hidden, const std::string &prefix) const {
     const int width = hidden.cols, kernel = encoder.at("conv_depthwise_kernel_size");
     auto value = ops.norm(hidden, prefix + ".layer_norm", 1e-5f);
     value = ops.conv1d(value, prefix + ".pointwise_conv1", 1, 1, 0, 1, false);
@@ -256,7 +288,7 @@ Matrix MuqModel::conformer_convolution(const Matrix &hidden, const std::string &
     batch_norm(value, prefix + ".batch_norm"); silu(value);
     return ops.conv1d(value, prefix + ".pointwise_conv2", 1, 1, 0, 1, false);
 }
-AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
+AudioFrames MuqModel::context::audio_frames(const std::vector<float> &pcm) const {
     if (!(pcm.size() >= 1025))
         throw std::runtime_error("CLAP: MuQ waveform must contain at least 1025 samples");
     if (!(pcm.size() <= (size_t{1} << 30) / sizeof(float)))
@@ -281,5 +313,13 @@ AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
     }
     hidden = ops.norm(hidden, "conformer.layer_norm", encoder.at("layer_norm_eps"));
     return {std::move(hidden.data), hidden.rows, hidden.cols};
+}
+
+// Model-facing entry points preserve the existing internal/public facade.
+std::vector<float> MuqModel::text(const std::vector<int> &ids) const {
+    return inference->text(ids);
+}
+AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
+    return inference->audio_frames(pcm);
 }
 } // namespace clap::detail

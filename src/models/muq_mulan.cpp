@@ -1,4 +1,5 @@
 #include "models.h"
+#include "model-context.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -11,10 +12,42 @@ void positive(const nlohmann::json &obj, const char *key) {
         throw std::runtime_error(std::string("CLAP: invalid MuLan dimension: ") + key);
 }
 }
-MuqMulanModel::MuqMulanModel(const ModelLoader &source, int threads)
-    : loader(source), ops(source, threads), audio_backbone(source, threads) {
-    load_arch_hparams(); load_arch_tensors();
+// Execution is kept separate from the validated model/tensor contract below.
+struct MuqMulanModel::context final : ModelContext {
+    context(const MuqMulanModel &model, int threads)
+        : ModelContext(model.loader, threads),
+          model(model),
+          config(model.config),
+          text_config(model.text_config),
+          audio_backbone(model.audio_backbone) {}
+
+    int projection_dimension() const { return model.projection_dimension(); }
+    Matrix encode_text(const Matrix &x) const;
+    Matrix adapter(Matrix x) const;
+    Matrix biasless_norm(const Matrix &x, const std::string &name) const;
+    std::vector<float> project(const Matrix &x, const std::string &name) const;
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(const std::vector<float> &) const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+
+private:
+    const MuqMulanModel &model;
+    const nlohmann::json &config;
+    const nlohmann::json &text_config;
+    const MuqModel &audio_backbone;
+};
+
+std::unique_ptr<ModelContext> MuqMulanModel::build_arch_context(int threads) const {
+    return std::make_unique<context>(*this, threads);
 }
+
+MuqMulanModel::MuqMulanModel(const ModelLoader &source, int threads)
+    : loader(source), audio_backbone(source, threads) {
+    load_arch_hparams(); load_arch_tensors();
+    inference = build_arch_context(threads);
+}
+MuqMulanModel::~MuqMulanModel() = default;
+
 void MuqMulanModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq_mulan.config"));
     text_config = nlohmann::json::parse(loader.metadata("muq_mulan.text_config"));
@@ -93,8 +126,8 @@ TextParameters MuqMulanModel::text_parameters() const {
     return {0,2,std::numeric_limits<size_t>::max()};
 }
 int MuqMulanModel::projection_dimension() const { return config.at("mulan").at("dim_latent"); }
-AudioFrames MuqMulanModel::audio_frames(const std::vector<float> &) const { throw std::runtime_error("CLAP: MuLan exposes embeddings, not frames"); }
-Matrix MuqMulanModel::encode_text(const Matrix &embeddings) const {
+AudioFrames MuqMulanModel::context::audio_frames(const std::vector<float> &) const { throw std::runtime_error("CLAP: MuLan exposes embeddings, not frames"); }
+Matrix MuqMulanModel::context::encode_text(const Matrix &embeddings) const {
     const int heads=text_config.at("num_attention_heads"), hd=embeddings.cols/heads;
     const float eps=text_config.at("layer_norm_eps");
     auto x=ops.norm(embeddings,"text.embeddings.LayerNorm",eps);
@@ -117,7 +150,7 @@ Matrix MuqMulanModel::encode_text(const Matrix &embeddings) const {
     }
     return x;
 }
-Matrix MuqMulanModel::biasless_norm(const Matrix &x,const std::string &name) const {
+Matrix MuqMulanModel::context::biasless_norm(const Matrix &x,const std::string &name) const {
     Matrix y(x.rows,x.cols); const auto *gamma=loader.weight(name+".learned_gamma");
     for(int r=0;r<x.rows;++r) {
         double mean=0,var=0; for(int c=0;c<x.cols;++c) mean+=x[r][c]; mean/=x.cols;
@@ -127,7 +160,7 @@ Matrix MuqMulanModel::biasless_norm(const Matrix &x,const std::string &name) con
     }
     return y;
 }
-Matrix MuqMulanModel::adapter(Matrix x) const {
+Matrix MuqMulanModel::context::adapter(Matrix x) const {
     const auto &t=config.at("text_transformer"); const int heads=t.at("heads"),hd=t.at("dim_head"),inner=heads*hd;
     for(int layer=0;layer<t.at("tf_depth").get<int>();++layer) {
         const auto p="adapter.layers."+std::to_string(layer);
@@ -156,14 +189,14 @@ Matrix MuqMulanModel::adapter(Matrix x) const {
     }
     return x;
 }
-std::vector<float> MuqMulanModel::project(const Matrix &x,const std::string &name) const {
+std::vector<float> MuqMulanModel::context::project(const Matrix &x,const std::string &name) const {
     Matrix pooled(1,x.cols);for(int r=0;r<x.rows;++r) for(int c=0;c<x.cols;++c) pooled[0][c]+=x[r][c]/x.rows;
     auto result=ops.linear(pooled,name).data;
     float norm=0;for(float v:result) norm+=v*v;norm=std::max(std::sqrt(norm),1e-12f);
     for(float &v:result) {v/=norm;if(!std::isfinite(v)) throw std::runtime_error("CLAP: non-finite MuLan embedding");}
     return result;
 }
-std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
+std::vector<float> MuqMulanModel::context::text(const std::vector<int> &ids) const {
     const int dim=text_config.at("hidden_size"),positions=text_config.at("max_position_embeddings"),vocab=text_config.at("vocab_size");
     if(ids.empty() || ids.size()>static_cast<size_t>(positions-2)) throw std::runtime_error("CLAP: MuLan text is empty or exceeds XLM-R context; truncation/chunking unsupported");
     Matrix x(static_cast<int>(ids.size()),dim);std::vector<float> pos(dim),type(dim);
@@ -179,7 +212,7 @@ std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
     }
     return project(adapter(encode_text(x)),"text_proj");
 }
-std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+std::vector<float> MuqMulanModel::context::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
     if (crop_offset != 0) throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
     if(pcm.empty() || pcm.size()>(size_t{1}<<28) || !std::all_of(pcm.begin(),pcm.end(),[](float v){return std::isfinite(v);}))
         throw std::runtime_error("CLAP: MuLan requires finite nonempty waveform of at most 1 GiB");
@@ -198,5 +231,16 @@ std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &p
     }
     for(float &v:result) v/=count;
     return result;
+}
+
+// Model-facing entry points preserve the existing internal/public facade.
+std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
+    return inference->text(ids);
+}
+AudioFrames MuqMulanModel::audio_frames(const std::vector<float> &pcm) const {
+    return inference->audio_frames(pcm);
+}
+std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    return inference->waveform_embedding(pcm, crop_offset);
 }
 } // namespace clap::detail
