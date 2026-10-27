@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
         require(argc == 3, "usage: clamp3-model-test MODEL.gguf FIXTURE.json");
         std::ifstream input(argv[2]);
         nlohmann::json fixture; input >> fixture;
-        clap::Model model(argv[1], 2);
+        clap::CLAP model(argv[1], 2);
         require(model.projection_dimension() == fixture.at("projection_dim"), "projection dimension");
         const float tolerance = fixture.value("embedding_tolerance", 8e-5f);
         for (const auto &test : fixture.at("tokenizer_cases")) {
@@ -39,10 +39,10 @@ int main(int argc, char **argv) {
             require(ids == test.at("ids").get<std::vector<int>>(), "tokenizer mismatch: " + test.at("text").get<std::string>());
         }
         for (const auto &test : fixture.at("text_cases")) {
-            compare(model.text(test.at("ids").get<std::vector<int>>()),
+            compare(model.encode_text(test.at("ids").get<std::vector<int>>()),
                     test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
             if (test.contains("utf8"))
-                compare(model.text(test.at("utf8").get<std::string>()),
+                compare(model.encode_text(test.at("utf8").get<std::string>()),
                         test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
         }
         for (const auto &test : fixture.at("audio_cases"))

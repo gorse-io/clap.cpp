@@ -7,7 +7,7 @@
 
 namespace clap {
 
-struct Model::Impl {
+struct CLAP::Impl {
     // Declaration order ensures the architecture is destroyed before its mapping.
     detail::ModelLoader loader;
     std::unique_ptr<detail::ModelArchitecture> architecture;
@@ -35,26 +35,26 @@ struct Model::Impl {
     }
 };
 
-Model::Model(const std::string &path, int threads) : impl_(std::make_unique<Impl>(path, threads)) {}
-Model::~Model() = default;
-Model::Model(Model &&) noexcept = default;
-Model &Model::operator=(Model &&) noexcept = default;
+CLAP::CLAP(const std::string &path, int threads) : impl_(std::make_unique<Impl>(path, threads)) {}
+CLAP::~CLAP() = default;
+CLAP::CLAP(CLAP &&) noexcept = default;
+CLAP &CLAP::operator=(CLAP &&) noexcept = default;
 
-int Model::projection_dimension() const { return impl_->architecture->projection_dimension(); }
-std::vector<int> Model::tokenize(const std::string &utf8, size_t max_length) const {
+int CLAP::projection_dimension() const { return impl_->architecture->projection_dimension(); }
+std::vector<int> CLAP::tokenize(const std::string &utf8, size_t max_length) const {
     if (impl_->vocabulary == nullptr)
         throw std::runtime_error("CLAP: this model has no text tokenizer");
     return impl_->vocabulary->tokenize(utf8, max_length);
 }
-std::vector<float> Model::text(const std::string &utf8) {
+std::vector<float> CLAP::encode_text(const std::string &utf8) {
     if (impl_->vocabulary == nullptr)
         throw std::runtime_error("CLAP: this model has no text encoder");
-    return text(tokenize(utf8, impl_->architecture->text_parameters().context_length));
+    return encode_text(tokenize(utf8, impl_->architecture->text_parameters().context_length));
 }
-std::vector<float> Model::text(const std::vector<int> &ids) {
+std::vector<float> CLAP::encode_text(const std::vector<int> &ids) {
     return impl_->architecture->text(ids);
 }
-std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
+std::vector<float> CLAP::encode_audio(const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
     if (impl_->architecture->has_waveform_embeddings()) {
         if (sample_rate <= 0) throw std::runtime_error("CLAP: audio sample rate must be positive");
         const int target = impl_->architecture->sample_rate();
@@ -74,7 +74,7 @@ std::vector<float> Model::audio(const std::vector<float> &pcm, int sample_rate, 
     throw std::runtime_error("CLAP: this model has no waveform audio encoder");
 }
 
-AudioFrames Model::audio_frames(const std::vector<float> &pcm, int sample_rate) {
+AudioFrames CLAP::audio_frames(const std::vector<float> &pcm, int sample_rate) {
     if (!(impl_->architecture->is_waveform_encoder()))
         throw std::runtime_error("CLAP: this model does not expose frame representations");
     if (!(sample_rate > 0))
@@ -84,8 +84,8 @@ AudioFrames Model::audio_frames(const std::vector<float> &pcm, int sample_rate) 
     return impl_->architecture->audio_frames(resample_audio({pcm, sample_rate}, target).samples);
 }
 
-int Model::audio_sample_rate() const { return impl_->architecture->sample_rate(); }
-AudioFrames Model::clamp3_features(const std::vector<float> &pcm, int sample_rate) {
+int CLAP::audio_sample_rate() const { return impl_->architecture->sample_rate(); }
+AudioFrames CLAP::clamp3_features(const std::vector<float> &pcm, int sample_rate) {
     if (sample_rate <= 0) throw std::runtime_error("CLAP: audio sample rate must be positive");
     if (sample_rate == 24000) return impl_->architecture->clamp3_features(pcm);
     return impl_->architecture->clamp3_features(resample_audio({pcm, sample_rate}, 24000).samples);

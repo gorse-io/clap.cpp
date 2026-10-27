@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
         require(argc == 3, "usage: muq-model-test MODEL.gguf FIXTURE.json");
         nlohmann::json fixture;
         std::ifstream input(argv[2]); input >> fixture;
-        clap::Model model(argv[1], 2);
+        clap::CLAP model(argv[1], 2);
         require(model.audio_sample_rate() == 24000, "MuQ rate");
         require(model.projection_dimension() == fixture.at("hidden_size"), "MuQ width");
         const float tolerance = fixture.at("tolerance");
@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
             // noise-floor sensitivity and catches unintended activation packing.
             const float bound = test.at("name") == "silence" ? std::min(tolerance, 1e-5f) : tolerance;
             compare(sequence.values, test.at("expected_frames").get<std::vector<float>>(), bound, test.at("name"));
-            compare(model.audio(wave, 24000), test.at("expected_pooled").get<std::vector<float>>(), bound, "MuQ pooled");
+            compare(model.encode_audio(wave, 24000), test.at("expected_pooled").get<std::vector<float>>(), bound, "MuQ pooled");
         }
         const auto wave = fixture.at("waveform_cases").at(1).at("waveform").get<std::vector<float>>();
         const auto resampled = clap::resample_audio({wave, 48000}, 24000);
@@ -51,10 +51,10 @@ int main(int argc, char **argv) {
             try { action(); } catch (const std::exception &) { rejected = true; }
             require(rejected, message);
         };
-        rejects([&] { model.text("no text tower"); }, "MuQ text must fail");
+        rejects([&] { model.encode_text("no text tower"); }, "MuQ text must fail");
         rejects([&] { model.audio_frames(std::vector<float>(1024), 24000); }, "MuQ short waveform must fail");
         rejects([&] { model.audio_frames(wave, 0); }, "MuQ invalid rate must fail");
-        rejects([&] { model.audio(wave, 24000, 1); }, "MuQ crop must fail");
+        rejects([&] { model.encode_audio(wave, 24000, 1); }, "MuQ crop must fail");
         auto invalid = wave; invalid[0] = std::numeric_limits<float>::infinity();
         rejects([&] { model.audio_frames(invalid, 24000); }, "MuQ nonfinite must fail");
         std::cout << "MuQ native parity passed\n";

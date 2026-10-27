@@ -48,30 +48,30 @@ std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 4800
 // CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
 // pooled projections. Its mandatory bundled MERT-v1-95M frontend handles
 // waveform preprocessing internally; no separate feature-input API is exposed.
-// MERT-v1 audio_frames() exposes final-layer frames; audio() mean-pools them.
+// MERT-v1 audio_frames() exposes final-layer frames; encode_audio() mean-pools them.
 // Neither is the all-layer CLaMP3 representation: use clamp3_features() for that.
-// MERT-v2-FullSong and MuQ audio() mean-pool the complete input's final frames;
+// MERT-v2-FullSong and MuQ encode_audio() mean-pool the complete input's final frames;
 // audio_frames() returns the unpooled sequence (approximately 25 Hz for published weights).
-// MuQ-MuLan text() returns a single L2-normalized joint embedding. audio() uses
+// MuQ-MuLan encode_text() returns a single L2-normalized joint embedding. encode_audio() uses
 // successive 10 s clips, one prefix slice for a tail, per-clip normalization and
 // an unweighted average without final normalization. No amplitude normalization.
 // MuLan supports neither frame/features APIs nor crop offsets; published width
 // is 512. Its text string API rejects over-context input without truncation.
-class Model {
+class CLAP {
 public:
-    explicit Model(const std::string &gguf_path, int threads = 0);
-    ~Model();
-    Model(Model &&) noexcept;
-    Model &operator=(Model &&) noexcept;
-    Model(const Model &) = delete;
-    Model &operator=(const Model &) = delete;
+    explicit CLAP(const std::string &gguf_path, int threads = 0);
+    ~CLAP();
+    CLAP(CLAP &&) noexcept;
+    CLAP &operator=(CLAP &&) noexcept;
+    CLAP(const CLAP &) = delete;
+    CLAP &operator=(const CLAP &) = delete;
 
     std::vector<int> tokenize(const std::string &utf8, std::size_t max_length = 512) const;
-    std::vector<float> text(const std::vector<int> &token_ids);
-    std::vector<float> text(const std::string &utf8);
+    std::vector<float> encode_text(const std::vector<int> &token_ids);
+    std::vector<float> encode_text(const std::string &utf8);
     // Mono waveform input; automatically resampled for the model.
     // CLaMP3 GGUFs must contain the bundled MERT-v1-95M frontend.
-    std::vector<float> audio(const std::vector<float> &pcm, int sample_rate = 48000,
+    std::vector<float> encode_audio(const std::vector<float> &pcm, int sample_rate = 48000,
                               std::size_t crop_offset = 0);
     AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);
     // MERT-v1 CLaMP3 --mean_features preprocessing: normalize the entire mono

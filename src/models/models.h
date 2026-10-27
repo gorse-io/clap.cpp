@@ -8,7 +8,7 @@
 namespace clap::detail {
 
 // Per-architecture declarations belong here, following llama.cpp/src/models.
-// GGUF I/O, tokenizer ownership, generic tensor operations and the public Model
+// GGUF I/O, tokenizer ownership, generic tensor operations and the public CLAP
 // facade are implemented in the core src/ files, not in this specialization.
 class ClapModel final : public ModelArchitecture {
 public:

@@ -28,7 +28,7 @@ void invalid_request(httplib::Response &response, const std::string &message) {
 }
 
 void embeddings(const httplib::Request &request, httplib::Response &response,
-                clap::Model &model, const std::string &identifier, int dimensions,
+                clap::CLAP &model, const std::string &identifier, int dimensions,
                 std::mutex &inference_mutex) {
     const auto body = json::parse(request.body, nullptr, false);
     if (!body.is_object() || !body.contains("input")) {
@@ -72,13 +72,13 @@ void embeddings(const httplib::Request &request, httplib::Response &response,
             const std::lock_guard<std::mutex> lock(inference_mutex);
             for (std::size_t index = 0; index < inputs.size(); ++index) {
                 const auto &text = inputs[index].get_ref<const std::string &>();
-                const auto embedding = model.text(text);
+                const auto embedding = model.encode_text(text);
                 if (embedding.size() != static_cast<std::size_t>(dimensions))
                     throw std::runtime_error("Model returned an unexpected embedding dimension");
                 for (float value : embedding)
                     if (!std::isfinite(value)) throw std::runtime_error("Model returned a non-finite embedding");
                 data.push_back({{"object", "embedding"}, {"index", index}, {"embedding", embedding}});
-                // Model::text(string) chooses its architecture's full context.
+                // CLAP::encode_text(string) chooses its architecture's full context.
                 // The public tokenize() default is 512 and can truncate or be
                 // unsupported for smaller contexts. Omit usage rather than
                 // report an inaccurate count in either situation.
@@ -108,7 +108,7 @@ int run_server(const std::string &host, int port, const std::string &model_path,
     try {
         // Load once, before opening the listening socket. A bad model must fail
         // startup rather than leave a live server that can never serve requests.
-        clap::Model model(model_path, threads);
+        clap::CLAP model(model_path, threads);
         const auto identifier = std::filesystem::path(model_path).filename().string();
         const int dimensions = model.projection_dimension();
         if (dimensions <= 0) throw std::runtime_error("Model projection dimension must be positive");

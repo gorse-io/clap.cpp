@@ -21,30 +21,29 @@ Convert a supported checkpoint to GGUF with the repository's conversion tools,
 then load it once and reuse it:
 
 ```python
-from clap_cpp import Model, decode_audio
+from clap_cpp import CLAP
 
-with Model("model.gguf", threads=4) as model:
-    text_embedding = model.text("A dog barking")
-    pcm, sample_rate = decode_audio("dog.wav")
-    audio_embedding = model.audio(pcm, sample_rate=sample_rate)
+with CLAP("model.gguf", threads=4) as model:
+    text_embedding = model.encode_text("A dog barking")
+    audio_embedding = model.encode_audio("dog.wav")
     print(model.projection_dimension, model.audio_sample_rate)
 ```
 
-`Model` uses the same GGUF architecture dispatch as the native library (CLAP,
+`CLAP` uses the same GGUF architecture dispatch as the native library (CLAP,
 CLaMP3, MERT-v1, MERT-v2, MuQ and MuQ-MuLan). An operation unsupported by a
 particular architecture raises a native error; for example audio-only encoders
 cannot embed text. CLaMP3 requires a GGUF with its bundled MERT frontend.
 
 ## API
 
-- `Model(path, threads=0)`: `str`/`pathlib.Path`; zero selects the native thread
+- `CLAP(path, threads=0)`: `str`/`pathlib.Path`; zero selects the native thread
   default. `close()` is idempotent and the context manager closes on exit.
-- `model.text(text_or_tokens)`: one UTF-8 string or token-ID sequence to a
+- `model.encode_text(text_or_tokens)`: one UTF-8 string or token-ID sequence to a
   one-dimensional float32 NumPy embedding.
 - `model.tokenize(text, max_length=512)`: native tokenizer returning a list of
   integer IDs. Its limit must be compatible with the loaded model; strings may
-  be truncated by the tokenizer. Prefer `text(str)` for normal use.
-- `model.audio(pcm, sample_rate=48000, crop_offset=0)`: mono waveform to a float32
+  be truncated by the tokenizer. Prefer `encode_text(str)` for normal use.
+- `model.encode_audio(pcm, sample_rate=48000, crop_offset=0)`: mono waveform to a float32
   embedding. Automatic model-rate resampling; crop offset uses the native
   model-rate sample units and is not supported by every architecture.
 - `model.audio_frames(pcm, sample_rate=48000)`: native frame representations as a
@@ -52,10 +51,10 @@ cannot embed text. CLaMP3 requires a GGUF with its bundled MERT frontend.
 - `model.clamp3_features(pcm, sample_rate=24000)`: MERT-v1 CLaMP3 preprocessing
   features as a `[windows, dimension]` float32 array (at least one second).
 - `model.projection_dimension`, `model.audio_sample_rate`: read-only integers.
-- `decode_audio(path)`: `(pcm, sample_rate)`; decodes WAV, MP3 or FLAC, averages
-  channels to mono, preserves sample rate.
-- `resample_audio(pcm, source_rate, target_rate=48000)`: mono float32 array using
-  the native resampler.
+- `model.encode_audio(path, crop_offset=0)`: `str`/`pathlib.Path` to a WAV, MP3
+  or FLAC file. Decodes internally, averages channels to mono and automatically
+  resamples from the file's sample rate to the model's rate. Crop offset has the
+  same model-rate sample units as the PCM overload.
 
 PCM accepts one-dimensional numeric arrays or sequences. Noncontiguous arrays
 and other numeric dtypes are converted to contiguous float32; the binding copies
