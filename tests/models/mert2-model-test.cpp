@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
         nlohmann::json fixture;
         input >> fixture;
 
-        clap::Model model(argv[1], 2);
+        clap::CLAP model(argv[1], 2);
         require(model.audio_sample_rate() == fixture.at("sample_rate"), "MERT2 sample rate");
         require(model.projection_dimension() == fixture.at("hidden_size"), "MERT2 hidden size");
         const float tolerance = fixture.at("tolerance");
@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
             require(output.dimension == fixture.at("hidden_size"), "MERT2 frame width");
             compare(output.values, test.at("expected_frames").get<std::vector<float>>(), tolerance,
                     test.at("name"));
-            compare(model.audio(waveform, fixture.at("sample_rate")),
+            compare(model.encode_audio(waveform, fixture.at("sample_rate")),
                     test.at("expected_pooled").get<std::vector<float>>(), tolerance,
                     test.at("name").get<std::string>() + " pooled");
             if (test.value("full_song", false)) {
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
         catch (const std::exception &) { rejected = true; }
         require(rejected, "non-finite MERT2 waveform must be rejected");
         rejected = false;
-        try { model.text("MERT2 has no text tower"); }
+        try { model.encode_text("MERT2 has no text tower"); }
         catch (const std::exception &) { rejected = true; }
         require(rejected, "MERT2 text input must be rejected");
         std::cout << "Native MERT-v2-FullSong parity passed\n";

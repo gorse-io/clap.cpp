@@ -69,7 +69,7 @@ int run_embedding(const EmbeddingOptions &options) {
         // Preserve native CLI error precedence: decode audio before loading weights.
         clap::Audio decoded;
         if (!options.audio_path.empty()) decoded = clap::decode_audio(options.audio_path);
-        clap::Model model(options.model_path, options.threads);
+        clap::CLAP model(options.model_path, options.threads);
         std::vector<Vector> vectors;
         if (!options.audio_path.empty()) {
             if (options.crop_requested && model.audio_sample_rate() != 48000) {
@@ -82,16 +82,16 @@ int run_embedding(const EmbeddingOptions &options) {
                 std::cout << json{{"frames", sequence.frames}, {"dimension", sequence.dimension},
                                   {"values", sequence.values}}.dump() << '\n';
             } else {
-                vectors.push_back(model.audio(decoded.samples, decoded.sample_rate, options.crop_offset));
+                vectors.push_back(model.encode_audio(decoded.samples, decoded.sample_rate, options.crop_offset));
             }
         } else if (options.single_text) {
-            vectors.push_back(model.text(options.text));
+            vectors.push_back(model.encode_text(options.text));
         } else {
             // Preserve empty and trailing separator-delimited prompt/file segments.
             std::size_t start = 0;
             while (true) {
                 const auto end = options.text.find(options.separator, start);
-                vectors.push_back(model.text(options.text.substr(start, end == std::string::npos
+                vectors.push_back(model.encode_text(options.text.substr(start, end == std::string::npos
                                                                         ? end : end - start)));
                 if (end == std::string::npos) break;
                 start = end + options.separator.size();

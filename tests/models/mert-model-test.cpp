@@ -44,16 +44,16 @@ void wav(const std::string &path, const clap::Audio &audio) {
 int main(int argc, char **argv) {
     try {
         require(argc == 3, "usage: mert-model-test model.gguf output-directory");
-        clap::Model model(argv[1], 2);
+        clap::CLAP model(argv[1], 2);
         require(model.audio_sample_rate() == 24000, "wrong MERT sample rate");
-        rejects([&] { model.text("unsupported"); });
-        rejects([&] { model.text(std::vector<int>{0}); });
+        rejects([&] { model.encode_text("unsupported"); });
+        rejects([&] { model.encode_text(std::vector<int>{0}); });
         rejects([&] { model.audio_frames({}); });
         rejects([&] { model.audio_frames(std::vector<float>(399), 24000); });
         rejects([&] { model.clamp3_features(std::vector<float>(23999), 24000); });
         rejects([&] { model.clamp3_features(std::vector<float>(24000), 0); });
         rejects([&] { model.audio_frames(std::vector<float>(24000), -1); });
-        rejects([&] { model.audio(std::vector<float>(24000), 24000, 1); });
+        rejects([&] { model.encode_audio(std::vector<float>(24000), 24000, 1); });
         auto nonfinite = std::vector<float>(24000);
         nonfinite[0] = std::numeric_limits<float>::quiet_NaN();
         rejects([&] { model.audio_frames(nonfinite, 24000); });
@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
         for (int row = 0; row < frames.frames; ++row)
             for (int col = 0; col < frames.dimension; ++col)
                 mean[col] += frames.values[static_cast<size_t>(row)*frames.dimension+col] / frames.frames;
-        near(mean, model.audio(control.samples, 24000), 0);
+        near(mean, model.encode_audio(control.samples, 24000), 0);
         wav(std::string(argv[2]) + "/resampled-input.wav", input);
         wav(std::string(argv[2]) + "/resampled-control.wav", control);
         std::cout << "MERT public API: pooling, invalid inputs, native/resampled inference passed\n";

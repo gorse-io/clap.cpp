@@ -186,7 +186,7 @@ which provides the `embedding`, `serve` and `quantize` subcommands.
 
 | Path | Responsibility |
 | --- | --- |
-| `include/clap.h` | Public, dependency-light C++ API (`clap::Model`, `decode_audio`, `resample_audio`, `log_mel`) |
+| `include/clap.h` | Public, dependency-light C++ API (`clap::CLAP`, `decode_audio`, `resample_audio`, `log_mel`) |
 | `src/model.h`, `src/model.cpp` | Internal architecture interface, dispatch and public API implementation |
 | `src/model-loader.*` | Shared GGUF metadata, mapping lifetime and tensor validation |
 | `src/model-ops.*` | Shared ggml matrix operations (CPU/optional Vulkan) and CPU normalization |
@@ -385,7 +385,7 @@ mono decoding/resampling to 24 kHz and MERT's whole-recording normalization,
 five-second windows and all-layer pooling described below. No external MERT
 model or precomputed feature input is accepted. The public feature-input API
 and its CLI flag have been removed; old feature-only GGUFs must be reconverted.
-`Model::audio(pcm, rate)` is the C++ waveform entry point.
+`CLAP::encode_audio(pcm, rate)` is the C++ waveform entry point.
 
 The bundle's string metadata contract is:
 
@@ -447,13 +447,13 @@ is required for inference.
 
 Two different outputs are intentionally exposed:
 
-- `--frames` / `Model::audio_frames(pcm, rate)` normalize the complete supplied
+- `--frames` / `CLAP::audio_frames(pcm, rate)` normalize the complete supplied
   waveform and return the **last transformer layer**, in time-major order.
   The published model has 768 channels and frame count
   `floor((samples - 400) / 320) + 1` for at least 400 samples at 24 kHz.
-  Without either output flag, `Model::audio()` / the CLI mean-pool these final
+  Without either output flag, `CLAP::encode_audio()` / the CLI mean-pool these final
   frames into a non-normalized 768-vector. This is **not** a CLaMP3 input vector.
-- `--clamp3-features` / `Model::clamp3_features(pcm, rate)` implement the official
+- `--clamp3-features` / `CLAP::clamp3_features(pcm, rate)` implement the official
   CLaMP3 `preprocessing/audio/extract_mert.py --mean_features` contract at
   [`sanderwood/clamp3@9016d2b0c8d12d1aa79c2e0ab201e6822bdc83a8`](https://github.com/sanderwood/clamp3/tree/9016d2b0c8d12d1aa79c2e0ab201e6822bdc83a8/preprocessing/audio):
   mix to mono and resample to 24 kHz, normalize the **whole recording** once as
@@ -469,9 +469,9 @@ MERT inspection APIs remain available; CLaMP3 feature encoding itself is private
 For C++ end-to-end inference:
 
 ```cpp
-clap::Model clamp3("clamp3-f16.gguf");
+clap::CLAP clamp3("clamp3-f16.gguf");
 auto pcm = clap::decode_audio("music.flac");
-auto embedding = clamp3.audio(pcm.samples, pcm.sample_rate);
+auto embedding = clamp3.encode_audio(pcm.samples, pcm.sample_rate);
 ```
 
 CLaMP3 waveform inference includes the leading/trailing zero vectors, chunking
@@ -551,10 +551,10 @@ followed by 12 width-1024 Wav2Vec2-Conformer layers. In this architecture RoPE i
 applied **before Q/K projections**, not after as in MERT2; feed-forward and
 convolution branches use SiLU. Encoder final LayerNorm is included.
 
-`Model::audio_frames()` and `--frames` return the final unnormalized sequence;
+`CLAP::audio_frames()` and `--frames` return the final unnormalized sequence;
 for `N` native-rate samples its frame count is `ceil(floor(N / 240) / 4)` (about
 25 Hz), not MERT2's floor rule. At least 1,025 samples are required.
-`Model::audio()` and the default CLI output mean-pool all returned frames into
+`CLAP::encode_audio()` and the default CLI output mean-pool all returned frames into
 one 1,024-vector, without L2 normalization. Pooling is a convenience over MuQ
 features, **not** a MuQ-MuLan text/audio projection. Text, precomputed features,
 batching, training/RVQ codes, and intermediate-layer selection are unsupported.
@@ -615,7 +615,7 @@ quantized-storage rejection without requiring ML packages.
 ### MuQ-MuLan-large (native joint audio/text embeddings)
 
 `OpenMuQ/MuQ-MuLan-large` has native, single-item text and raw-waveform
-inference through `clap::Model` and `clap embedding`. Published embeddings have 512
+inference through `clap::CLAP` and `clap embedding`. Published embeddings have 512
 components. No Python, model source execution, or downloads occur at inference.
 The model revision is `2e01c796b71dca71b45251384c04cd7b237c9020`; the reviewed
 [official source](https://github.com/tencent-ailab/MuQ/tree/28847ea50cd31ac4b8b6a7dacc051ad7d1c7606a)
@@ -661,10 +661,10 @@ artifacts/build/clap embedding --model artifacts/muq-mulan-f16.gguf \
 ```
 
 ```cpp
-clap::Model model("artifacts/muq-mulan-f16.gguf", 2);
-auto text = model.text("hopeful piano music");
+clap::CLAP model("artifacts/muq-mulan-f16.gguf", 2);
+auto text = model.encode_text("hopeful piano music");
 auto audio = clap::decode_audio("music.flac");
-auto music = model.audio(audio.samples, audio.sample_rate);
+auto music = model.encode_audio(audio.samples, audio.sample_rate);
 // dot(music, text) is the official similarity operation.
 ```
 
@@ -690,8 +690,8 @@ additional padding mask for the single-item API, and no final adapter norm.
 Mean pooling includes special tokens, then the learned 768→512 affine
 projection and L2 normalization apply. Empty text is valid. Over-context text
 is rejected, rather than truncated or chunked; the published XLM-R table allows
-512 tokenizer IDs including specials. `Model::tokenize(text, max_length)` keeps
-its existing explicit truncation API; `Model::text(string)` tokenizes the full
+512 tokenizer IDs including specials. `CLAP::tokenize(text, max_length)` keeps
+its existing explicit truncation API; `CLAP::encode_text(string)` tokenizes the full
 input and checks the context. Batch inference and other backbone/use-layer
 variants are unsupported.
 
@@ -784,8 +784,8 @@ rotary Conformer blocks. No Python or runtime network access is required.
 Without `--frames`, the CLI mean-pools all final frames and prints one
 1,024-dimensional recording embedding, matching the official model-card example.
 `--frames` instead prints an object with `frames`, `dimension`, and a flat
-time-major `values` array. In C++, `Model::audio_frames()` exposes the same
-sequence as `clap::AudioFrames`; `Model::audio()` returns its mean. At published
+time-major `values` array. In C++, `CLAP::audio_frames()` exposes the same
+sequence as `clap::AudioFrames`; `CLAP::encode_audio()` returns its mean. At published
 settings the frame count is `floor(input_samples / 960)` (25 Hz).
 
 FullSong means the complete supplied waveform is processed. There is no implicit

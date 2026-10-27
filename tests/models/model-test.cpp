@@ -10,7 +10,7 @@
 #include <type_traits>
 template<class T, class = void> struct has_feature_input : std::false_type {};
 template<class T> struct has_feature_input<T, std::void_t<decltype(&T::audio_features)>> : std::true_type {};
-static_assert(!has_feature_input<clap::Model>::value, "public feature interface must not return");
+static_assert(!has_feature_input<clap::CLAP>::value, "public feature interface must not return");
 
 static void require(bool value, const std::string &message) {
     if (!value) throw std::runtime_error(message);
@@ -54,19 +54,19 @@ int main(int argc, char **argv) {
         try { clap::log_mel(long_clip, 48000, 4); } catch (const std::exception &) { rejected = true; }
         require(rejected, "out-of-range crop must be rejected");
         rejected = false;
-        try { clap::Model missing("/this/path/does/not/exist.gguf"); }
+        try { clap::CLAP missing("/this/path/does/not/exist.gguf"); }
         catch (const std::exception &) { rejected = true; }
         require(rejected, "missing GGUF must be rejected");
         if (argc == 1) return 0;
         require(argc == 3, "usage: clap-model-test [MODEL.gguf FIXTURE.json]");
         std::ifstream input(argv[2]);
         nlohmann::json fixture; input >> fixture;
-        clap::Model model(argv[1], 2);
+        clap::CLAP model(argv[1], 2);
         const float embedding_tolerance = fixture.value("embedding_tolerance", 5e-5f);
         for (const auto &test : fixture.at("text_cases")) {
             const auto ids = model.tokenize(test.at("text").get<std::string>());
             require(ids == test.at("ids").get<std::vector<int>>(), "tokenizer mismatch: " + test.at("text").get<std::string>());
-            compare(model.text(test.at("padded_ids").get<std::vector<int>>()),
+            compare(model.encode_text(test.at("padded_ids").get<std::vector<int>>()),
                     test.at("expected").get<std::vector<float>>(), embedding_tolerance, "text embedding");
         }
         compare(clap::detail::FeatureTestAccess::encode(argv[1], fixture.at("features").get<std::vector<float>>(), fixture.at("frames")),
@@ -75,7 +75,7 @@ int main(int argc, char **argv) {
             compare(clap::log_mel(fixture.at("waveform").get<std::vector<float>>()),
                     fixture.at("mel").get<std::vector<float>>(), 3e-4f, "waveform log mel");
             if (fixture.value("end_to_end", false))
-                compare(model.audio(fixture.at("waveform").get<std::vector<float>>()),
+                compare(model.encode_audio(fixture.at("waveform").get<std::vector<float>>()),
                         fixture.at("expected_audio").get<std::vector<float>>(), 5e-5f, "waveform embedding");
         }
         std::cout << "Native CLAP parity passed\n";
