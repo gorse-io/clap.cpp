@@ -1,0 +1,9 @@
+node_modules/
+build/
+native/
+native-tests/
+LICENSE
+THIRD_PARTY_LICENSES/
+*.tgz
+test/*.log
+test/fixtures/

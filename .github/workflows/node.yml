@@ -1,0 +1,60 @@
+name: Node.js
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+    defaults:
+      run:
+        working-directory: node
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install numerical oracle dependency
+        run: python -m pip install numpy
+      - name: Build CPU bindings
+        run: npm ci
+      - name: Generate tiny models and test bindings
+        run: |
+          npm run test:fixtures
+          npm test
+          npm run test:types
+          npm run test:packaging
+      - name: Pack source distribution
+        run: |
+          mkdir -p artifacts
+          npm pack --pack-destination artifacts
+      - name: Install and test source distribution
+        run: |
+          npm install --prefix installed ./artifacts/*.tgz
+          CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
+          cd installed/node_modules/clap-cpp
+          npm run test:fixtures
+          npm test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.os }}
+          path: node/artifacts/*.tgz
