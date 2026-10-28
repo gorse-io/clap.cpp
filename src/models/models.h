@@ -71,6 +71,31 @@ private:
     std::unique_ptr<MertModel> frontend;
 };
 
+// Gemma-embedding2 GGUF text encoder (EmbeddingGemma 2); no image/audio path.
+class EmbeddingGemma2Model final : public ModelArchitecture {
+public:
+    EmbeddingGemma2Model(const ModelLoader &loader, int threads);
+    std::vector<float> text(const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(const std::vector<float> &) const override;
+    TextParameters text_parameters() const override;
+    int projection_dimension() const override { return output; }
+    int mel_bins() const override { return 0; }
+    int sample_rate() const override { return 0; }
+    bool is_waveform_encoder() const override { return false; }
+private:
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    Matrix rms(const Matrix &x, const std::string &name, int width = 0) const;
+    Matrix attention(const Matrix &x, int layer, const std::vector<int> &mask) const;
+    const ModelLoader &loader;
+    TensorOps ops;
+    int hidden = 0, output = 0, layers = 0, per_layer = 0, vocab = 0, context = 0, window = 0;
+    int bos = 2, eos = 1, pad = 0;
+    float epsilon = 0, rope_base = 0, rope_base_swa = 0, rope_scale = 1;
+    std::vector<int> heads, kv_heads, dimensions, rotations, ffn;
+    std::vector<bool> local;
+};
+
 // Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,
 // ConvNeXt subsampler and bidirectional rotary Conformer stack.
 class Mert2Model final : public ModelArchitecture {

@@ -160,7 +160,8 @@ void gelu(Matrix &x) {
 float scalar(const ggml_tensor *t, size_t i) {
     if (t->type == GGML_TYPE_F32) return static_cast<const float *>(t->data)[i];
     if (t->type == GGML_TYPE_F16) return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
-    if (!(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q6_K))
+    if (t->type == GGML_TYPE_BF16) return ggml_bf16_to_fp32(static_cast<const ggml_bf16_t *>(t->data)[i]);
+    if (!(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q5_K || t->type == GGML_TYPE_Q6_K))
         throw std::runtime_error("CLAP: unsupported scalar tensor type");
     // Decode only the containing block (embeddings, relative biases, or norms),
     // never expand an entire mapped weight tensor/model.

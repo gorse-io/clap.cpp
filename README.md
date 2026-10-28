@@ -19,6 +19,8 @@ C++17/ggml implementations of audio embedding inference features:
 | [MuQ](https://huggingface.co/OpenMuQ/MuQ-large-msd-iter) | ❌ | ✅ | 1,024 | 24 kHz |
 | [MuQ-MuLan](https://huggingface.co/OpenMuQ/MuQ-MuLan-large) | ✅ | ✅ | 512 | 24 kHz |
 
+| [EmbeddingGemma 2](https://huggingface.co/unsloth/embeddinggemma-2-GGUF) | ✅ | ❌ | 768 | — |
+
 GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/collections/gorse-io/audio-embedding-gguf) collection.
 
 ## Bindings
@@ -39,6 +41,36 @@ Load a converted GGUF and generate real native text or audio embeddings:
 clap embedding --model model.gguf --text 'A jazz quartet.'
 clap embedding --model model.gguf --audio music.flac
 ```
+
+### EmbeddingGemma 2 (text only)
+
+Load the published [Unsloth EmbeddingGemma 2 GGUF](https://huggingface.co/unsloth/embeddinggemma-2-GGUF)
+files directly; no conversion, Python inference, or `mmproj` is required. For example,
+download `embeddinggemma-2-UD-Q4_K_XL.gguf` and run:
+
+```sh
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf --text 'Hello world'
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf \
+  --text 'task: search result | query: How do plants grow?'
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf \
+  --text 'title: none | text: Plants use sunlight for photosynthesis.'
+./build/clap serve --model embeddinggemma-2-UD-Q4_K_XL.gguf
+```
+
+`encode_text` returns a normalized 768-dimensional embedding. Both BOS and EOS
+are added automatically; mean pooling includes these tokens and any prompt.
+Retrieval prefixes are **not** added automatically: supply
+`task: search result | query: ` for queries and `title: none | text: ` for
+untitled documents, or `title: {title} | text: {content}` for titled documents.
+The tokenizer preserves Unicode, case, and repeated whitespace. Google advertises
+an 8192-token context; use that limit even though the GGUF positional capacity is
+larger. Native computation preserves F32 activations with F16/BF16 storage and
+accepts the published Q4_K/Q5_K/Q6_K/Q8_0 mixed tensor types.
+
+This integration is **text only**: no `encode_image`, image projector, or audio
+encoding is implemented for this architecture. Use the published GGUF directly;
+the checkpoint converter and local quantization presets below remain scoped to
+the six existing audio/joint architectures.
 
 ## Embeddings server
 

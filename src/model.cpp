@@ -22,15 +22,27 @@ struct CLAP::Impl {
         else if (name == "mert") architecture = std::make_unique<detail::MertModel>(loader, threads);
         else if (name == "muq_mulan") architecture = std::make_unique<detail::MuqMulanModel>(loader, threads);
         else if (name == "muq") architecture = std::make_unique<detail::MuqModel>(loader, threads);
+        else if (name == "gemma-embedding2") architecture = std::make_unique<detail::EmbeddingGemma2Model>(loader, threads);
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
         loader.validate_tensor_coverage();
         if (architecture->has_text_encoder()) {
             const auto text = architecture->text_parameters();
-            const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
-            if (name == "clamp3" || name == "muq_mulan")
-                vocabulary = std::make_unique<detail::UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
-            else
-                vocabulary = std::make_unique<detail::ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
+            if (name == "gemma-embedding2") {
+                nlohmann::json tokenizer = nlohmann::json::object();
+                for (const auto *key : {"tokenizer.ggml.model", "tokenizer.ggml.tokens",
+                        "tokenizer.ggml.token_type", "tokenizer.ggml.merges",
+                        "tokenizer.ggml.bos_token_id", "tokenizer.ggml.eos_token_id",
+                        "tokenizer.ggml.unknown_token_id", "tokenizer.ggml.add_bos_token",
+                        "tokenizer.ggml.add_eos_token", "tokenizer.ggml.add_space_prefix"})
+                    if (loader.has_metadata(key)) tokenizer[key] = loader.metadata_value(key);
+                vocabulary = std::make_unique<detail::GemmaVocabulary>(tokenizer, text.context_length);
+            } else {
+                const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
+                if (name == "clamp3" || name == "muq_mulan")
+                    vocabulary = std::make_unique<detail::UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
+                else
+                    vocabulary = std::make_unique<detail::ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
+            }
         }
     }
 };

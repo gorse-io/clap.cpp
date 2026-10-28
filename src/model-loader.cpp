@@ -63,6 +63,86 @@ std::string ModelLoader::metadata(const char *key) const {
     return std::string(gguf_get_val_str(gguf, id));
 }
 
+bool ModelLoader::has_metadata(const char *key) const {
+    if (source) return source->has_metadata((metadata_prefix + key).c_str());
+    return gguf_find_key(gguf, key) >= 0;
+}
+
+nlohmann::json ModelLoader::metadata_value(const char *key) const {
+    if (source) return source->metadata_value((metadata_prefix + key).c_str());
+    const auto id = gguf_find_key(gguf, key);
+    if (id < 0) throw std::runtime_error(std::string("CLAP: missing metadata: ") + key);
+    const auto type = gguf_get_kv_type(gguf, id);
+    if (type == GGUF_TYPE_ARRAY) {
+        const auto element_type = gguf_get_arr_type(gguf, id);
+        const size_t count = gguf_get_arr_n(gguf, id);
+        auto values = nlohmann::json::array();
+        if (element_type == GGUF_TYPE_STRING) {
+            for (size_t i = 0; i < count; ++i) values.push_back(gguf_get_arr_str(gguf, id, i));
+            return values;
+        }
+        const auto *data = static_cast<const char *>(gguf_get_arr_data(gguf, id));
+        const auto append = [&](auto sample) {
+            using T = decltype(sample);
+            for (size_t i = 0; i < count; ++i) {
+                T value;
+                std::memcpy(&value, data + i * sizeof(T), sizeof(T));
+                values.push_back(value);
+            }
+        };
+        switch (element_type) {
+            case GGUF_TYPE_UINT8: append(uint8_t{}); break;
+            case GGUF_TYPE_INT8: append(int8_t{}); break;
+            case GGUF_TYPE_UINT16: append(uint16_t{}); break;
+            case GGUF_TYPE_INT16: append(int16_t{}); break;
+            case GGUF_TYPE_UINT32: append(uint32_t{}); break;
+            case GGUF_TYPE_INT32: append(int32_t{}); break;
+            case GGUF_TYPE_UINT64: append(uint64_t{}); break;
+            case GGUF_TYPE_INT64: append(int64_t{}); break;
+            case GGUF_TYPE_FLOAT32: append(float{}); break;
+            case GGUF_TYPE_FLOAT64: append(double{}); break;
+            case GGUF_TYPE_BOOL:
+                for (size_t i = 0; i < count; ++i) values.push_back(data[i] != 0);
+                break;
+            default: throw std::runtime_error(std::string("CLAP: unsupported metadata array: ") + key);
+        }
+        return values;
+    }
+    switch (type) {
+        case GGUF_TYPE_STRING: return gguf_get_val_str(gguf, id);
+        case GGUF_TYPE_UINT8: return gguf_get_val_u8(gguf, id);
+        case GGUF_TYPE_INT8: return gguf_get_val_i8(gguf, id);
+        case GGUF_TYPE_UINT16: return gguf_get_val_u16(gguf, id);
+        case GGUF_TYPE_INT16: return gguf_get_val_i16(gguf, id);
+        case GGUF_TYPE_UINT32: return gguf_get_val_u32(gguf, id);
+        case GGUF_TYPE_INT32: return gguf_get_val_i32(gguf, id);
+        case GGUF_TYPE_UINT64: return gguf_get_val_u64(gguf, id);
+        case GGUF_TYPE_INT64: return gguf_get_val_i64(gguf, id);
+        case GGUF_TYPE_FLOAT32: return gguf_get_val_f32(gguf, id);
+        case GGUF_TYPE_FLOAT64: return gguf_get_val_f64(gguf, id);
+        case GGUF_TYPE_BOOL: return gguf_get_val_bool(gguf, id);
+        default: throw std::runtime_error(std::string("CLAP: unsupported metadata: ") + key);
+    }
+}
+
+int64_t ModelLoader::integer(const char *key) const {
+    const auto value = metadata_value(key);
+    if (!value.is_number_integer() || (value.is_number_unsigned() && value.get<uint64_t>() > INT64_MAX))
+        throw std::runtime_error(std::string("CLAP: expected integer metadata: ") + key);
+    return value.get<int64_t>();
+}
+double ModelLoader::number(const char *key) const {
+    const auto value = metadata_value(key);
+    if (!value.is_number() || !std::isfinite(value.get<double>()))
+        throw std::runtime_error(std::string("CLAP: expected finite numeric metadata: ") + key);
+    return value.get<double>();
+}
+bool ModelLoader::boolean(const char *key) const {
+    const auto value = metadata_value(key);
+    if (!value.is_boolean()) throw std::runtime_error(std::string("CLAP: expected boolean metadata: ") + key);
+    return value.get<bool>();
+}
+
 bool ModelLoader::has_metadata_prefix(const std::string &prefix) const {
     if (source) return source->has_metadata_prefix(metadata_prefix + prefix);
     for (int64_t i = 0; i < gguf_get_n_kv(gguf); ++i)
@@ -108,7 +188,9 @@ void ModelLoader::load(const std::string &path, bool inference) {
     const bool named = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING;
     bundled = named && metadata("general.architecture") == "clamp3" && has_metadata_prefix("clamp3.audio_frontend");
     const std::string arch = named ? metadata("general.architecture") : "";
-    f32_activations = encoder_architecture(arch);
+    // EmbeddingGemma2 requires F32 activations even with F16/BF16 storage;
+    // narrow activation packing can overflow its projection/attention stack.
+    f32_activations = encoder_architecture(arch) || arch == "gemma-embedding2";
     const auto data_offset = gguf_get_data_offset(gguf);
     if (!(data_offset <= mapping_size))
         throw std::runtime_error("CLAP: truncated GGUF data");
@@ -120,9 +202,11 @@ void ModelLoader::load(const std::string &path, bool inference) {
             throw std::runtime_error("CLAP: MERT supports F32/F16 weights only");
         if (encoder_architecture(arch) && ggml_is_quantized(w->type) && !encoder_quantizable(w, arch))
             throw std::runtime_error("CLAP: quantized non-dense/embedding tensor is unsupported: " + tensor_name);
+        const bool gemma_storage = arch == "gemma-embedding2" &&
+            (w->type == GGML_TYPE_Q5_K || w->type == GGML_TYPE_BF16);
         if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_Q8_0 ||
-              w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K))
-            throw std::runtime_error("CLAP: only F32/F16/Q8_0/Q4_K/Q6_K weights supported");
+              w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K || gemma_storage))
+            throw std::runtime_error("CLAP: unsupported tensor storage type: " + tensor_name);
         const size_t offset = gguf_get_tensor_offset(gguf, i);
         if (!(offset <= mapping_size - data_offset && ggml_nbytes(w) <= mapping_size - data_offset - offset))
             throw std::runtime_error("CLAP: truncated tensor data");
