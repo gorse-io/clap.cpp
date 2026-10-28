@@ -24,3 +24,16 @@ try {
   model.close(); // optional early release; garbage collection also frees weights
 }
 ```
+
+For EmbeddingGemma 2 audio, pass the matching mmproj in constructor options:
+
+```js
+const model = new Model('embeddinggemma2.gguf', { threads: 4, mmproj: 'mmproj-Q8_0.gguf' });
+const { samples, sampleRate } = decodeAudio('recording.wav');
+const embedding = model.audio(samples, sampleRate);
+model.close();
+```
+
+Omitting `mmproj` preserves text/single-model loading; numeric `threads` is
+still accepted. Missing/incompatible projectors throw native errors. Image
+encoding is not supported.

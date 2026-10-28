@@ -19,14 +19,16 @@ extern "C" {
 // Inline diagnostics keep exception translation allocation-free.
 // Ops: 0=open, 1=encode_text, 2=encode_audio (file).
 Result *cr_call(int op, clap::CLAP *model, const char *s,
-                int threads, size_t crop_offset) noexcept {
+                int threads, size_t crop_offset, const char *mmproj) noexcept {
     auto result = std::unique_ptr<Result>(new (std::nothrow) Result);
     if (!result) return nullptr;
     try {
         switch (op) {
         case 0:
             if (threads < 0) throw std::invalid_argument("threads must be nonnegative");
-            result->model = std::make_unique<clap::CLAP>(s, threads); break;
+            result->model = mmproj ? std::make_unique<clap::CLAP>(s, mmproj, threads)
+                                   : std::make_unique<clap::CLAP>(s, threads);
+            break;
         case 1: result->floats = model->encode_text(s); break;
         case 2: {
             const auto audio = clap::decode_audio(s);

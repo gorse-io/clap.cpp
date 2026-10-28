@@ -8,10 +8,16 @@ export interface Audio {
   samples: Float32Array;
   sampleRate: number;
 }
+export interface ModelOptions {
+  /** Zero selects the native thread default. */
+  threads?: number;
+  /** Separate audio mmproj GGUF for EmbeddingGemma2 audio encoding. */
+  mmproj?: string;
+}
 /** Synchronous CPU inference. Each call blocks the calling JavaScript thread. */
 export class Model {
   /** threads=0 selects the native default; negative/fractional values are rejected. */
-  constructor(path: string, threads?: number);
+  constructor(path: string, threadsOrOptions?: number | ModelOptions);
   readonly projectionDimension: number;
   readonly audioSampleRate: number;
   /** Native tokenizer; maxLength defaults to 512. Returns owned token IDs. */

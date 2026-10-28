@@ -69,7 +69,7 @@ int run_embedding(const EmbeddingOptions &options) {
         // Preserve native CLI error precedence: decode audio before loading weights.
         clap::Audio decoded;
         if (!options.audio_path.empty()) decoded = clap::decode_audio(options.audio_path);
-        clap::CLAP model(options.model_path, options.threads);
+        clap::CLAP model(options.model_path, options.mmproj_path, options.threads);
         std::vector<Vector> vectors;
         if (!options.audio_path.empty()) {
             if (options.crop_requested && model.audio_sample_rate() != 48000) {

@@ -20,6 +20,23 @@ function near(a, b, tolerance = 2e-5) {
   a.forEach((x, i) => assert.ok(Math.abs(x - b[i]) < tolerance, `${i}: ${x} != ${b[i]}`));
 }
 const pcm = Float32Array.from({ length: 24000 }, (_, i) => 0.2 * Math.sin(i * 0.031));
+test('constructor options preserve text loading and do not ignore mmproj', () => {
+  for (const options of [{}, { threads: 1 }, { threads: 1, mmproj: undefined }]) {
+    const m = new Model(modelPath, options);
+    try { vector(m.text('hello'), 3); } finally { m.close(); }
+  }
+  assert.throws(() => new Model(path.join(fixtures, 'embeddinggemma2-dispatch.gguf'), {
+    threads: 1, mmproj: path.join(fixtures, 'missing-audio-mmproj.gguf')
+  }), /missing-audio-mmproj/);
+  assert.throws(() => new Model(modelPath, { mmproj: 'missing-audio-mmproj.gguf' }),
+    error => error instanceof Error && !(error instanceof TypeError));
+  for (const mmproj of [null, 1, '', 'a\0b']) {
+    assert.throws(() => new Model(modelPath, { mmproj }), TypeError);
+  }
+  for (const threads of [-1, 0.5, NaN, null, '1']) {
+    assert.throws(() => new Model(modelPath, { threads }), TypeError);
+  }
+});
 test('native exports and strict constructor validation', () => {
   assert.equal(typeof Model, 'function');
   for (const p of [undefined, null, 1, '', 'a\0b']) assert.throws(() => new Model(p));

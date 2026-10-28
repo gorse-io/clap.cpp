@@ -10,32 +10,53 @@ namespace clap {
 struct CLAP::Impl {
     // Declaration order ensures the architecture is destroyed before its mapping.
     detail::ModelLoader loader;
+    std::unique_ptr<detail::ModelLoader> audio_loader;
     std::unique_ptr<detail::ModelArchitecture> architecture;
     std::unique_ptr<detail::Vocabulary> vocabulary;
 
-    Impl(const std::string &path, int threads) {
+    Impl(const std::string &path, const std::string &mmproj_path, int threads) {
         loader.load(path);
         const auto name = loader.metadata("general.architecture");
+        if (!mmproj_path.empty()) {
+            if (name != "gemma-embedding2")
+                throw std::runtime_error("CLAP: mmproj is only supported for EmbeddingGemma2");
+            audio_loader = std::make_unique<detail::ModelLoader>();
+            audio_loader->load(mmproj_path);
+        }
         if (name == "clap") architecture = std::make_unique<detail::ClapModel>(loader, threads);
         else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
         else if (name == "mert2") architecture = std::make_unique<detail::Mert2Model>(loader, threads);
         else if (name == "mert") architecture = std::make_unique<detail::MertModel>(loader, threads);
         else if (name == "muq_mulan") architecture = std::make_unique<detail::MuqMulanModel>(loader, threads);
         else if (name == "muq") architecture = std::make_unique<detail::MuqModel>(loader, threads);
+        else if (name == "gemma-embedding2") architecture = std::make_unique<detail::EmbeddingGemma2Model>(loader, threads, audio_loader.get());
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
         loader.validate_tensor_coverage();
         if (architecture->has_text_encoder()) {
             const auto text = architecture->text_parameters();
-            const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
-            if (name == "clamp3" || name == "muq_mulan")
-                vocabulary = std::make_unique<detail::UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
-            else
-                vocabulary = std::make_unique<detail::ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
+            if (name == "gemma-embedding2") {
+                nlohmann::json tokenizer = nlohmann::json::object();
+                for (const auto *key : {"tokenizer.ggml.model", "tokenizer.ggml.tokens",
+                        "tokenizer.ggml.token_type", "tokenizer.ggml.merges",
+                        "tokenizer.ggml.bos_token_id", "tokenizer.ggml.eos_token_id",
+                        "tokenizer.ggml.unknown_token_id", "tokenizer.ggml.add_bos_token",
+                        "tokenizer.ggml.add_eos_token", "tokenizer.ggml.add_space_prefix"})
+                    if (loader.has_metadata(key)) tokenizer[key] = loader.metadata_value(key);
+                vocabulary = std::make_unique<detail::GemmaVocabulary>(tokenizer, text.context_length);
+            } else {
+                const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
+                if (name == "clamp3" || name == "muq_mulan")
+                    vocabulary = std::make_unique<detail::UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
+                else
+                    vocabulary = std::make_unique<detail::ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
+            }
         }
     }
 };
 
-CLAP::CLAP(const std::string &path, int threads) : impl_(std::make_unique<Impl>(path, threads)) {}
+CLAP::CLAP(const std::string &path, int threads) : CLAP(path, std::string(), threads) {}
+CLAP::CLAP(const std::string &path, const std::string &mmproj_path, int threads)
+    : impl_(std::make_unique<Impl>(path, mmproj_path, threads)) {}
 CLAP::~CLAP() = default;
 CLAP::CLAP(CLAP &&) noexcept = default;
 CLAP &CLAP::operator=(CLAP &&) noexcept = default;

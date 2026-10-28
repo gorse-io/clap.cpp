@@ -35,6 +35,23 @@ private:
     std::unique_ptr<icu::RegexPattern> pattern;
 };
 
+// Gemma 4 / EmbeddingGemma 2 GGUF uses SentencePiece-style raw UTF-8 BPE,
+// NOT Unigram or GPT-2 byte encoding. Metadata keys retain tokenizer.ggml.*.
+class GemmaVocabulary final : public Vocabulary {
+public:
+    GemmaVocabulary(const nlohmann::json &metadata, size_t context_length);
+    std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
+private:
+    void encode_piece(const std::string &text, std::vector<int> &ids) const;
+    int bos, eos, unk;
+    bool add_bos, add_eos;
+    size_t context_length;
+    std::unordered_map<std::string, int> pieces;
+    std::map<std::pair<std::string, std::string>, int> ranks;
+    std::vector<std::pair<std::string, int>> special;
+    int bytes[256];
+};
+
 // XLM-R's tokenizer.json is a SentencePiece Unigram model represented by the
 // Hugging Face fast-tokenizer format.  Inference stays self-contained: GGUF
 // carries that JSON and ICU supplies the Unicode normalization/whitespace pass.

@@ -1,5 +1,10 @@
 import { Model, decodeAudio, resampleAudio, AudioFrames } from '..';
 const model = new Model('model.gguf', 1);
+new Model('model.gguf', {});
+new Model('model.gguf', { threads: 1 });
+new Model('model.gguf', { mmproj: 'audio-mmproj.gguf', threads: 1 });
+// @ts-expect-error mmproj must be a path string
+new Model('model.gguf', { mmproj: 1 });
 const ids: Int32Array = model.tokenize('hello');
 const embedding: Float32Array = model.text(ids);
 model.text('hello'); model.text([0, 2]);
