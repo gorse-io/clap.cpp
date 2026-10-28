@@ -6,13 +6,13 @@
   "main": "index.js",
   "types": "index.d.ts",
   "engines": { "node": ">=22.0.0" },
-  "files": ["index.js", "index.d.ts", "bindings.cpp", "CMakeLists.txt", "scripts", "native", "native-tests", "test/addon.test.js", "test/packaging.test.js", "test/generate-fixtures.py", "test/types.ts", "test/tsconfig.json", "README.md", "LICENSE", "THIRD_PARTY_LICENSES"],
+  "files": ["index.js", "index.d.ts", "bindings.cpp", "CMakeLists.txt", "scripts", "native", "native-tests", "test/addon.test.js", "test/surface.test.js", "test/packaging.test.js", "test/generate-fixtures.py", "test/types.ts", "test/tsconfig.json", "README.md", "LICENSE", "THIRD_PARTY_LICENSES"],
   "scripts": {
     "install": "cmake-js compile",
     "build": "cmake-js compile",
     "rebuild": "cmake-js rebuild",
     "test:fixtures": "python3 test/generate-fixtures.py",
-    "test": "node --test test/addon.test.js",
+    "test": "node --test test/addon.test.js test/surface.test.js",
     "test:packaging": "node --test test/packaging.test.js",
     "test:types": "tsc -p test/tsconfig.json",
     "prepack": "node scripts/vendor.js"

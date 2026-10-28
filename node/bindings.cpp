@@ -74,29 +74,16 @@ Napi::Float32Array array(Napi::Env env, const std::vector<float> &v) {
     if (!v.empty()) std::memcpy(output.Data(), v.data(), v.size() * sizeof(float));
     return output;
 }
-Napi::Object frames(Napi::Env env, const clap::AudioFrames &f) {
-    auto output = Napi::Object::New(env);
-    output.Set("values", array(env, f.values));
-    output.Set("frames", Napi::Number::New(env, f.frames));
-    output.Set("dimension", Napi::Number::New(env, f.dimension));
-    return output;
-}
-
-class Model : public Napi::ObjectWrap<Model> {
+class CLAP : public Napi::ObjectWrap<CLAP> {
 public:
     static Napi::Function define(Napi::Env env) {
-        return DefineClass(env, "Model", {
-            InstanceAccessor<&Model::projection_dimension>("projectionDimension"),
-            InstanceAccessor<&Model::audio_sample_rate>("audioSampleRate"),
-            InstanceMethod<&Model::tokenize>("tokenize"),
-            InstanceMethod<&Model::text>("text"),
-            InstanceMethod<&Model::audio>("audio"),
-            InstanceMethod<&Model::audio_frames>("audioFrames"),
-            InstanceMethod<&Model::clamp3_features>("clamp3Features"),
-            InstanceMethod<&Model::close>("close")
+        return DefineClass(env, "CLAP", {
+            InstanceMethod<&CLAP::encode_text>("encodeText"),
+            InstanceMethod<&CLAP::encode_audio>("encodeAudio"),
+            InstanceMethod<&CLAP::close>("close")
         });
     }
-    explicit Model(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Model>(info) {
+    explicit CLAP(const Napi::CallbackInfo &info) : Napi::ObjectWrap<CLAP>(info) {
         guarded(info.Env(), [&]() -> Napi::Value {
             auto p = path(info[0]);
             int threads = info[1].IsUndefined() ? 0 : static_cast<int>(integer(info[1], "threads", 0, std::numeric_limits<int>::max()));
@@ -109,27 +96,10 @@ private:
     // own ObjectWrap. There is no globally shared model handle or borrowed output.
     std::unique_ptr<clap::CLAP> model_;
     clap::CLAP &get() {
-        if (!model_) throw std::runtime_error("Model is closed");
+        if (!model_) throw std::runtime_error("CLAP is closed");
         return *model_;
     }
-    Napi::Value projection_dimension(const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value { return Napi::Number::New(info.Env(), get().projection_dimension()); });
-    }
-    Napi::Value audio_sample_rate(const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value { return Napi::Number::New(info.Env(), get().audio_sample_rate()); });
-    }
-    Napi::Value tokenize(const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value {
-            auto &m = get();
-            auto s = string(info[0], "text");
-            auto n = info[1].IsUndefined() ? 512 : integer(info[1], "maxLength", 1, std::numeric_limits<int>::max());
-            auto ids = m.tokenize(s, n);
-            auto out = Napi::Int32Array::New(info.Env(), ids.size());
-            for (std::size_t i = 0; i < ids.size(); ++i) out[i] = ids[i];
-            return out;
-        });
-    }
-    Napi::Value text(const Napi::CallbackInfo &info) {
+    Napi::Value encode_text(const Napi::CallbackInfo &info) {
         return guarded(info.Env(), [&]() -> Napi::Value {
             // Array element getters can reenter JS and close this model. Parse
             // completely before taking a native reference, then recheck ownership.
@@ -141,28 +111,21 @@ private:
             return array(info.Env(), get().encode_text(ids));
         });
     }
-    Napi::Value audio(const Napi::CallbackInfo &info) {
+    Napi::Value encode_audio(const Napi::CallbackInfo &info) {
         return guarded(info.Env(), [&]() -> Napi::Value {
-            auto &m = get();
+            if (info[0].IsString()) {
+                const auto filename = path(info[0]);
+                const auto crop = info[1].IsUndefined() ? 0 : integer(info[1], "cropOffset", 0,
+                    std::min(9007199254740991.0, static_cast<double>(std::numeric_limits<std::size_t>::max())));
+                auto &m = get();
+                auto decoded = clap::decode_audio(filename);
+                return array(info.Env(), m.encode_audio(decoded.samples, decoded.sample_rate, crop));
+            }
             auto pcm = samples(info[0]);
             int sr = optional_rate(info[1], 48000);
             auto crop = info[2].IsUndefined() ? 0 : integer(info[2], "cropOffset", 0,
                 std::min(9007199254740991.0, static_cast<double>(std::numeric_limits<std::size_t>::max())));
-            return array(info.Env(), m.encode_audio(pcm, sr, crop));
-        });
-    }
-    Napi::Value audio_frames(const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value {
-            auto &m = get();
-            auto pcm = samples(info[0]);
-            return frames(info.Env(), m.audio_frames(pcm, optional_rate(info[1], 48000)));
-        });
-    }
-    Napi::Value clamp3_features(const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value {
-            auto &m = get();
-            auto pcm = samples(info[0]);
-            return frames(info.Env(), m.clamp3_features(pcm, optional_rate(info[1], 24000)));
+            return array(info.Env(), get().encode_audio(pcm, sr, crop));
         });
     }
     Napi::Value close(const Napi::CallbackInfo &info) {
@@ -171,22 +134,7 @@ private:
 };
 
 Napi::Object initialize(Napi::Env env, Napi::Object exports) {
-    exports.Set("Model", Model::define(env));
-    exports.Set("decodeAudio", Napi::Function::New(env, [](const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value {
-            auto decoded = clap::decode_audio(path(info[0]));
-            auto result = Napi::Object::New(info.Env());
-            result.Set("samples", array(info.Env(), decoded.samples));
-            result.Set("sampleRate", Napi::Number::New(info.Env(), decoded.sample_rate));
-            return result;
-        });
-    }, "decodeAudio"));
-    exports.Set("resampleAudio", Napi::Function::New(env, [](const Napi::CallbackInfo &info) {
-        return guarded(info.Env(), [&]() -> Napi::Value {
-            clap::Audio input{samples(info[0]), rate(info[1])};
-            return array(info.Env(), clap::resample_audio(input, optional_rate(info[2], 48000)).samples);
-        });
-    }, "resampleAudio"));
+    exports.Set("CLAP", CLAP::define(env));
     return exports;
 }
 } // namespace
