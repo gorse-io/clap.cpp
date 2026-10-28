@@ -49,7 +49,9 @@ int cmd_embedding(const EmbeddingOptions &options) {
         runtime.threads = options.threads;
         runtime.device = c_string(options.device);
         CLAP *handle = nullptr;
-        check(clap_create(c_string(options.model_path), &runtime, &handle));
+        check(options.mmproj_path.empty() ? clap_create(c_string(options.model_path), &runtime, &handle)
+                                          : clap_create_with_mmproj(c_string(options.model_path),
+                                                                    c_string(options.mmproj_path), &runtime, &handle));
         const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
         if (!options.audio_path.empty()) {
             const int sample_rate = clap_audio_sample_rate(model.get());

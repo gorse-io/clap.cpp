@@ -60,6 +60,10 @@ CLAP_API clap_runtime_options clap_default_options(void);
  * Success clears it. Reading it and freeing outputs never change it. */
 CLAP_API const char *clap_last_error(void);
 CLAP_API clap_status clap_create(const char *gguf_path, const clap_runtime_options *options, CLAP **out);
+/* Optional EmbeddingGemma2 audio tower/projector. mmproj_path is required and
+ * nonempty; existing clap_create remains text-only and ABI-compatible. */
+CLAP_API clap_status clap_create_with_mmproj(const char *gguf_path, const char *mmproj_path,
+                                             const clap_runtime_options *options, CLAP **out);
 CLAP_API void clap_destroy(CLAP *model);
 CLAP_API clap_status clap_available_devices(clap_device **out, size_t *count);
 /* Frees the list and its strings; count must be the original returned count. */
@@ -91,7 +95,10 @@ CLAP_API int clap_projection_dimension(const CLAP *model);
  * projections and requires a bundled MERT frontend. MERT/MERT2/MuQ audio embeddings
  * mean-pool final-layer frames; their frame API returns the unpooled sequence.
  * MuQ-MuLan text is L2-normalized; audio averages normalized 10-second clips
- * without final normalization and exposes no frames or crop offsets. */
+ * without final normalization and exposes no frames or crop offsets.
+ * EmbeddingGemma2 returns normalized 768D text/audio embeddings. Audio requires
+ * clap_create_with_mmproj, resamples to 16 kHz and uses the first 30 seconds;
+ * it exposes no frames or crop offsets. */
 
 #ifdef __cplusplus
 }

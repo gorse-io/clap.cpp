@@ -20,6 +20,7 @@
 
 struct EmbeddingOptions {
     std::string model_path;
+    std::string mmproj_path;
     int threads = 0;
     std::string device;
     std::string text;

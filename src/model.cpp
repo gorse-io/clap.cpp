@@ -5,11 +5,18 @@
 
 #include <stdexcept>
 
-CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loader(options) {
+CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options, const std::string &mmproj_path)
+    : loader(options) {
     using namespace clap::detail;
     const int threads = options.threads;
     loader.load(path);
     const auto name = loader.metadata("general.architecture");
+    if (!mmproj_path.empty()) {
+        if (name != "gemma-embedding2")
+            throw std::runtime_error("CLAP: mmproj is only supported for EmbeddingGemma2");
+        audio_loader = std::make_unique<ModelLoader>(options);
+        audio_loader->load(mmproj_path);
+    }
     if (name == "clap")
         architecture = std::make_unique<ClapModel>(loader, threads);
     else if (name == "clap2")
@@ -25,7 +32,7 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
     else if (name == "muq")
         architecture = std::make_unique<MuqModel>(loader, threads);
     else if (name == "gemma-embedding2")
-        architecture = std::make_unique<EmbeddingGemma2Model>(loader, threads);
+        architecture = std::make_unique<EmbeddingGemma2Model>(loader, threads, audio_loader.get());
     else
         throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
     loader.validate_tensor_coverage();
@@ -33,19 +40,20 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
         const auto text = architecture->text_parameters();
         if (name == "gemma-embedding2") {
             nlohmann::json tokenizer = nlohmann::json::object();
-            for (const auto *key : {"tokenizer.ggml.model", "tokenizer.ggml.tokens",
-                    "tokenizer.ggml.token_type", "tokenizer.ggml.merges",
-                    "tokenizer.ggml.bos_token_id", "tokenizer.ggml.eos_token_id",
-                    "tokenizer.ggml.unknown_token_id", "tokenizer.ggml.add_bos_token",
-                    "tokenizer.ggml.add_eos_token", "tokenizer.ggml.add_space_prefix"})
-                if (loader.has_metadata(key)) tokenizer[key] = loader.metadata_value(key);
+            for (const auto *key :
+                 {"tokenizer.ggml.model", "tokenizer.ggml.tokens", "tokenizer.ggml.token_type", "tokenizer.ggml.merges",
+                  "tokenizer.ggml.bos_token_id", "tokenizer.ggml.eos_token_id", "tokenizer.ggml.unknown_token_id",
+                  "tokenizer.ggml.add_bos_token", "tokenizer.ggml.add_eos_token", "tokenizer.ggml.add_space_prefix"})
+                if (loader.has_metadata(key))
+                    tokenizer[key] = loader.metadata_value(key);
             vocabulary = std::make_unique<GemmaVocabulary>(tokenizer, text.context_length);
         } else {
             const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
             if (name == "clamp3" || name == "muq_mulan")
                 vocabulary = std::make_unique<UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
             else if (name == "clap2")
-                vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length, true);
+                vocabulary =
+                    std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length, true);
             else
                 vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
         }

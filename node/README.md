@@ -25,3 +25,14 @@ try {
   model.close();
 }
 ```
+
+For EmbeddingGemma 2 audio, load the matching audio mmproj:
+
+```js
+const model = new CLAP('embeddinggemma2.gguf', { threads: 4, mmproj: 'mmproj-Q8_0.gguf' });
+const embedding = model.encodeAudio('recording.wav');
+model.close();
+```
+
+Numeric `threads` is still accepted. Text works without `mmproj`; missing or
+incompatible projectors throw native errors. Image encoding is unsupported.
