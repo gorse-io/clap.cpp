@@ -18,8 +18,7 @@ C++17/ggml implementations of audio embedding inference features:
 | [MERT v2](https://huggingface.co/m-a-p/MERT-v2-FullSong) | ❌ | ✅ | 1,024 | 24 kHz |
 | [MuQ](https://huggingface.co/OpenMuQ/MuQ-large-msd-iter) | ❌ | ✅ | 1,024 | 24 kHz |
 | [MuQ-MuLan](https://huggingface.co/OpenMuQ/MuQ-MuLan-large) | ✅ | ✅ | 512 | 24 kHz |
-
-| [EmbeddingGemma 2](https://huggingface.co/unsloth/embeddinggemma-2-GGUF) | ✅ | ❌ | 768 | — |
+| [EmbeddingGemma 2](https://huggingface.co/unsloth/embeddinggemma-2-GGUF) | ✅ | ✅ | 768 | 16 kHz |
 
 GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/collections/gorse-io/audio-embedding-gguf) collection.
 
@@ -42,11 +41,12 @@ clap embedding --model model.gguf --text 'A jazz quartet.'
 clap embedding --model model.gguf --audio music.flac
 ```
 
-### EmbeddingGemma 2 (text only)
+### EmbeddingGemma 2 (text and audio)
 
 Load the published [Unsloth EmbeddingGemma 2 GGUF](https://huggingface.co/unsloth/embeddinggemma-2-GGUF)
-files directly; no conversion, Python inference, or `mmproj` is required. For example,
-download `embeddinggemma-2-UD-Q4_K_XL.gguf` and run:
+files directly; no conversion or Python inference is required. Text needs only
+the main model. Audio additionally needs `mmproj-Q8_0.gguf` (or the published
+F16/BF16 mmproj), which contains the audio tower and projector. For example:
 
 ```sh
 ./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf --text 'Hello world'
@@ -67,10 +67,31 @@ an 8192-token context; use that limit even though the GGUF positional capacity i
 larger. Native computation preserves F32 activations with F16/BF16 storage and
 accepts the published Q4_K/Q5_K/Q6_K/Q8_0 mixed tensor types.
 
-This integration is **text only**: no `encode_image`, image projector, or audio
-encoding is implemented for this architecture. Use the published GGUF directly;
-the checkpoint converter and local quantization presets below remain scoped to
-the six existing audio/joint architectures.
+This integration supports text and native waveform embeddings; **`encode_image`
+remains unsupported**, even though the published mmproj also contains vision
+weights. Audio is encoded directly, not transcribed to text:
+
+```sh
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf \
+  --mmproj mmproj-Q8_0.gguf --audio recording.wav
+```
+
+```cpp
+clap::CLAP model("embeddinggemma-2-UD-Q4_K_XL.gguf", "mmproj-Q8_0.gguf");
+auto audio = clap::decode_audio("recording.wav");
+auto embedding = model.encode_audio(audio.samples, audio.sample_rate);
+```
+
+WAV/MP3/FLAC input is downmixed and resampled to 16 kHz. Audio preprocessing
+follows the published Gemma4 frontend and uses the first 30 seconds, matching
+the default processor's truncation policy. The audio Conformer/projector's
+soft tokens pass through the same text backbone and final mean/L2 pooling,
+producing a normalized 768D embedding in the joint space. Audio requires the
+matching mmproj; text still works without it. Crop offsets and frame APIs are
+not supported for this joint encoder. The HTTP endpoint remains text-only.
+
+Use published GGUFs directly; the checkpoint converter and local quantization
+presets remain scoped to the six existing audio/joint architectures.
 
 ## Embeddings server
 

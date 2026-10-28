@@ -21,6 +21,7 @@ mod ffi {
             s: *const c_char,
             threads: i32,
             crop_offset: usize,
+            mmproj: *const c_char,
         ) -> *mut c_void;
         pub fn cr_free(p: *mut c_void);
         pub fn cr_model_free(p: *mut c_void);
@@ -56,8 +57,24 @@ fn path(p: &Path) -> Result<CString> {
     Ok(CString::new(p.to_str().ok_or("path must be valid UTF-8")?)?)
 }
 // The synchronous bridge borrows the string and owns all returned data.
-fn call(op: i32, model: *mut c_void, s: &CStr, threads: i32, crop_offset: usize) -> Result<Native> {
-    let p = unsafe { ffi::cr_call(op, model, s.as_ptr(), threads, crop_offset) };
+fn call(
+    op: i32,
+    model: *mut c_void,
+    s: &CStr,
+    threads: i32,
+    crop_offset: usize,
+    mmproj: Option<&CStr>,
+) -> Result<Native> {
+    let p = unsafe {
+        ffi::cr_call(
+            op,
+            model,
+            s.as_ptr(),
+            threads,
+            crop_offset,
+            mmproj.map_or(std::ptr::null(), CStr::as_ptr),
+        )
+    };
     let result = Native(NonNull::new(p).ok_or("native result allocation failed")?);
     let error = unsafe { CStr::from_ptr(ffi::cr_error(result.ptr())) };
     if !error.is_empty() {
@@ -91,8 +108,31 @@ impl Drop for CLAP {
 impl CLAP {
     /// Load a UTF-8 GGUF path. Zero threads selects the native default.
     pub fn new(p: impl AsRef<Path>, threads: i32) -> Result<Self> {
-        let s = path(p.as_ref())?;
-        let native = call(0, std::ptr::null_mut(), &s, threads, 0)?;
+        Self::load(p.as_ref(), None, threads)
+    }
+    /// Load a model with a separate audio mmproj GGUF (EmbeddingGemma2).
+    /// Both paths must be UTF-8 without NUL; zero threads selects the native default.
+    pub fn new_with_mmproj(
+        p: impl AsRef<Path>,
+        mmproj: impl AsRef<Path>,
+        threads: i32,
+    ) -> Result<Self> {
+        Self::load(p.as_ref(), Some(mmproj.as_ref()), threads)
+    }
+    fn load(p: &Path, mmproj: Option<&Path>, threads: i32) -> Result<Self> {
+        let s = path(p)?;
+        let audio_path = mmproj.map(path).transpose()?;
+        if audio_path.as_ref().is_some_and(|p| p.as_bytes().is_empty()) {
+            return Err("mmproj path must be nonempty".into());
+        }
+        let native = call(
+            0,
+            std::ptr::null_mut(),
+            &s,
+            threads,
+            0,
+            audio_path.as_deref(),
+        )?;
         let ptr = NonNull::new(unsafe { ffi::cr_model_take(native.ptr()) })
             .ok_or("native model missing")?;
         Ok(Self {
@@ -103,7 +143,7 @@ impl CLAP {
     /// Encode one UTF-8 string using the model's native context policy.
     pub fn encode_text(&mut self, text: &str) -> Result<Vec<f32>> {
         let s = CString::new(text)?;
-        Ok(call(1, self.ptr.as_ptr(), &s, 0, 0)?.floats())
+        Ok(call(1, self.ptr.as_ptr(), &s, 0, 0, None)?.floats())
     }
     /// Encode a WAV, MP3 or FLAC file. Channels are averaged to mono and the
     /// source sample rate is converted internally to the model's input rate.
@@ -111,6 +151,6 @@ impl CLAP {
     /// do not support cropping reject nonzero offsets.
     pub fn encode_audio(&mut self, p: impl AsRef<Path>, crop_offset: usize) -> Result<Vec<f32>> {
         let s = path(p.as_ref())?;
-        Ok(call(2, self.ptr.as_ptr(), &s, 0, crop_offset)?.floats())
+        Ok(call(2, self.ptr.as_ptr(), &s, 0, crop_offset, None)?.floats())
     }
 }

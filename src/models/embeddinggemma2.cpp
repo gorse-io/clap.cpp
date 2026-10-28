@@ -1,4 +1,5 @@
 #include "models.h"
+#include "embeddinggemma2-audio.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -24,11 +25,23 @@ void fast_gelu(Matrix &x) {
 }
 }
 
-EmbeddingGemma2Model::EmbeddingGemma2Model(const ModelLoader &source, int threads)
+EmbeddingGemma2Model::EmbeddingGemma2Model(const ModelLoader &source, int threads, const ModelLoader *audio_loader)
     : loader(source), ops(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
+    if (audio_loader) {
+        if (audio_loader->integer("clip.audio.projection_dim") != hidden)
+            invalid("audio projector dimension");
+        const auto tokens = loader.metadata_value("tokenizer.ggml.tokens");
+        for (size_t id = 0; id < tokens.size(); ++id) {
+            if (tokens[id] == "<|audio>") begin_audio = static_cast<int>(id);
+            if (tokens[id] == "<audio|>") end_audio = static_cast<int>(id);
+        }
+        if (begin_audio < 0 || end_audio < 0) invalid("audio delimiter tokens");
+        audio_encoder = std::make_unique<GemmaAudioEncoder>(*audio_loader, threads);
+    }
 }
+EmbeddingGemma2Model::~EmbeddingGemma2Model() = default;
 
 void EmbeddingGemma2Model::load_arch_hparams() {
     auto has = [&](const char *suffix) { return loader.has_metadata(key(suffix).c_str()); };
@@ -171,7 +184,29 @@ void EmbeddingGemma2Model::load_arch_tensors() const {
 
 TextParameters EmbeddingGemma2Model::text_parameters() const { return {bos, eos, static_cast<size_t>(context)}; }
 AudioFrames EmbeddingGemma2Model::audio_frames(const std::vector<float> &) const {
-    throw std::runtime_error("CLAP: EmbeddingGemma2 is text-only; audio is unsupported");
+    throw std::runtime_error("CLAP: EmbeddingGemma2 does not expose waveform frames; use encode_audio");
+}
+
+std::vector<float> EmbeddingGemma2Model::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+    if (!audio_encoder) throw std::runtime_error("CLAP: EmbeddingGemma2 audio requires an mmproj GGUF");
+    if (crop_offset) invalid("audio crop offset (unsupported)");
+    const Matrix soft = audio_encoder->encode(pcm);
+    if (soft.cols != hidden || soft.rows > context - 4) invalid("audio soft-token dimensions");
+    Matrix merged(soft.rows + 4, hidden);
+    const auto *embedding = loader.weight("token_embd.weight");
+    const float scale = std::sqrt(static_cast<float>(hidden));
+    const int ids[] = {bos, begin_audio, end_audio, eos};
+    const int positions[] = {0, 1, soft.rows + 2, soft.rows + 3};
+    for (int i = 0; i < 4; ++i) {
+        tensor_row(embedding, ids[i], merged[positions[i]]);
+        for (int c = 0; c < hidden; ++c) merged[positions[i]][c] *= scale;
+    }
+    // Projected audio tokens already inhabit the scaled embedding space.
+    // Unlike hard tokens, they must not be multiplied by sqrt(hidden).
+    for (int row = 0; row < soft.rows; ++row)
+        std::copy_n(soft[row], hidden, merged[row + 2]);
+    std::vector<int> mask(merged.rows, 1);
+    return encode(std::move(merged), mask);
 }
 
 Matrix EmbeddingGemma2Model::rms(const Matrix &x, const std::string &name, int width) const {
@@ -264,6 +299,16 @@ std::vector<float> EmbeddingGemma2Model::text(const std::vector<int> &ids) const
         tensor_row(embedding, ids[row], x[row]);
         for (int c = 0; c < hidden; ++c) x[row][c] *= scale;
     }
+    return encode(std::move(x), mask);
+}
+
+std::vector<float> EmbeddingGemma2Model::encode(Matrix x, const std::vector<int> &mask) const {
+    if (x.cols != hidden || x.rows > context || mask.size() != static_cast<size_t>(x.rows))
+        invalid("soft-token matrix shape");
+    int real_tokens = 0;
+    for (int valid : mask) real_tokens += valid != 0;
+    if (!real_tokens) invalid("all-padding soft-token input");
+    const float scale = std::sqrt(static_cast<float>(hidden));
     Matrix projected = ops.linear(x, "per_layer_model_proj", false);
     for (float &v : projected.data) v /= scale;
     projected = rms(projected, "per_layer_proj_norm", per_layer);

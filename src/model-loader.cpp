@@ -47,10 +47,11 @@ void ModelLoader::norm_shape(const std::string &name, int dim) const {
     shape(name + ".weight", {dim}); shape(name + ".bias", {dim});
 }
 
-void ModelLoader::validate_tensor_coverage() const {
+void ModelLoader::validate_tensor_coverage(const std::string &prefix) const {
     if (!f32_activations && !bundled) return;
     for (int64_t i=0;i<gguf_get_n_tensors(gguf);++i) {
         const std::string name=gguf_get_tensor_name(gguf,i);
+        if (!prefix.empty() && name.rfind(prefix, 0) != 0) continue;
         if (validated_shapes.count(name)==0) throw std::runtime_error(std::string(mulan ? "CLAP: unrecognized MuLan tensor: " : "CLAP: unrecognized model tensor: ") + name);
     }
 }
@@ -190,7 +191,7 @@ void ModelLoader::load(const std::string &path, bool inference) {
     const std::string arch = named ? metadata("general.architecture") : "";
     // EmbeddingGemma2 requires F32 activations even with F16/BF16 storage;
     // narrow activation packing can overflow its projection/attention stack.
-    f32_activations = encoder_architecture(arch) || arch == "gemma-embedding2";
+    f32_activations = encoder_architecture(arch) || arch == "gemma-embedding2" || arch == "clip";
     const auto data_offset = gguf_get_data_offset(gguf);
     if (!(data_offset <= mapping_size))
         throw std::runtime_error("CLAP: truncated GGUF data");
@@ -202,7 +203,7 @@ void ModelLoader::load(const std::string &path, bool inference) {
             throw std::runtime_error("CLAP: MERT supports F32/F16 weights only");
         if (encoder_architecture(arch) && ggml_is_quantized(w->type) && !encoder_quantizable(w, arch))
             throw std::runtime_error("CLAP: quantized non-dense/embedding tensor is unsupported: " + tensor_name);
-        const bool gemma_storage = arch == "gemma-embedding2" &&
+        const bool gemma_storage = (arch == "gemma-embedding2" || arch == "clip") &&
             (w->type == GGML_TYPE_Q5_K || w->type == GGML_TYPE_BF16);
         if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_Q8_0 ||
               w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K || gemma_storage))

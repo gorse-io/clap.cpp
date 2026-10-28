@@ -1,4 +1,4 @@
-# EmbeddingGemma 2 text inference contract
+# EmbeddingGemma 2 text/audio inference contract
 
 Primary sources, pinned for reproducibility:
 
@@ -13,8 +13,9 @@ Primary sources, pinned for reproducibility:
 
 ## Scope and numerical details
 
-Load the standard `gemma-embedding2` GGUF directly. No checkpoint converter,
-image/mmproj, image API, or audio encoder is added. Default output is 768D;
+Load the standard `gemma-embedding2` GGUF directly. Text requires only the main
+model; audio also requires its matching `clip`/`gemma4a` mmproj. No checkpoint
+converter or image API is added. Default output is 768D;
 retrieval prefixes are explicit input text, not automatically inserted.
 
 The published model has 24 blocks, width 512, FFN width 2048, four Q heads,
@@ -75,3 +76,55 @@ F32 model in llama.cpp. Across the same six inputs, minimum cosine was
 0.999999926 and maximum absolute component error was 5.332e-5. This is a
 same-stored-weight oracle, not a claim of parity against Google's original
 unquantized checkpoint or an embedding-quality benchmark.
+
+## Native audio contract
+
+Additional pinned primary source files are Transformers' Gemma4
+`feature_extraction_gemma4.py`, `modeling_gemma4.py` and EmbeddingGemma2's
+`processing_embedding_gemma2.py`, plus llama.cpp's
+`tools/mtmd/models/gemma4a.cpp` and `tools/mtmd/clip.cpp` at the revisions above.
+
+Audio remains native waveform inference, not ASR-to-text. Decode/downmix/resample
+through the existing audio module to 16 kHz. Keep the first 480000 samples
+(published default 30-second truncation). Use 128 HTK magnitude-mel bins, a
+periodic 320-sample Hann window, hop160, FFT512, semicausal left160 padding and
+321-sample frame availability; consume the first320 window samples. Features
+are natural `log(mel + 0.001)`, not power, base10 log or Slaney-normalized mel.
+The real frame-end mask gives `(samples - 161) // 160 + 1` valid frames;
+samples <=160 have no valid token and are rejected. The two stride2 SSCP
+convolutions yield `ceil(frames/4)` tokens: one second gives99/25, 30 seconds
+gives2999/750. The processor's separate 280-token estimate is not a truncation
+limit on actual audio features or soft tokens.
+
+SSCP uses channel LayerNorm/ReLU and frequency-major/channel-minor flattening.
+The 12 Conformer blocks use two half-scaled residual SiLU FFNs, clipped linear
+inputs/outputs, converted per-dimension query scales (already softplus), strict
+causal attention distance `<12`, and causal kernel5 depthwise convolution.
+GGUF `conv_norm` is the pre-convolution RMS; `norm_conv` is post-depthwise RMS.
+All480 learned clipping scalars are required. The audio tower outputs1536D,
+unweighted RMS then `mm.a.input_projection` produces512D soft tokens.
+
+Merge `[BOS, BOA] + soft + [EOA, EOS]`, scaling hard word rows by sqrt512 but
+not the projected soft rows. Derive PLE from the merged embeddings and reuse
+the same bidirectional text transformer, per-token output projection, mean
+over every real position and L2 normalization. Unknown `a.*` and `mm.a.*`
+tensors are rejected; unrelated vision tensors in the mixed mmproj are ignored.
+
+### Audio tests and checkpoint smoke validation
+
+`embeddinggemma2_audio.py` is an independent stdlib scalar/DFT oracle for
+F32/F16 storage, SSCP order, chunk boundaries, clipping and optional projector
+normalization. `embeddinggemma2_audio_integration.py` composes that oracle with
+the independent text oracle and exercises public waveform encoding, automatic
+resampling and WAV CLI output. Native tests cover frame/token boundaries,
+750 tokens at30 seconds, truncation equivalence, malformed tensors, unknown
+audio prefixes, nonfinite input and integer-overflow metadata. No model or
+audio binaries, NumPy, Torch or Transformers are required by default tests.
+
+Validated the published `mmproj-Q8_0.gguf` (554821120 bytes), SHA256
+`90e7b0238009e2954f856f2081dcf7f35af026b64c765e98f4777053e1754460`.
+Its963 tensors include751 audio tensors and a separate audio projector. With
+the published Q4 text checkpoint above, two distinct one-second PCM16
+waveforms produced finite768D outputs with norms1.00000003 and mutual cosine
+0.93575437. This is an execution smoke test, not an independent accuracy
+claim or a retrieval-quality benchmark.

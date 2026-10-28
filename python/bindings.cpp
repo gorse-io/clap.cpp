@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -53,10 +54,18 @@ py::array_t<float> matrix(const clap::AudioFrames &frames) {
 // BEFORE reacquiring the GIL. close(), properties and inference share this order.
 class CLAP {
 public:
-    CLAP(const std::filesystem::path &path, int threads) {
+    CLAP(const std::filesystem::path &path, int threads,
+         const std::optional<std::filesystem::path> &mmproj) {
         if (threads < 0) throw std::invalid_argument("threads must be nonnegative");
+        const auto filename = path.u8string();
+        const auto audio_path = mmproj ? std::optional<std::string>(mmproj->u8string()) : std::nullopt;
+        if (filename.find('\0') != std::string::npos ||
+            (audio_path && (audio_path->empty() || audio_path->find('\0') != std::string::npos))) {
+            throw std::invalid_argument("model paths must contain no NUL bytes and mmproj must be nonempty");
+        }
         py::gil_scoped_release release;
-        model_ = std::make_unique<clap::CLAP>(path.u8string(), threads);
+        model_ = audio_path ? std::make_unique<clap::CLAP>(filename, *audio_path, threads)
+                            : std::make_unique<clap::CLAP>(filename, threads);
     }
 
     template <typename F>
@@ -83,7 +92,8 @@ private:
 PYBIND11_MODULE(_clap_cpp, module) {
     module.doc() = "Native CPU inference for clap.cpp";
     py::class_<CLAP>(module, "CLAP")
-        .def(py::init<const std::filesystem::path &, int>(), py::arg("path"), py::arg("threads") = 0)
+        .def(py::init<const std::filesystem::path &, int, const std::optional<std::filesystem::path> &>(),
+             py::arg("path"), py::arg("threads") = 0, py::kw_only(), py::arg("mmproj") = py::none())
         .def_property_readonly("projection_dimension", [](CLAP &self) {
             return self.call([](clap::CLAP &model) { return model.projection_dimension(); });
         })

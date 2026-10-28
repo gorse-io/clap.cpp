@@ -22,6 +22,12 @@ int main(int argc, char **argv) {
             throw std::runtime_error("invalid model accepted");
         }
         clap::CLAP model(argv[1], 2);
+        bool missing_projector = false;
+        try { clap::CLAP with_audio(argv[1], std::string(argv[1]) + ".missing-mmproj", 2); }
+        catch (const std::exception &e) {
+            missing_projector = std::string(e.what()).find("missing-mmproj") != std::string::npos;
+        }
+        require(missing_projector, "missing mmproj path was not reported");
         std::ifstream input(argv[2]);
         nlohmann::json fixture; input >> fixture;
         float maximum = 0;

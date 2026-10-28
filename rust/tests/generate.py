@@ -67,6 +67,9 @@ out = Path(sys.argv[1])
 (out / 'text-reference.txt').write_text(' '.join(map(str, text_reference([0, 77, 110, 2]))))
 tiny.clap_fixture(out / '模型.gguf')
 tiny.mert_fixture(out / 'mert.gguf')
+# Metadata-only probe; missing mmproj must fail before model tensor validation.
+tiny.write_gguf(out / 'embeddinggemma2-dispatch.gguf',
+                {'general.architecture': 'gemma-embedding2'}, {})
 with wave.open(str(out / '音频.wav'), 'wb') as f:
     f.setparams((1, 2, 24000, 4, 'NONE', 'not compressed'))
     f.writeframes(struct.pack('<4h', 0, 8192, -16384, 24576))

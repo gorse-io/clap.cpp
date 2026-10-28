@@ -10,19 +10,26 @@ namespace clap {
 struct CLAP::Impl {
     // Declaration order ensures the architecture is destroyed before its mapping.
     detail::ModelLoader loader;
+    std::unique_ptr<detail::ModelLoader> audio_loader;
     std::unique_ptr<detail::ModelArchitecture> architecture;
     std::unique_ptr<detail::Vocabulary> vocabulary;
 
-    Impl(const std::string &path, int threads) {
+    Impl(const std::string &path, const std::string &mmproj_path, int threads) {
         loader.load(path);
         const auto name = loader.metadata("general.architecture");
+        if (!mmproj_path.empty()) {
+            if (name != "gemma-embedding2")
+                throw std::runtime_error("CLAP: mmproj is only supported for EmbeddingGemma2");
+            audio_loader = std::make_unique<detail::ModelLoader>();
+            audio_loader->load(mmproj_path);
+        }
         if (name == "clap") architecture = std::make_unique<detail::ClapModel>(loader, threads);
         else if (name == "clamp3") architecture = std::make_unique<detail::Clamp3Model>(loader, threads);
         else if (name == "mert2") architecture = std::make_unique<detail::Mert2Model>(loader, threads);
         else if (name == "mert") architecture = std::make_unique<detail::MertModel>(loader, threads);
         else if (name == "muq_mulan") architecture = std::make_unique<detail::MuqMulanModel>(loader, threads);
         else if (name == "muq") architecture = std::make_unique<detail::MuqModel>(loader, threads);
-        else if (name == "gemma-embedding2") architecture = std::make_unique<detail::EmbeddingGemma2Model>(loader, threads);
+        else if (name == "gemma-embedding2") architecture = std::make_unique<detail::EmbeddingGemma2Model>(loader, threads, audio_loader.get());
         else throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
         loader.validate_tensor_coverage();
         if (architecture->has_text_encoder()) {
@@ -47,7 +54,9 @@ struct CLAP::Impl {
     }
 };
 
-CLAP::CLAP(const std::string &path, int threads) : impl_(std::make_unique<Impl>(path, threads)) {}
+CLAP::CLAP(const std::string &path, int threads) : CLAP(path, std::string(), threads) {}
+CLAP::CLAP(const std::string &path, const std::string &mmproj_path, int threads)
+    : impl_(std::make_unique<Impl>(path, mmproj_path, threads)) {}
 CLAP::~CLAP() = default;
 CLAP::CLAP(CLAP &&) noexcept = default;
 CLAP &CLAP::operator=(CLAP &&) noexcept = default;

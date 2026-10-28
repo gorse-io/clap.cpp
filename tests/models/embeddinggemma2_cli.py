@@ -19,6 +19,9 @@ def check(actual, expected):
 
 
 def main(binary):
+    help_output = subprocess.run([binary, "embedding", "--help"], check=True,
+                                 capture_output=True, text=True).stdout
+    assert "--mmproj" in help_output, "audio projector option is missing"
     with tempfile.TemporaryDirectory(prefix="embeddinggemma2-cli-") as directory:
         for storage in ("f32", "f16"):
             metadata, tensors, oracle = fixture(storage)

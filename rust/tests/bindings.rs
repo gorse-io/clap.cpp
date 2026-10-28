@@ -44,6 +44,24 @@ fn errors_are_owned_and_inputs_are_checked() {
 }
 
 #[test]
+fn explicit_mmproj_is_not_ignored_and_paths_are_checked() {
+    let model_path = fixtures().join("模型.gguf");
+    let result = CLAP::new_with_mmproj(
+        fixtures().join("embeddinggemma2-dispatch.gguf"),
+        fixtures().join("missing-audio-mmproj.gguf"),
+        1,
+    );
+    let error = result.err().expect("missing projector must not be ignored");
+    assert!(error.to_string().contains("missing-audio-mmproj"));
+    assert!(CLAP::new_with_mmproj(&model_path, "missing-audio-mmproj.gguf", 1).is_err());
+    assert!(CLAP::new_with_mmproj(&model_path, "nul\0.gguf", 1).is_err());
+    assert!(CLAP::new_with_mmproj(&model_path, "missing.gguf", -1).is_err());
+    // The original constructor remains text-capable without a projector.
+    let mut model = CLAP::new(&model_path, 1).unwrap();
+    assert_eq!(model.encode_text("Hi").unwrap().len(), 3);
+}
+
+#[test]
 fn clap_real_text_and_audio_file() {
     let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
     let text = model.encode_text("Hi").unwrap();
@@ -91,6 +109,7 @@ fn non_utf8_paths_are_rejected() {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
     let invalid = std::path::Path::new(OsStr::from_bytes(b"invalid\xff.wav"));
     assert!(CLAP::new(invalid, 1).is_err());
+    assert!(CLAP::new_with_mmproj(fixtures().join("模型.gguf"), invalid, 1).is_err());
     let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
     assert!(model.encode_audio(invalid, 0).is_err());
 }

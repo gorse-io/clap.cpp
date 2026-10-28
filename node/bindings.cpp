@@ -99,8 +99,20 @@ public:
     explicit Model(const Napi::CallbackInfo &info) : Napi::ObjectWrap<Model>(info) {
         guarded(info.Env(), [&]() -> Napi::Value {
             auto p = path(info[0]);
-            int threads = info[1].IsUndefined() ? 0 : static_cast<int>(integer(info[1], "threads", 0, std::numeric_limits<int>::max()));
-            model_ = std::make_unique<clap::CLAP>(p, threads);
+            auto thread_value = info[1];
+            Napi::Value mmproj_value = info.Env().Undefined();
+            if (info[1].IsObject() && !info[1].IsArray() && !info[1].IsFunction()) {
+                auto options = info[1].As<Napi::Object>();
+                thread_value = options.Get("threads");
+                mmproj_value = options.Get("mmproj");
+            }
+            int threads = thread_value.IsUndefined() ? 0 : static_cast<int>(integer(thread_value, "threads", 0, std::numeric_limits<int>::max()));
+            // Read all option getters before constructing the native model.
+            if (mmproj_value.IsUndefined()) model_ = std::make_unique<clap::CLAP>(p, threads);
+            else {
+                auto mmproj = path(mmproj_value);
+                model_ = std::make_unique<clap::CLAP>(p, mmproj, threads);
+            }
             return info.Env().Undefined();
         });
     }

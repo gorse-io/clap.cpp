@@ -51,8 +51,10 @@ def save(path, metadata, tensors, storage):
     path.write_bytes(header + b"\0" * (-len(header) % 32) + blob)
 
 
-def fixture(storage="f32", array_pattern=False):
+def fixture(storage="f32", array_pattern=False, audio_soft=None):
     hidden, layers, ple, ff, vocab, context, output = 8, 3, 3, 13, 271, 16, 5
+    if audio_soft is not None:
+        vocab += 2
     heads, kv = [4, 4, 4], [2, 1, 2]
     # First/third layers local, second global: unequal head sizes and partial
     # global RoPE deliberately exercise more than the real model's geometry.
@@ -79,6 +81,9 @@ def fixture(storage="f32", array_pattern=False):
                      "tokenizer.ggml.bos_token_id": 2, "tokenizer.ggml.eos_token_id": 1,
                      "tokenizer.ggml.padding_token_id": 0, "tokenizer.ggml.unknown_token_id": 3,
                      "tokenizer.ggml.add_bos_token": True, "tokenizer.ggml.add_eos_token": True})
+    if audio_soft is not None:
+        metadata["tokenizer.ggml.tokens"] += ["<|audio>", "<audio|>"]
+        metadata["tokenizer.ggml.token_type"] += [3, 3]
     tensors = {}
 
     def add(name, shape, norm=False, scale=False):
@@ -130,8 +135,8 @@ def fixture(storage="f32", array_pattern=False):
     def gelu(x):
         return 0.5*x*(1+math.tanh(math.sqrt(2/math.pi)*(x+0.044715*x*x*x)))
 
-    def reference(ids):
-        x = [[weight("token_embd")[token*hidden+i] * math.sqrt(hidden) for i in range(hidden)] for token in ids]
+    def reference(ids, initial=None):
+        x = [list(row) for row in initial] if initial is not None else [[weight("token_embd")[token*hidden+i] * math.sqrt(hidden) for i in range(hidden)] for token in ids]
         all_ple = [[v / math.sqrt(hidden) for v in row] for row in dense(x, "per_layer_model_proj")]
         inputs = [norm([row[l*ple:(l+1)*ple] for row in all_ple], "per_layer_proj_norm") for l in range(layers)]
         for layer, dim in enumerate(dims):
@@ -181,8 +186,16 @@ def fixture(storage="f32", array_pattern=False):
              [2, 4, 1, 0, 0, 0, 0], [0, 0, 2, 4, 1], [2, 4, 0, 5, 0, 1]]
     # Storage rounding is applied before independent scalar F32-activation math.
     oracle: dict = dict(vocab=vocab, context=context, cases=[dict(ids=ids, embedding=reference(ids)) for ids in cases], tolerance=5e-6)
+    initial = [[struct.unpack("<f", struct.pack("<f", math.sin(row * hidden + col) * 0.3))[0]
+                for col in range(hidden)] for row in range(7)]
+    oracle["soft_cases"] = [dict(embeddings=initial, mask=[1] * len(initial),
+                                 embedding=reference([1] * len(initial), initial))]
     oracle["text_cases"] = [dict(text=text, ids=ids, embedding=reference(ids)) for text, ids in
                             [("a", [2, 13, 1]), (" a", [2, 4, 1]), (" b", [2, 5, 1]), ("", [2, 1])]]
+    if audio_soft is not None:
+        hard = lambda token: [weight("token_embd")[token * hidden + i] * math.sqrt(hidden) for i in range(hidden)]
+        merged = [hard(2), hard(vocab - 2)] + [list(row) for row in audio_soft] + [hard(vocab - 1), hard(1)]
+        oracle["audio_embedding"] = reference([1] * len(merged), merged)
     return metadata, tensors, oracle
 
 

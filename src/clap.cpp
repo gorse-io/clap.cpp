@@ -30,6 +30,8 @@ int main(int argc, char **argv) {
     auto *embedding = app.add_subcommand("embedding", "Generate native text or audio embeddings");
     embedding->add_option("-m,--model", options.model_path, "Model GGUF")
         ->required()->check(CLI::ExistingFile);
+    embedding->add_option("--mmproj", options.mmproj_path, "EmbeddingGemma2 audio tower/projector GGUF")
+        ->check(CLI::ExistingFile);
     embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: automatic)")
         ->check(CLI::NonNegativeNumber)->capture_default_str();
     auto *input = embedding->add_option_group("Input", "Choose one text prompt, text file, or audio file");

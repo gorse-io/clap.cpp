@@ -73,6 +73,25 @@ if(BUILD_TESTING)
         COMMENT "Generating audio test fixtures"
         VERBATIM)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
+    add_executable(clap-gemma-audio-integration-test tests/models/gemma-audio-integration-test.cpp)
+    target_link_libraries(clap-gemma-audio-integration-test PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME embeddinggemma2_audio_integration
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_audio_integration.py"
+                "$<TARGET_FILE:clap-gemma-audio-integration-test>" "$<TARGET_FILE:clap-cli>")
+    set_tests_properties(embeddinggemma2_audio_integration PROPERTIES TIMEOUT 120)
+    add_executable(clap-gemma-audio-test tests/models/embeddinggemma2_audio-test.cpp)
+    target_include_directories(clap-gemma-audio-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(clap-gemma-audio-test PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME embeddinggemma2_audio
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_audio.py"
+                --test "$<TARGET_FILE:clap-gemma-audio-test>")
+    set_tests_properties(embeddinggemma2_audio PROPERTIES TIMEOUT 180)
+    add_executable(clap-gemma-soft-test tests/models/gemma-soft-test.cpp)
+    target_include_directories(clap-gemma-soft-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(clap-gemma-soft-test PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME embeddinggemma2_soft
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_soft.py"
+                "$<TARGET_FILE:clap-gemma-soft-test>")
     add_executable(clap-embeddinggemma2-test tests/models/embeddinggemma2-test.cpp)
     target_link_libraries(clap-embeddinggemma2-test PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME embeddinggemma2_model

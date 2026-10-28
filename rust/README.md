@@ -18,3 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+For EmbeddingGemma 2 audio, load the main GGUF and matching mmproj with
+`CLAP::new_with_mmproj("embeddinggemma2.gguf", "mmproj-Q8_0.gguf", 4)?`, then
+call `model.encode_audio("recording.wav", 0)?` as above. Both paths accept
+`impl AsRef<Path>`; missing/incompatible projectors return errors. The original
+`new(path, threads)` remains unchanged, and text does not require an mmproj.
+Image encoding is not supported.
