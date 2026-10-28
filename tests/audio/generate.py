@@ -16,7 +16,7 @@ ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def ffmpeg(source, destination, *args):
-    subprocess.run([options.ffmpeg, "-v", "error", "-y", "-i", str(ROOT / source),
+    subprocess.run([options.ffmpeg, "-cpuflags", "0", "-v", "error", "-y", "-i", str(ROOT / source),
                     *args, str(ROOT / destination)], check=True)
 
 
