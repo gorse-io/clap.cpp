@@ -39,10 +39,11 @@ class ByteBpeVocabulary final : public Vocabulary {
 // Gemma 4 / EmbeddingGemma 2 GGUF uses SentencePiece-style raw UTF-8 BPE,
 // NOT Unigram or GPT-2 byte encoding. Metadata keys retain tokenizer.ggml.*.
 class GemmaVocabulary final : public Vocabulary {
-public:
+  public:
     GemmaVocabulary(const nlohmann::json &metadata, size_t context_length);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
-private:
+
+  private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos, unk;
     bool add_bos, add_eos;

@@ -25,6 +25,15 @@ int main(int argc, char **argv) {
     size_t ntokens = 0, ntext = 0, nencoded = 0, naudio = 0, npath = 0;
     clap_audio_frames frames = {0};
     float pcm[4800] = {0};
+    model = (CLAP *)1;
+    CHECK(clap_create_with_mmproj(NULL, "audio.gguf", NULL, &model) == CLAP_INVALID_ARGUMENT);
+    CHECK(model == NULL);
+    model = (CLAP *)1;
+    CHECK(clap_create_with_mmproj("model.gguf", NULL, NULL, &model) == CLAP_INVALID_ARGUMENT);
+    CHECK(model == NULL);
+    CHECK(clap_create_with_mmproj("model.gguf", "", NULL, &model) == CLAP_INVALID_ARGUMENT);
+    CHECK(model == NULL);
+    CHECK(clap_create_with_mmproj("model.gguf", "audio.gguf", NULL, NULL) == CLAP_INVALID_ARGUMENT);
     CHECK(clap_create(NULL, NULL, &model) == CLAP_INVALID_ARGUMENT);
     CHECK(model == NULL && strlen(clap_last_error()) > 0);
     CHECK(clap_create("/missing/clap.gguf", NULL, &model) == CLAP_ERROR);

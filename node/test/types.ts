@@ -24,3 +24,8 @@ import { decodeAudio } from '..';
 // @ts-expect-error old class is not exported
 import { Model } from '..';
 void embedding;
+
+new CLAP("model.gguf", {});
+new CLAP("model.gguf", { threads: 1, mmproj: "mmproj.gguf" });
+// @ts-expect-error projector must be a string
+new CLAP("model.gguf", { mmproj: 1 });

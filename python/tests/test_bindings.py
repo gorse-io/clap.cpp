@@ -12,7 +12,7 @@ import wave
 import pytest
 
 import clap_cpp
-from tiny_models import clap_fixture, mert_fixture, text_reference
+from tiny_models import clap_fixture, mert_fixture, text_reference, write_gguf
 
 
 @pytest.fixture(scope="session")
@@ -124,6 +124,26 @@ def test_model_loads_from_unicode_path(tmp_path, as_string):
         assert model.projection_dimension == 3
         tokens = model.tokenize("hello")
         assert_close(model.encode_text("hello"), text_reference(tokens), rtol=2e-4, atol=2e-5)
+
+
+def test_optional_mmproj_preserves_existing_loading(model_paths):
+    with clap_cpp.CLAP(model_paths[0], 1, mmproj=None) as model:
+        assert_list(model.encode_text("hello"), (3,))
+
+
+@pytest.mark.parametrize("as_string", [False, True])
+def test_explicit_mmproj_is_not_ignored(model_paths, tmp_path, as_string):
+    missing = tmp_path / "missing-audio-mmproj.gguf"
+    # A metadata-only dispatch probe: failure must name the projector, not
+    # the incomplete model weights. This tests the exact forwarded path.
+    probe = tmp_path / "embeddinggemma2-dispatch.gguf"
+    write_gguf(probe, {"general.architecture": "gemma-embedding2"}, {})
+    with pytest.raises(RuntimeError, match="missing-audio-mmproj"):
+        clap_cpp.CLAP(probe, threads=1,
+                      mmproj=str(missing) if as_string else missing)
+    # Other architectures must not silently ignore a supplied projector either.
+    with pytest.raises(RuntimeError):
+        clap_cpp.CLAP(model_paths[0], mmproj=missing)
 
 
 def test_properties_are_readonly(model, mert):

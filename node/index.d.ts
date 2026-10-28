@@ -1,7 +1,12 @@
+export interface ModelOptions {
+  threads?: number;
+  /** Separate audio tower/projector GGUF for EmbeddingGemma2. */
+  mmproj?: string;
+}
 /** Synchronous CPU inference. Each call blocks the calling JavaScript thread. */
 export class CLAP {
   /** threads=0 selects the native default; negative/fractional values are rejected. */
-  constructor(path: string, threads?: number);
+  constructor(path: string, threadsOrOptions?: number | ModelOptions);
   /** Returns an owned embedding. Text is tokenized internally. */
   encodeText(input: string | Int32Array | number[]): Float32Array;
   /** Mono PCM, automatically resampled. Defaults: 48000 Hz, cropOffset=0 samples. */
