@@ -1,8 +1,10 @@
 # Rust bindings
 
-`clap-cpp` provides safe, owning CPU bindings to the current C++ `clap::Model`
-API. It does **not** depend on the proposed public C API or a system installation
-of clap.cpp. Rust has no third-party crate dependencies.
+`clap-cpp` provides safe, owning CPU bindings to the C++ `clap::CLAP` API.
+The public surface is `CLAP`, its constructor, and `encode_text` / `encode_audio`,
+using the Python binding's naming and file-encoding behavior. It does not depend
+on a public C API or a system installation of clap.cpp. Rust has no third-party
+crate dependencies.
 
 ## Build and use
 
@@ -11,7 +13,7 @@ repository checkout with these pinned submodules initialized:
 
 ```sh
 git submodule update --init --recursive ggml thirdparty/json thirdparty/icu thirdparty/miniaudio
-cargo test --manifest-path rust/Cargo.toml -j 4
+cargo test --manifest-path rust/Cargo.toml -j 3
 cargo run --manifest-path rust/Cargo.toml --example embed -- model.gguf "a piano" audio.wav
 ```
 
@@ -29,13 +31,11 @@ clap-cpp = { path = "/path/to/clap.cpp/rust" }
 ```
 
 ```rust,no_run
-use clap_cpp::{Model, decode_audio};
-# fn main() -> clap_cpp::Result<()> {
-let mut model = Model::new("model.gguf", 4)?;
-let tokens = model.tokenize("a piano", 512)?;
-let embedding = model.text_tokens(&tokens)?;
-let audio = decode_audio("piano.wav")?;
-let embedding = model.audio(&audio.samples, audio.sample_rate, 0)?;
+use clap_cpp::CLAP;
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let mut model = CLAP::new("model.gguf", 4)?;
+let text_embedding = model.encode_text("a piano")?;
+let audio_embedding = model.encode_audio("piano.wav", 0)?;
 # Ok(())
 # }
 ```
@@ -49,37 +49,27 @@ ICU data files are needed. CMake's usual `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`,
 
 ## API and safety
 
-- `Model::new(path, threads)` loads one GGUF; `Drop` releases it. Zero threads
+- `CLAP::new(path, threads)` loads one GGUF; `Drop` releases it. Zero threads
   selects the native default. Negative thread counts are rejected.
+- `encode_text(&str)` returns one owned `Vec<f32>` embedding, using the native
+  architecture's context policy. Empty text can be valid.
+- `encode_audio(path, crop_offset)` encodes a WAV, MP3 or FLAC file, decoding,
+  averaging channels to mono and resampling to the model's rate internally.
+  Use `0` for the default crop. CLAP crop offsets count samples after resampling
+  to 48 kHz; other architectures may reject nonzero offsets.
+- Unlike Python's overloads, this minimal Rust API accepts text strings and
+  audio file paths only, not token IDs or PCM slices. There are no public
+  tokenization, frame/features, metadata or standalone audio preprocessing APIs.
 - Models are deliberately **neither `Send` nor `Sync`**. Inference takes
-  `&mut self`; do not bypass this with unsafe code. Backend same-instance
-  concurrency is not guaranteed.
-- `tokenize`, `text`, `text_tokens`, `audio`, `audio_frames`,
-  `clamp3_features`, `audio_sample_rate`, `projection_dimension` mirror native
-  operations. Unsupported architecture/operation combinations return errors.
-  `tokenize` truncates to a maximum, but does **not** pad. String inference uses
-  the native architecture's context policy. Empty text can be valid; empty
-  token slices are not.
-- Frame results are time-major `AudioFrames { values, frames, dimension }`.
-  `values.len() == frames * dimension`. MERT final frames and all-layer CLaMP3
-  preprocessing features are different operations; CLAP does not expose either.
-- `decode_audio` supports WAV/MP3/FLAC and averages channels, preserving source
-  rate. `resample_audio` uses the native causal linear/anti-alias resampler;
-  its output is not zero-phase sinc. `log_mel` accepts 48 kHz mono PCM and
-  returns flattened `[1001, 64]` features with native repeat-padding/cropping.
-  `audio` performs model-specific resampling; crop offsets retain the native
-  model's meaning (CLAP: samples after resampling to 48 kHz). Other architectures
-  may reject nonzero crop offsets.
+  `&mut self`; backend same-instance concurrency is not guaranteed.
 - Native exceptions are caught inside the private bridge. Every result has a
-  paired C++ free; output vectors and diagnostics are copied into Rust-owned
-  values before release, never borrowed from a destroyed native object. An
-  allocation failure while creating a native result becomes an `Error`; native
-  diagnostic text is bounded to 1023 bytes. Rust allocation failure retains
-  Rust's standard process-abort behavior.
+  paired C++ free; embeddings and diagnostics are copied into Rust-owned values.
+  Errors use `Box<dyn std::error::Error>`, not an additional public binding type.
+  Native diagnostic text is bounded to 1023 bytes. Rust allocation failure
+  retains Rust's standard process-abort behavior.
 - Strings and paths must be UTF-8 and cannot contain NUL. Non-UTF-8 OS paths
-  are rejected rather than lossy-converted. Input slices are borrowed only for
-  synchronous calls. PCM must be nonempty and finite with positive sample rate;
-  invalid tokens and architecture/context constraints are checked natively.
+  are rejected rather than lossy-converted. Inputs are borrowed only for
+  synchronous calls. Unsupported architecture/operation combinations return errors.
 
 ## Packaging limitation (intentional)
 
@@ -99,11 +89,12 @@ that is not evidence of standalone package viability.
 ```sh
 cargo fmt --manifest-path rust/Cargo.toml -- --check
 cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path rust/Cargo.toml
+cargo test --manifest-path rust/Cargo.toml --all-targets
+cargo test --manifest-path rust/Cargo.toml --doc
 ```
 
-Tests exercise actual CLAP text/waveform and MERT inference, independent scalar
-text values, dimensions, frame mean-pooling, decoding/resampling/mel values,
-UTF-8 paths, owned errors, unsupported operations, invalid IDs and nonfinite PCM.
+Tests exercise actual CLAP text/file and MERT file inference, independent scalar
+text values, Unicode paths, stereo downmixing at a non-model sample rate,
+nonzero cropping on long audio, owned errors and unsupported operations.
 Compile-fail doctests enforce the !Send/!Sync contract. Large published models,
 GPU inference and exhaustive numerical parity are outside this binding suite.

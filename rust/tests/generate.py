@@ -70,3 +70,17 @@ tiny.mert_fixture(out / 'mert.gguf')
 with wave.open(str(out / '音频.wav'), 'wb') as f:
     f.setparams((1, 2, 24000, 4, 'NONE', 'not compressed'))
     f.writeframes(struct.pack('<4h', 0, 8192, -16384, 24576))
+with wave.open(str(out / '立体声.wav'), 'wb') as f:
+    f.setparams((2, 2, 24000, 4, 'NONE', 'not compressed'))
+    f.writeframes(struct.pack('<8h', -4096, 4096, 4096, 12288, -20480, -12288, 20480, 28672))
+
+def wav(name, rate, samples):
+    with wave.open(str(out / name), 'wb') as f:
+        f.setparams((1, 2, rate, len(samples), 'NONE', 'not compressed'))
+        f.writeframes(struct.pack('<' + 'h' * len(samples), *samples))
+
+samples = [int(8192 * math.sin(i * 0.03)) for i in range(12 * 48000)]
+wav('long.wav', 48000, samples)
+wav('crop.wav', 48000, samples[48000:11 * 48000])
+wav('mert.wav', 24000, [int(6553 * math.sin(i * 0.03)) for i in range(24000)])
+(out / 'invalid.wav').write_bytes(b'not an audio file')

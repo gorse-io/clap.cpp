@@ -73,8 +73,9 @@ is needed for inference. See the package README for API examples and tests.
 
 ## Rust bindings (CPU)
 
-The [`rust/` crate](rust/README.md) provides safe model ownership, text/audio
-embeddings, frame/features APIs, decoding, resampling and log-mel preprocessing.
+The [`rust/` crate](rust/README.md) exposes `CLAP` with `encode_text` and
+`encode_audio`, providing safe model ownership and text/audio-file embeddings.
+Audio decoding, mono conversion and resampling are handled internally.
 Use it as a local path dependency from an initialized recursive checkout; it is
 intentionally not publishable until native-source vendoring is implemented.
 Run `cargo test --manifest-path rust/Cargo.toml -j 4` (Python 3 is needed only to
