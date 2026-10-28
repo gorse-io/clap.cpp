@@ -80,5 +80,30 @@ python -m build python
 The source distribution includes the pinned native sources and third-party
 licenses; a wheel can be rebuilt from that archive without a Git checkout or
 CMake-time downloads. Build dependencies must still be available from the Python
-package index or a local wheelhouse. Wheel publishing and GPU support are out of
-scope for this initial binding.
+package index or a local wheelhouse. GPU support is not included.
+
+## PyPI releases
+
+Publishing a GitHub release runs `.github/workflows/release.yml`. The release tag
+must be a valid Python package version (for example `v0.2.0` or `v0.2.0rc1`);
+its normalized version replaces the source package's development version in the
+build only. The workflow builds one source distribution, then builds and tests
+CPython 3.9–3.14 CPU wheels from that archive for Linux x86-64/ARM64, macOS ARM64
+and Windows x86-64. All Python builds must pass before anything is published.
+Native executable release jobs remain independent.
+
+Before the first release, configure a PyPI Trusted Publisher (or pending
+publisher for a new project) with:
+
+- Project: `clap-cpp`
+- GitHub owner: `gorse-io`
+- Repository: `clap.cpp`
+- Workflow: `release.yml`
+- Environment: `pypi`
+
+Create the matching GitHub `pypi` environment and configure any desired approval
+rules. Publishing uses GitHub OIDC; no PyPI API token secret is required. Release
+candidates are published as PyPI prereleases when the tag uses a prerelease
+version; the GitHub prerelease checkbox alone does not change the version.
+Previously published package files cannot be overwritten: use a new version for
+changed artifacts.

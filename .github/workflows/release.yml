@@ -8,6 +8,101 @@ permissions:
   contents: write
 
 jobs:
+  build-python-sdist:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install packaging tools
+        run: python -m pip install build packaging twine
+      - name: Set Python package version from release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import tomllib
+          from packaging.version import Version
+
+          version = str(Version(os.environ['RELEASE_TAG']))
+          path = Path('python/pyproject.toml')
+          text = path.read_text()
+          current = tomllib.loads(text)['project']['version']
+          old = f'version = "{current}"'
+          assert text.count(old) == 1, 'Expected exactly one package version'
+          path.write_text(text.replace(old, f'version = "{version}"'))
+          PY
+      - name: Build source distribution
+        run: python -m build python --sdist --outdir dist
+      - name: Check source distribution
+        run: python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-python-wheels:
+    needs: build-python-sdist
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-sdist
+          path: sdist
+      - name: Extract source distribution
+        shell: bash
+        run: |
+          mkdir python-dist
+          tar -xzf sdist/*.tar.gz --strip-components=1 -C python-dist
+      - name: Build and test CPU wheels from source distribution
+        uses: pypa/cibuildwheel@v4.3.4
+        with:
+          package-dir: python-dist
+          output-dir: dist
+        env:
+          CIBW_BUILD: 'cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*'
+          CIBW_SKIP: '*-musllinux_* *-win32'
+          CIBW_ARCHS: native
+          CIBW_ENVIRONMENT: CMAKE_BUILD_PARALLEL_LEVEL=4
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish-pypi:
+    needs: [build-python-sdist, build-python-wheels]
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/clap-cpp
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-*
+          merge-multiple: true
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
   build-cpu:
     strategy:
       fail-fast: false
