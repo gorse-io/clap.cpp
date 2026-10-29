@@ -311,7 +311,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TAG: ${{ github.event.release.prerelease && 'next' || needs.build-node.outputs.npm-tag }}
-        run: npm publish dist/*.tgz --provenance --access public --tag "$NPM_TAG"
+        run: npm publish ./dist/*.tgz --provenance --access public --tag "$NPM_TAG"
 
   build-cpu:
     strategy:
