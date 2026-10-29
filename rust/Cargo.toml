@@ -6,8 +6,11 @@ description = "Safe CPU Rust bindings for clap.cpp"
 license = "Apache-2.0"
 repository = "https://github.com/gorse-io/clap.cpp"
 readme = "README.md"
-# Native sources are in the parent checkout and Git submodules, not this crate.
-publish = false
+# scripts/vendor.py stages ignored sources before cargo package/publish.
+include = [
+    "Cargo.toml", "Cargo.lock", "README.md", "build.rs", "src/**",
+    "native/**", "examples/*.rs", "tests/*.rs", "tests/*.py", "scripts/vendor.py", "vendor/**",
+]
 
 [lib]
 name = "clap_cpp"

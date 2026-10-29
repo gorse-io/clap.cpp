@@ -1,4 +1,10 @@
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    collections::hash_map::DefaultHasher,
+    env,
+    hash::{Hash, Hasher},
+    path::PathBuf,
+    process::Command,
+};
 
 fn run(command: &mut Command) {
     let status = command
@@ -9,11 +15,27 @@ fn run(command: &mut Command) {
 
 fn main() {
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let root = manifest.parent().unwrap();
-    assert!(root.join("include/clap.h").is_file(),
-        "clap-cpp requires the parent repository native sources; use a path dependency from a recursive Git checkout, not a cargo package archive (see rust/README.md)");
+    let vendored = manifest.join("vendor");
+    let root = if vendored.join("include/clap.h").is_file() {
+        vendored
+    } else {
+        manifest.parent().unwrap().to_path_buf()
+    };
+    for required in [
+        "include/clap.h",
+        "ggml/CMakeLists.txt",
+        "thirdparty/json/CMakeLists.txt",
+        "thirdparty/icu/icu4c/source/common/unicode/uvernum.h",
+        "thirdparty/miniaudio/miniaudio.h",
+    ] {
+        assert!(root.join(required).is_file(),
+            "clap-cpp native source missing: {required}. In a Git checkout run git submodule update --init --recursive, then python3 rust/scripts/vendor.py before cargo package/publish. Registry archives must contain vendor/ (see README.md).");
+    }
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("native").display()
+    );
     for path in [
-        "rust/native",
         "src",
         "include",
         "cmake",
@@ -41,6 +63,12 @@ fn main() {
         "cross-compilation is not supported yet"
     );
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    // Cargo package verification can reuse this OUT_DIR for the extracted crate.
+    // CMake caches absolute source paths, so isolate each native source layout.
+    let mut source_id = DefaultHasher::new();
+    manifest.hash(&mut source_id);
+    root.hash(&mut source_id);
+    let out = out.join(format!("source-{:x}", source_id.finish()));
     let build = out.join("build");
     let install = out.join("native");
     let mut configure = Command::new("cmake");
@@ -50,6 +78,7 @@ fn main() {
         .arg("-B")
         .arg(&build)
         .arg("-DCMAKE_BUILD_TYPE=Release")
+        .arg(format!("-DCLAP_ROOT={}", root.display()))
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install.display()));
     if let Some(toolchain) = env::var_os("CMAKE_TOOLCHAIN_FILE") {
         configure.arg(format!(

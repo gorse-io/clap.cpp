@@ -9,6 +9,16 @@ permissions:
   contents: read
 
 jobs:
+  release-metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test release version synchronization
+        run: python -m unittest discover -s .github/scripts -v
+
   build:
     strategy:
       fail-fast: false
@@ -72,9 +82,12 @@ jobs:
         run: cargo test --manifest-path rust/Cargo.toml --all-targets
       - name: Compile-fail thread-safety contract
         run: cargo test --manifest-path rust/Cargo.toml --doc
-      # This is intentionally a path-only crate; inventory is not a package build.
-      - name: Inspect non-publishable package inventory
-        run: cargo package --manifest-path rust/Cargo.toml --list --allow-dirty
+      - name: Test vendoring guards
+        run: python -m unittest discover -s rust/tests -p test_vendor.py -v
+      - name: Vendor pinned native sources and licenses
+        run: python rust/scripts/vendor.py
+      - name: Verify standalone package build
+        run: cargo package --manifest-path rust/Cargo.toml --allow-dirty
 
   python:
     strategy:

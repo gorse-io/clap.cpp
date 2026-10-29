@@ -59,8 +59,13 @@ def text_reference(ids):
 import sys
 import wave
 
-root = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('tiny_models', root / 'python/tests/tiny_models.py')
+crate = Path(__file__).resolve().parents[1]
+source = crate / 'vendor/test-data/tiny_models.py'
+if not source.is_file():
+    source = crate.parent / 'python/tests/tiny_models.py'
+# Do not add bytecode artifacts to the vendored source archive during tests.
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('tiny_models', source)
 tiny = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tiny)
 out = Path(sys.argv[1])
