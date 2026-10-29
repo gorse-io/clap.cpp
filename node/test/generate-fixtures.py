@@ -19,13 +19,8 @@ fixtures.mert_fixture(out / 'mert.gguf')
 with wave.open(str(out / 'stereo.wav'), 'wb') as wav:
     wav.setparams((2, 2, 24000, 0, 'NONE', 'not compressed'))
     wav.writeframes(struct.pack('<hh', 16384, 0) * 24000)
-# NumPy is optional: numerical oracle when available, never needed for fixtures.
-try:
-    ids = [0, 109, 106, 113, 113, 116, 2]
-    values = fixtures.text_reference(ids).tolist()
-except ImportError:
-    (out / 'reference.json').unlink(missing_ok=True)
-    print('NumPy unavailable: skipping optional independent text oracle')
-else:
-    (out / 'reference.json').write_text(json.dumps(dict(ids=ids, values=values)))
+# The shared scalar oracle uses only the Python standard library.
+ids = [0, 109, 106, 113, 113, 116, 2]
+values = fixtures.text_reference(ids)
+(out / 'reference.json').write_text(json.dumps(dict(ids=ids, values=values)))
 print(f'Generated CLAP/MERT/WAV fixtures in {out}')

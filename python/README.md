@@ -6,6 +6,15 @@
 pip install clap-cpp
 ```
 
+## Type hints
+
+The package includes type stubs and a `py.typed` marker for IDE completion and
+static checking with mypy or Pyright. `encode_text` and `encode_audio` return
+`list[float]`; `audio_frames` and `clamp3_features` return time-major
+`list[list[float]]`. PCM input accepts mono numeric sequences such as lists or
+tuples. The runtime has no NumPy dependency. Text, token-sequence, audio-file and
+PCM input overloads are declared separately.
+
 ## Usage
 
 ```python
