@@ -23,7 +23,7 @@ Release wheels cover CPython 3.9–3.14 (not free-threaded builds):
 
 | Backend | Platforms | Required system runtime |
 | --- | --- | --- |
-| CPU | Linux x86_64/ARM64 (glibc 2.35+), macOS ARM64, Windows x86_64 | None beyond platform runtimes |
+| CPU | Linux x86_64/ARM64 (glibc minimum recorded in wheel tags), macOS ARM64, Windows x86_64 | None beyond platform runtimes |
 | CUDA | Linux x86_64 (glibc 2.35+) | CUDA 12.9-compatible NVIDIA driver; cudart/cuBLAS are statically linked |
 | ROCm | Linux x86_64 (glibc 2.35+) | ROCm 6.4.3 HIP, hipBLAS, rocBLAS (including library data), compatible AMD driver |
 | Vulkan | Linux x86_64 (glibc 2.39+) | System Vulkan loader and vendor ICD/driver |
@@ -112,9 +112,14 @@ package index or a local wheelhouse.
 
 ## Releases
 
-`.github/workflows/python-release.yml` runs when a GitHub Release is published.
-It builds CPU, CUDA, ROCm and Vulkan distributions without running tests, using
-sccache for C, C++, CUDA and HIP compilation. Cache storage reuses the repository's
+`.github/workflows/release.yml` runs when a GitHub Release is published.
+It normalizes the release tag into the package version and all three exact extra
+dependencies, then builds one canonical CPU source distribution. CPU wheels are
+built and tested from that archive using the existing cibuildwheel platform matrix.
+The GPU source distributions are generated from the same CPU archive, and GPU
+wheels are built from those source distributions with sccache for C, C++, CUDA
+and HIP compilation. GPU wheels are not runtime-tested by this workflow.
+Cache storage reuses the repository's
 `SCCACHE_BUCKET`, `SCCACHE_ENDPOINT`, `SCCACHE_REGION` variables and
 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` secrets. Linux wheels are repaired
 with auditwheel; system GPU libraries remain external as listed above. All
@@ -122,10 +127,10 @@ wheels and source distributions are attached to that release.
 
 Stable releases also publish the four distributions to PyPI using OIDC. Before
 releasing, configure a PyPI trusted publisher (owner `gorse-io`, repository
-`clap.cpp`, workflow `python-release.yml`, environment `pypi`) for **each** of
+`clap.cpp`, workflow `release.yml`, environment `pypi`) for **each** of
 `clap-cpp`, `clap-cpp-cuda`, `clap-cpp-rocm` and `clap-cpp-vulkan`, and configure
 any required GitHub `pypi` environment approvals. Prereleases only attach assets.
-The version in `python/pyproject.toml` and its three exact extra dependencies
-must be updated together before publishing a new version. The backend helper
-copies that version into each backend distribution; existing PyPI versions
-cannot be overwritten.
+The release workflow updates the version in `python/pyproject.toml` and all three
+exact extra dependencies together from the normalized release tag. The backend
+helper copies that version into each backend distribution. One publisher uploads
+the verified CPU and GPU artifacts; existing PyPI versions cannot be overwritten.

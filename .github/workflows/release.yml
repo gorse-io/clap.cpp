@@ -13,42 +13,57 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install packaging tools
-        run: python -m pip install build packaging twine
-      - name: Set Python package version from release tag
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import tomllib
-          from packaging.version import Version
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install packaging tools
+      run: python -m pip install build packaging twine
+    - name: Set Python package version from release tag
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: |
+        python - <<'PY'
+        import os
+        from pathlib import Path
+        import tomllib
+        from packaging.version import Version
 
-          version = str(Version(os.environ['RELEASE_TAG']))
-          path = Path('python/pyproject.toml')
-          text = path.read_text()
-          current = tomllib.loads(text)['project']['version']
-          old = f'version = "{current}"'
-          assert text.count(old) == 1, 'Expected exactly one package version'
-          path.write_text(text.replace(old, f'version = "{version}"'))
-          PY
-      - name: Build source distribution
-        run: python -m build python --sdist --outdir dist
-      - name: Check source distribution
-        run: python -m twine check --strict dist/*
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-sdist
-          path: dist/*.tar.gz
-          if-no-files-found: error
-
+        version = str(Version(os.environ['RELEASE_TAG']))
+        path = Path('python/pyproject.toml')
+        text = path.read_text()
+        current = tomllib.loads(text)['project']['version']
+        old = f'version = "{current}"'
+        assert text.count(old) == 1, 'Expected exactly one package version'
+        text = text.replace(old, f'version = "{version}"')
+        for backend in ('cuda', 'rocm', 'vulkan'):
+            old_dependency = f'clap-cpp-{backend}=={current}'
+            assert text.count(old_dependency) == 1, f'Expected one exact {backend} dependency'
+            text = text.replace(old_dependency, f'clap-cpp-{backend}=={version}')
+        path.write_text(text)
+        PY
+    - name: Build source distribution
+      run: python -m build python --sdist --outdir dist
+    - name: Generate GPU source distributions from the canonical CPU source distribution
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir python-dist
+        tar -xzf dist/clap_cpp-[0-9]*.tar.gz --strip-components=1 -C python-dist
+        for backend in cuda rocm vulkan; do
+          destination="$RUNNER_TEMP/clap-$backend"
+          python python-dist/prepare_backend.py "$backend" "$destination"
+          python -m build --sdist "$destination" --outdir dist
+        done
+    - name: Check source distribution
+      run: python -m twine check --strict dist/*
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-sdists
+        path: dist/*.tar.gz
+        if-no-files-found: error
   build-python-wheels:
     needs: build-python-sdist
     permissions:
@@ -56,52 +71,495 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2022]
+        os:
+        - ubuntu-24.04
+        - ubuntu-24.04-arm
+        - macos-15
+        - windows-2022
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: python-sdist
-          path: sdist
-      - name: Extract source distribution
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-sdists
+        path: sdist
+    - name: Extract source distribution
+      shell: bash
+      run: |
+        mkdir python-dist
+        tar -xzf sdist/clap_cpp-[0-9]*.tar.gz --strip-components=1 -C python-dist
+    - name: Build and test CPU wheels from source distribution
+      uses: pypa/cibuildwheel@v4.3.4
+      with:
+        package-dir: python-dist
+        output-dir: dist
+      env:
+        CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*
+        CIBW_SKIP: '*-musllinux_* *-win32'
+        CIBW_ARCHS: native
+        CIBW_ENVIRONMENT: CMAKE_BUILD_PARALLEL_LEVEL=4
+        CIBW_TEST_REQUIRES: pytest mypy>=1.8 typing_extensions>=4.2
+        CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-wheels-${{ matrix.os }}
+        path: dist/*.whl
+        if-no-files-found: error
+  python-build-cuda:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-22.04
+        python:
+        - '3.9'
+        - '3.10'
+        - '3.11'
+        - '3.12'
+        - '3.13'
+        - '3.14'
+    runs-on: ${{ matrix.os }}
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      CMAKE_GENERATOR: Ninja
+      CMAKE_BUILD_PARALLEL_LEVEL: '1'
+      CMAKE_ARGS: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
+        -DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DBUILD_TESTING=OFF -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/python/cuda/${{ matrix.os }}/${{ matrix.python }}/
+    defaults:
+      run:
         shell: bash
-        run: |
-          mkdir python-dist
-          tar -xzf sdist/*.tar.gz --strip-components=1 -C python-dist
-      - name: Build and test CPU wheels from source distribution
-        uses: pypa/cibuildwheel@v4.3.4
-        with:
-          package-dir: python-dist
-          output-dir: dist
-        env:
-          CIBW_BUILD: 'cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*'
-          CIBW_SKIP: '*-musllinux_* *-win32'
-          CIBW_ARCHS: native
-          CIBW_ENVIRONMENT: CMAKE_BUILD_PARALLEL_LEVEL=4
-          CIBW_TEST_REQUIRES: pytest mypy>=1.8 typing_extensions>=4.2
-          CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-wheels-${{ matrix.os }}
-          path: dist/*.whl
-          if-no-files-found: error
-
-  publish-pypi:
-    needs: [build-python-sdist, build-python-wheels]
-    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-sdists
+        path: sdists
+    - name: Extract canonical CUDA source distribution
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/clap-cuda"
+        tar -xzf sdists/clap_cpp_cuda-*.tar.gz --strip-components=1 -C "$RUNNER_TEMP/clap-cuda"
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Install CUDA 12.9 build dependencies (same as release.yml)
+      uses: Jimver/cuda-toolkit@v0.2.36
+      with:
+        cuda: 12.9.2
+        method: network
+        sub-packages: '["nvcc"]'
+        non-cuda-sub-packages: '["libcublas-dev"]'
+    - name: Set up sccache
+      uses: mozilla-actions/sccache-action@v0.0.11
+      with:
+        version: v0.18.0
+    - name: Install build and wheel repair tools
+      run: |
+        set -euo pipefail
+        python -m pip install build ninja 'auditwheel>=6.4,<7' patchelf
+    - name: Build CUDA wheel
+      run: |
+        set -euo pipefail
+        python -m build --wheel "$RUNNER_TEMP/clap-cuda" --outdir raw \
+          -Ccmake.define.CLAP_PYTHON_BACKEND=CUDA \
+          -Ccmake.define.GGML_STATIC=ON \
+          '-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real'
+    - name: Repair CUDA wheel
+      run: |
+        set -euo pipefail
+        auditwheel repair --plat manylinux_2_35_x86_64 --only-plat \
+          --exclude libcuda.so.1 --wheel-dir wheelhouse raw/*.whl
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-cuda-${{ matrix.os }}-${{ matrix.python }}
+        path: wheelhouse/*.whl
+        if-no-files-found: error
+    needs: build-python-sdist
+    permissions:
+      contents: read
+  python-build-vulkan:
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      CMAKE_GENERATOR: Ninja
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CMAKE_ARGS: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
+        -DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DBUILD_TESTING=OFF -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/python/vulkan/${{ matrix.os }}/${{ matrix.python }}/
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-24.04
+        python:
+        - '3.9'
+        - '3.10'
+        - '3.11'
+        - '3.12'
+        - '3.13'
+        - '3.14'
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-sdists
+        path: sdists
+    - name: Extract canonical VULKAN source distribution
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/clap-vulkan"
+        tar -xzf sdists/clap_cpp_vulkan-*.tar.gz --strip-components=1 -C "$RUNNER_TEMP/clap-vulkan"
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Install Vulkan build dependencies (same as release.yml)
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+      with:
+        packages: libvulkan-dev glslc spirv-headers
+        version: vulkan-${{ matrix.os }}-${{ runner.arch }}-v1
+    - name: Set up sccache
+      uses: mozilla-actions/sccache-action@v0.0.11
+      with:
+        version: v0.18.0
+    - name: Install build and wheel repair tools
+      run: |
+        set -euo pipefail
+        python -m pip install build ninja 'auditwheel>=6.4,<7' patchelf
+    - name: Build Vulkan wheel
+      run: |
+        set -euo pipefail
+        python -m build --wheel "$RUNNER_TEMP/clap-vulkan" --outdir raw \
+          -Ccmake.define.CLAP_PYTHON_BACKEND=VULKAN
+    - name: Repair Vulkan wheel (Ubuntu 24.04 glibc floor)
+      run: |
+        set -euo pipefail
+        auditwheel repair --plat manylinux_2_39_x86_64 --only-plat \
+          --exclude libvulkan.so.1 --wheel-dir wheelhouse raw/*.whl
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-vulkan-${{ matrix.os }}-${{ matrix.python }}
+        path: wheelhouse/*.whl
+        if-no-files-found: error
+    needs: build-python-sdist
+    permissions:
+      contents: read
+  python-build-rocm:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-22.04
+        python:
+        - '3.9'
+        - '3.10'
+        - '3.11'
+        - '3.12'
+        - '3.13'
+        - '3.14'
+    runs-on: ${{ matrix.os }}
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      CMAKE_GENERATOR: Ninja
+      CMAKE_BUILD_PARALLEL_LEVEL: '1'
+      CMAKE_ARGS: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
+        -DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DBUILD_TESTING=OFF -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/python/rocm/${{ matrix.os }}/${{ matrix.python }}/
+      CMAKE_PREFIX_PATH: /opt/rocm
+      LD_LIBRARY_PATH: /opt/rocm/lib:/opt/rocm/lib64
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-sdists
+        path: sdists
+    - name: Extract canonical ROCM source distribution
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/clap-rocm"
+        tar -xzf sdists/clap_cpp_rocm-*.tar.gz --strip-components=1 -C "$RUNNER_TEMP/clap-rocm"
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Add ROCm 6.4.3 package repository (same as release.yml)
+      run: |
+        set -euo pipefail
+        curl -fsSL --retry 3 https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/rocm.gpg > /dev/null
+        echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.4.3 jammy main' | sudo tee /etc/apt/sources.list.d/rocm.list
+        printf 'Package: *\nPin: origin repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm
+        sudo apt-get update
+    - name: Install ROCm build dependencies
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+      with:
+        packages: hip-dev hipblas-dev rocblas-dev rocm-device-libs
+        version: rocm-6.4.3-ubuntu-22.04-v2
+    - name: Restore ROCm installation prefix
+      run: |
+        set -euo pipefail
+        sudo ln -sfn /opt/rocm-6.4.3 /opt/rocm
+        test -x /opt/rocm/llvm/bin/clang++
+    - name: Set up sccache
+      uses: mozilla-actions/sccache-action@v0.0.11
+      with:
+        version: v0.18.0
+    - name: Install build and wheel repair tools
+      run: |
+        set -euo pipefail
+        python -m pip install build ninja 'auditwheel>=6.4,<7' patchelf
+    - name: Build ROCm wheel
+      run: |
+        set -euo pipefail
+        python -m build --wheel "$RUNNER_TEMP/clap-rocm" --outdir raw \
+          -Ccmake.define.CLAP_PYTHON_BACKEND=HIP \
+          -Ccmake.define.CMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+          '-Ccmake.define.CMAKE_HIP_ARCHITECTURES=gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201' \
+          -Ccmake.define.CMAKE_INSTALL_RPATH=/opt/rocm/lib \
+          -Ccmake.define.GGML_HIP_RCCL=OFF -Ccmake.define.GGML_STATIC=OFF
+    - name: Repair ROCm wheel, retaining system ROCm runtime
+      run: |
+        set -euo pipefail
+        mkdir -p wheelhouse
+        python - <<'PY'
+        import pathlib
+        import re
+        import subprocess
+        import sys
+        names = set()
+        root = pathlib.Path('/opt/rocm-6.4.3')
+        for library in root.rglob('*.so*'):
+            if not library.is_file():
+                continue
+            result = subprocess.run(['readelf', '-d', str(library)], capture_output=True, text=True)
+            if result.returncode == 0:
+                names.update(re.findall(r'\(SONAME\).*?\[(.*?)\]', result.stdout))
+        if not {'libamdhip64.so.6', 'libhipblas.so.2', 'librocblas.so.4'} <= names:
+            sys.exit('Expected ROCm runtime SONAMEs missing; inspect SDK installation')
+        pathlib.Path('wheelhouse/ROCM-6.4.3-EXCLUDED-SONAMES.txt').write_text('\n'.join(sorted(names)) + '\n')
+        command = ['auditwheel', 'repair', '--plat', 'manylinux_2_35_x86_64', '--only-plat', '--wheel-dir', 'wheelhouse']
+        for name in sorted(names):
+            command.extend(['--exclude', name])
+        wheels = list(pathlib.Path('raw').glob('*.whl'))
+        if len(wheels) != 1:
+            sys.exit(f'Expected one raw wheel, got {len(wheels)}')
+        subprocess.run(command + [str(wheels[0])], check=True)
+        PY
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-rocm-${{ matrix.os }}-${{ matrix.python }}
+        path: |
+          wheelhouse/*.whl
+          wheelhouse/ROCM-6.4.3-EXCLUDED-SONAMES.txt
+        if-no-files-found: error
+    needs: build-python-sdist
+    permissions:
+      contents: read
+  python-attach-release:
+    needs:
+    - build-python-sdist
+    - build-python-wheels
+    - python-build-cuda
+    - python-build-vulkan
+    - python-build-rocm
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: python-*
+        path: artifacts
+        merge-multiple: false
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Validate complete asset set and write runtime manifest
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install packaging
+        python - <<'PY'
+        from collections import Counter
+        import hashlib
+        import pathlib
+        import shutil
+        import tarfile
+        import zipfile
+        from packaging.utils import parse_wheel_filename, parse_sdist_filename
+        root = pathlib.Path('artifacts')
+        dist = pathlib.Path('dist')
+        dist.mkdir()
+        expected = Counter()
+        for minor in range(9, 15):
+            interpreter = f'cp3{minor}'
+            for platform in ('linux-x86_64', 'linux-aarch64', 'macosx-arm64', 'win-amd64'):
+                expected[('clap-cpp', interpreter, platform)] += 1
+            for backend in ('cuda', 'rocm', 'vulkan'):
+                expected[(f'clap-cpp-{backend}', interpreter, 'linux-x86_64')] += 1
+        actual = Counter()
+        versions = set()
+        for wheel in root.rglob('*.whl'):
+            name, version, _, tags = parse_wheel_filename(wheel.name)
+            versions.add(version)
+            keys = set()
+            for tag in tags:
+                if tag.platform.startswith('linux_'):
+                    raise SystemExit(f'Unrepaired Linux wheel: {wheel.name}')
+                if tag.platform.startswith('manylinux_'):
+                    platform = 'linux-aarch64' if tag.platform.endswith('_aarch64') else 'linux-x86_64'
+                elif tag.platform.startswith('macosx_') and tag.platform.endswith('_arm64'):
+                    platform = 'macosx-arm64'
+                elif tag.platform == 'win_amd64':
+                    platform = 'win-amd64'
+                else:
+                    raise SystemExit(f'Unexpected platform: {tag}')
+                keys.add((name, tag.interpreter, platform))
+            if len(keys) != 1:
+                raise SystemExit(f'Ambiguous wheel: {wheel.name}')
+            actual.update(keys)
+            with zipfile.ZipFile(wheel) as archive:
+                if not any('_clap_cpp' in entry and entry.endswith(('.so', '.pyd')) for entry in archive.namelist()):
+                    raise SystemExit(f'Missing native extension: {wheel.name}')
+            if (dist / wheel.name).exists():
+                raise SystemExit(f'Duplicate release asset: {wheel.name}')
+            shutil.copy2(wheel, dist)
+        if actual != expected:
+            raise SystemExit(f'Wheel matrix mismatch: missing={expected-actual}, extra={actual-expected}')
+        sdists = list(root.rglob('*.tar.gz'))
+        names = Counter()
+        for source in sdists:
+            name, version = parse_sdist_filename(source.name)
+            names[name] += 1
+            versions.add(version)
+            with tarfile.open(source) as archive:
+                if not any('/native/ggml/CMakeLists.txt' in entry.name for entry in archive):
+                    raise SystemExit(f'Sdist missing pinned native sources: {source.name}')
+            if (dist / source.name).exists():
+                raise SystemExit(f'Duplicate release asset: {source.name}')
+            shutil.copy2(source, dist)
+        if names != Counter({'clap-cpp': 1, 'clap-cpp-cuda': 1, 'clap-cpp-rocm': 1, 'clap-cpp-vulkan': 1}) or len(versions) != 1:
+            raise SystemExit(f'Sdist names/version mismatch: {names}, {versions}')
+        manifests = list(root.rglob('ROCM-6.4.3-EXCLUDED-SONAMES.txt'))
+        if len(manifests) != 6 or len({p.read_bytes() for p in manifests}) != 1:
+            raise SystemExit('ROCm exclusion manifests are missing or disagree')
+        shutil.copy2(manifests[0], dist)
+        (dist / 'PYTHON-WHEEL-RUNTIME.txt').write_text('''Python wheels are GitHub Release assets; stable releases also publish to PyPI.
+        CPU: CPython 3.9-3.14, Linux x86_64/aarch64 (wheel tags record the glibc minimum),
+        macOS arm64 (wheel filename records deployment minimum), Windows amd64.
+        GPU: CPython 3.9-3.14, Linux x86_64 only. No Windows GPU wheels yet.
+        Install clap-cpp plus the matching clap-cpp-cuda/rocm/vulkan wheel,
+        with identical versions and matching CPython/platform tags.
+        CUDA: toolkit 12.9.2, glibc >= 2.35; static cudart/cuBLAS;
+        compatible NVIDIA driver required, libcuda.so.1 is NOT bundled.
+        Vulkan: glibc >= 2.39; system libvulkan.so.1 loader and a working
+        vendor Vulkan ICD/driver are required and NOT bundled.
+        ROCm: glibc >= 2.35; install AMD ROCm 6.4.3 HIP, hipBLAS and rocBLAS,
+        including rocBLAS library data and a compatible AMD GPU/kernel driver.
+        Make /opt/rocm/lib:/opt/rocm/lib64 visible via LD_LIBRARY_PATH or ldconfig.
+        ROCM-6.4.3-EXCLUDED-SONAMES.txt lists every vendor SONAME deliberately
+        excluded from auditwheel bundling; these are system-runtime wheels,
+        not self-contained ROCm distributions. Do not relocate rocBLAS data.
+        ROCm GPU targets: gfx908,gfx90a,gfx942,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201.
+        Linux wheels are auditwheel-repaired manylinux wheels; the external
+        GPU runtimes above remain deliberate exceptions, not portability promises.
+        Source archives include pinned native sources; GPU source builds need
+        the corresponding vendor toolkit. CPU wheels pass installed-wheel tests; GPU execution is not tested here.
+        ''')
+        (dist / 'PYTHON-SHA256SUMS.txt').write_text(''.join(
+            f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
+            for p in sorted(dist.iterdir())
+        ))
+        print(f'Validated {sum(actual.values())} wheels and {len(sdists)} sdists; version {next(iter(versions))}')
+        PY
+    - name: Attach verified assets to the triggering GitHub release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: |
+        set -euo pipefail
+        gh release upload "$RELEASE_TAG" dist/* --clobber
+        # Read back this exact release and verify asset size AND bytes; an
+        # upload command succeeding is not itself evidence of a complete set.
+        gh release view "$RELEASE_TAG" --json assets > release-assets.json
+        python - <<'PY'
+        import json
+        import pathlib
+        assets = {a['name']: a['size'] for a in json.loads(pathlib.Path('release-assets.json').read_text())['assets']}
+        for path in pathlib.Path('dist').iterdir():
+            if assets.get(path.name) != path.stat().st_size:
+                raise SystemExit(f'Release asset missing or wrong size: {path.name}')
+        PY
+        mkdir downloaded
+        for asset in dist/*; do
+          gh release download "$RELEASE_TAG" --pattern "$(basename "$asset")" --dir downloaded
+        done
+        cd downloaded
+        sha256sum -c PYTHON-SHA256SUMS.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-pypi
+        path: |
+          dist/*.whl
+          dist/*.tar.gz
+        if-no-files-found: error
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      CMAKE_GENERATOR: Ninja
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CMAKE_ARGS: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
+        -DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DBUILD_TESTING=OFF -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
+  python-publish-pypi:
+    needs: python-attach-release
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-22.04
     environment:
       name: pypi
-      url: https://pypi.org/p/clap-cpp
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: python-*
-          merge-multiple: true
-          path: dist
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-pypi
+        path: dist
+    - name: Publish base package and GPU extras
+      uses: pypa/gh-action-pypi-publish@release/v1
+    env:
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      CMAKE_GENERATOR: Ninja
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      CMAKE_ARGS: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
+        -DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DBUILD_TESTING=OFF -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
 
   build-rust:
     runs-on: ubuntu-24.04

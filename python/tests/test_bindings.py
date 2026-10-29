@@ -62,7 +62,8 @@ def assert_close(actual, expected, rtol=1e-5, atol=1e-6):
 
 
 def test_module_exports():
-    assert clap_cpp.__all__ == ["CLAP"]
+    assert clap_cpp.__all__ == ["CLAP", "backend"]
+    assert clap_cpp.backend == "cpu"
     assert callable(clap_cpp.CLAP)
     for name in ("Model", "decode_audio", "resample_audio"):
         assert not hasattr(clap_cpp, name)
