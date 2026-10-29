@@ -28,6 +28,8 @@ struct AudioFrames {
 // Decode WAV, MP3 or FLAC by contents. Preserves the source sample rate
 // (no resampling); throws on unsupported, empty or invalid audio.
 Audio decode_audio(const std::string &path);
+// Decode encoded WAV/MP3/FLAC bytes directly; no temporary file is created.
+Audio decode_audio(const void *data, size_t size);
 
 // Mono linear resampling with an eighth-order anti-alias low-pass filter.
 // Output length is ceil(input length * target rate / source rate). The causal

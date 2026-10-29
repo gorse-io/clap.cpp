@@ -1,6 +1,8 @@
 #include "clap.h"
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <iostream>
 #include <stdexcept>
 
@@ -14,6 +16,11 @@ int main(int argc, char **argv) {
         for (const auto &name : {"mono.wav", "mono.flac", "mono.mp3", "stereo.wav",
                                  "stereo.flac", "stereo.mp3", "unknown-length.flac", "pcm24.wav", "float.wav"}) {
             const auto audio = clap::decode_audio((dir / name).string());
+            std::ifstream file(dir / name, std::ios::binary);
+            const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
+            const auto memory = clap::decode_audio(bytes.data(), bytes.size());
+            require(memory.sample_rate == audio.sample_rate && memory.samples == audio.samples,
+                    std::string(name) + " memory/file decoding parity");
             require(audio.sample_rate == 48000, std::string(name) + " sample rate");
             require(audio.samples.size() == 4800, std::string(name) + " frame count");
             const bool stereo = std::string(name).find("stereo") == 0;
@@ -45,6 +52,20 @@ int main(int argc, char **argv) {
             bool rejected = false;
             try { clap::decode_audio(path.string()); } catch (const std::exception &) { rejected = true; }
             require(rejected, "must reject " + path.string());
+            if (std::filesystem::exists(path)) {
+                std::ifstream file(path, std::ios::binary);
+                const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
+                rejected = false;
+                try { clap::decode_audio(bytes.data(), bytes.size()); }
+                catch (const std::exception &) { rejected = true; }
+                require(rejected, "must reject memory audio " + path.string());
+            }
+        }
+        for (size_t size : {size_t{0}, size_t{4}}) {
+            bool rejected = false;
+            try { clap::decode_audio(nullptr, size); }
+            catch (const std::exception &) { rejected = true; }
+            require(rejected, "must reject null audio buffer");
         }
         return 0;
     } catch (const std::exception &error) {

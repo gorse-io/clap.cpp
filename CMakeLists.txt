@@ -162,6 +162,10 @@ if(BUILD_TESTING)
     add_test(NAME clap_embeddings
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embeddings.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embeddings PROPERTIES TIMEOUT 30)
+    add_test(NAME clap_audio_embeddings
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_embeddings.py"
+                "$<TARGET_FILE:clap-cli>" "${CLAP_AUDIO_FIXTURE_DIR}")
+    set_tests_properties(clap_audio_embeddings PROPERTIES TIMEOUT 120)
     option(CLAP_MODEL_PARITY "Run optional Transformers oracle tests (torch/transformers/numpy required)" OFF)
     if(CLAP_MODEL_PARITY)
         add_test(NAME clap_model_parity

@@ -1,8 +1,9 @@
 """Stdlib-only tiny, valid CLAP GGUF and independent scalar text oracle.
 
-write_model(path, *, broken_projection=False) returns metadata with dimensions,
-model (filename), and cases [{input, tokens, embedding}]. No downloads or torch.
-The reduced-mel model is for text/tensor tests, NOT waveform frontend coverage.
+write_model(path, *, broken_projection=False, waveform=False) returns metadata
+with dimensions, model (filename), and cases [{input, tokens, embedding}].
+No downloads or torch. The default reduced-mel model is text/tensor-only;
+waveform=True enables the 64-bin, 256-spec waveform frontend configuration.
 """
 
 import json
@@ -11,7 +12,7 @@ from pathlib import Path
 import struct
 
 
-def write_model(path, *, broken_projection=False) -> dict:
+def write_model(path, *, broken_projection=False, waveform=False) -> dict:
     path = Path(path)
     text = dict(hidden_size=8, intermediate_size=16, num_attention_heads=2,
                 num_hidden_layers=1, vocab_size=261, type_vocab_size=1,
@@ -24,6 +25,8 @@ def write_model(path, *, broken_projection=False) -> dict:
                  hidden_act="gelu", projection_hidden_act="relu", spec_size=32,
                  num_mel_bins=32, window_size=1, patch_embeds_hidden_size=2,
                  hidden_size=16, mlp_ratio=2.0, projection_dim=5)
+    if waveform:
+        audio.update(spec_size=256, num_mel_bins=64, layer_norm_eps=1e-5)
     config = dict(model_type="clap", projection_dim=5, text_config=text, audio_config=audio)
     vocab = {"<s>": 0, "<pad>": 1, "</s>": 2, "<unk>": 3, "<mask>": 4}
     extra = 256
@@ -58,9 +61,9 @@ def write_model(path, *, broken_projection=False) -> dict:
     add("audio.patch_embed.proj.weight", [4, 4, 1, 2])
     add("audio.patch_embed.proj.bias", [2])
     norm("audio.patch_embed.norm", 2)
-    norm("audio.batch_norm", 32)
-    add("audio.batch_norm.running_mean", [32])
-    add("audio.batch_norm.running_var", [32], True)
+    norm("audio.batch_norm", audio["num_mel_bins"])
+    add("audio.batch_norm.running_mean", [audio["num_mel_bins"]])
+    add("audio.batch_norm.running_var", [audio["num_mel_bins"]], True)
     dim = 2
     for stage in range(4):
         p = f"audio.layers.{stage}.blocks.0"
