@@ -2,7 +2,7 @@
 name = "clap-cpp"
 version = "0.1.0"
 edition = "2021"
-description = "Safe CPU Rust bindings for clap.cpp"
+description = "Safe Rust bindings for clap.cpp with optional GPU backends"
 license = "Apache-2.0"
 repository = "https://github.com/gorse-io/clap.cpp"
 readme = "README.md"
@@ -11,6 +11,14 @@ include = [
     "Cargo.toml", "Cargo.lock", "README.md", "build.rs", "src/**",
     "native/**", "examples/*.rs", "tests/*.rs", "tests/*.py", "scripts/vendor.py", "vendor/**",
 ]
+
+[features]
+# Native clap/ggml archives remain static; GPU SDK runtimes may be shared.
+default = []
+cuda = []
+vulkan = []
+rocm = []
+metal = []
 
 [lib]
 name = "clap_cpp"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage pinned CPU sources for Cargo publication (Python standard library only).
+"""Stage pinned native sources for Cargo publication (Python standard library only).
 
 Run from a recursive clap.cpp Git checkout before cargo package/publish. The
 result is ignored by Git but explicitly included in the Cargo source archive.
@@ -68,7 +68,7 @@ def main():
         (staged / "revisions.json").write_text(json.dumps(revisions, indent=2) + "\n")
         shutil.rmtree(CRATE / "vendor", ignore_errors=True)
         staged.rename(CRATE / "vendor")
-    print("Vendored pinned CPU sources, upstream licenses, and stdlib test fixtures into rust/vendor")
+    print("Vendored pinned native sources, upstream licenses, and stdlib test fixtures into rust/vendor")
 
 
 if __name__ == "__main__":
