@@ -9,10 +9,10 @@ description = "CPU Python bindings for clap.cpp audio and text embeddings"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-dependencies = ["numpy>=1.23"]
+dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+test = ["pytest>=7", "mypy>=1.8", "typing_extensions>=4.2"]
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"

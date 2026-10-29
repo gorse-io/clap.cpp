@@ -136,52 +136,62 @@ def mert_fixture(path):
 
 
 def text_reference(ids):
-    """Independent NumPy CLAP text forward pass using storage-rounded F32 weights.
+    """Independent scalar CLAP forward pass with storage-rounded F32 weights.
 
-    The oracle does not invoke clap_cpp, a CLI, Torch, or ggml. Calculations use
-    float64 after the exact same F32 storage rounding as the generated GGUF.
+    Uses only the standard library; never calls clap_cpp, a CLI, Torch or ggml.
     """
-    import numpy as np
-
-    def weight(name, shape):
-        count = math.prod(shape)
+    def weight(name, count):
         norm = 'norm' in name.lower() or 'LayerNorm' in name
         values = [(1.0 if name.endswith('weight') else 0.0) if norm else
                   0.12 * math.sin(i * 0.73 + sum(name.encode()) * 0.17)
                   for i in range(count)]
-        return np.array(values, dtype=np.float32).astype(np.float64).reshape(shape)
+        return struct.unpack('<' + 'f' * count, struct.pack('<' + 'f' * count, *values))
 
     def linear(x, prefix, output):
-        return x @ weight(prefix + '.weight', (output, x.shape[-1])).T + weight(
-            prefix + '.bias', (output,))
+        w = weight(prefix + '.weight', len(x) * output)
+        b = weight(prefix + '.bias', output)
+        return [sum(a * v for a, v in zip(x, w[i * len(x):(i + 1) * len(x)])) + b[i]
+                for i in range(output)]
 
     def norm(x, prefix):
-        mean = x.mean(axis=-1, keepdims=True)
-        var = ((x - mean) ** 2).mean(axis=-1, keepdims=True)
-        return ((x - mean) / np.sqrt(var + 1e-5) * weight(prefix + '.weight', (4,))
-                + weight(prefix + '.bias', (4,)))
+        mean = sum(x) / len(x)
+        var = sum((a - mean) ** 2 for a in x) / len(x)
+        w, b = weight(prefix + '.weight', len(x)), weight(prefix + '.bias', len(x))
+        return [(a - mean) / math.sqrt(var + 1e-5) * s + t for a, s, t in zip(x, w, b)]
 
-    ids = np.asarray(ids)
-    mask = ids != 1
-    positions = np.where(mask, np.cumsum(mask) + 1, 1)
-    x = (weight('text.embeddings.word_embeddings.weight', (261, 4))[ids]
-         + weight('text.embeddings.position_embeddings.weight', (514, 4))[positions]
-         + weight('text.embeddings.token_type_embeddings.weight', (1, 4))[0])
-    x = norm(x, 'text.embeddings.LayerNorm')
+    def add(x, y):
+        return [a + b for a, b in zip(x, y)]
+
+    word = weight('text.embeddings.word_embeddings.weight', 261 * 4)
+    pos = weight('text.embeddings.position_embeddings.weight', 514 * 4)
+    types = weight('text.embeddings.token_type_embeddings.weight', 4)
+    x = []
+    position = 1
+    for token in ids:
+        if token != 1:
+            position += 1
+        p = position if token != 1 else 1
+        x.append(norm(add(add(word[token * 4:(token + 1) * 4], pos[p * 4:(p + 1) * 4]), types),
+                      'text.embeddings.LayerNorm'))
     prefix = 'text.encoder.layer.0'
-    q, k, v = [linear(x, prefix + '.attention.self.' + part, 4)
+    q, k, v = [[linear(row, prefix + '.attention.self.' + part, 4) for row in x]
                for part in ('query', 'key', 'value')]
-    scores = q @ k.T / 2
-    scores[:, ~mask] = -1e30
-    probabilities = np.exp(scores - scores.max(axis=-1, keepdims=True))
-    probabilities /= probabilities.sum(axis=-1, keepdims=True)
-    y = linear(probabilities @ v, prefix + '.attention.output.dense', 4)
-    x = norm(x + y, prefix + '.attention.output.LayerNorm')
-    y = linear(x, prefix + '.intermediate.dense', 8)
-    y = 0.5 * y * (1 + np.vectorize(math.erf)(y / math.sqrt(2)))
-    y = linear(y, prefix + '.output.dense', 4)
-    x = norm(x + y, prefix + '.output.LayerNorm')
-    pooled = np.tanh(linear(x[0], 'text.pooler.dense', 4))
-    hidden = np.maximum(linear(pooled, 'text_proj.linear1', 3), 0)
+    attention = []
+    for row in q:
+        scores = [sum(a * b for a, b in zip(row, key)) / 2 if token != 1 else -1e30
+                  for key, token in zip(k, ids)]
+        probabilities = [math.exp(a - max(scores)) for a in scores]
+        total = sum(probabilities)
+        attention.append([sum(p / total * value[i] for p, value in zip(probabilities, v))
+                          for i in range(4)])
+    x = [norm(add(row, linear(a, prefix + '.attention.output.dense', 4)),
+              prefix + '.attention.output.LayerNorm') for row, a in zip(x, attention)]
+    hidden = [linear(row, prefix + '.intermediate.dense', 8) for row in x]
+    hidden = [[0.5 * a * (1 + math.erf(a / math.sqrt(2))) for a in row] for row in hidden]
+    x = [norm(add(row, linear(h, prefix + '.output.dense', 4)), prefix + '.output.LayerNorm')
+         for row, h in zip(x, hidden)]
+    pooled = [math.tanh(a) for a in linear(x[0], 'text.pooler.dense', 4)]
+    hidden = [max(a, 0) for a in linear(pooled, 'text_proj.linear1', 3)]
     result = linear(hidden, 'text_proj.linear2', 3)
-    return (result / np.linalg.norm(result)).astype(np.float32)
+    length = math.sqrt(sum(a * a for a in result))
+    return [a / length for a in result]

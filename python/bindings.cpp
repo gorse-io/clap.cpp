@@ -1,12 +1,10 @@
 #include "clap.h"
 
-#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl/filesystem.h>
 
 #include <cmath>
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -14,37 +12,30 @@
 #include <vector>
 
 namespace py = pybind11;
-using PCM = py::array_t<float, py::array::c_style | py::array::forcecast>;
 
 namespace {
 
-std::vector<float> samples(const PCM &input) {
-    if (input.ndim() != 1 || input.size() == 0) {
-        throw std::invalid_argument("PCM must be a nonempty one-dimensional mono array");
+void validate_samples(const std::vector<float> &input) {
+    if (input.empty()) {
+        throw std::invalid_argument("PCM must be a nonempty mono sequence");
     }
-    std::vector<float> result(input.data(), input.data() + input.size());
-    for (float value : result) {
+    for (float value : input) {
         if (!std::isfinite(value)) {
             throw std::invalid_argument("PCM samples must be finite");
         }
     }
-    return result;
 }
 
 void validate_rate(int rate) {
     if (rate <= 0) throw std::invalid_argument("sample rate must be positive");
 }
 
-py::array_t<float> array(const std::vector<float> &values) {
-    py::array_t<float> output(values.size());
-    if (!values.empty()) std::memcpy(output.mutable_data(), values.data(), values.size() * sizeof(float));
-    return output;
-}
-
-py::array_t<float> matrix(const clap::AudioFrames &frames) {
-    py::array_t<float> output({frames.frames, frames.dimension});
-    if (!frames.values.empty()) {
-        std::memcpy(output.mutable_data(), frames.values.data(), frames.values.size() * sizeof(float));
+std::vector<std::vector<float>> matrix(const clap::AudioFrames &frames) {
+    std::vector<std::vector<float>> output;
+    output.reserve(frames.frames);
+    for (int i = 0; i < frames.frames; ++i) {
+        const auto begin = frames.values.begin() + i * frames.dimension;
+        output.emplace_back(begin, begin + frames.dimension);
     }
     return output;
 }
@@ -95,34 +86,34 @@ PYBIND11_MODULE(_clap_cpp, module) {
             return self.call([&](clap::CLAP &model) { return model.tokenize(text, max_length); });
         }, py::arg("text"), py::arg("max_length") = 512)
         .def("encode_text", [](CLAP &self, const std::string &text) {
-            return array(self.call([&](clap::CLAP &model) { return model.encode_text(text); }));
+            return self.call([&](clap::CLAP &model) { return model.encode_text(text); });
         }, py::arg("text"))
         .def("encode_text", [](CLAP &self, const std::vector<int> &tokens) {
-            return array(self.call([&](clap::CLAP &model) { return model.encode_text(tokens); }));
+            return self.call([&](clap::CLAP &model) { return model.encode_text(tokens); });
         }, py::arg("tokens"))
-        .def("encode_audio", [](CLAP &self, const PCM &pcm, int sample_rate, py::ssize_t crop_offset) {
+        .def("encode_audio", [](CLAP &self, const std::vector<float> &pcm, int sample_rate, py::ssize_t crop_offset) {
             validate_rate(sample_rate);
             if (crop_offset < 0) throw std::invalid_argument("crop_offset must be nonnegative");
-            auto input = samples(pcm);
-            return array(self.call([&](clap::CLAP &model) { return model.encode_audio(input, sample_rate, crop_offset); }));
+            validate_samples(pcm);
+            return self.call([&](clap::CLAP &model) { return model.encode_audio(pcm, sample_rate, crop_offset); });
         }, py::arg("pcm"), py::arg("sample_rate") = 48000, py::arg("crop_offset") = 0)
         .def("encode_audio", [](CLAP &self, const std::filesystem::path &path, py::ssize_t crop_offset) {
             if (crop_offset < 0) throw std::invalid_argument("crop_offset must be nonnegative");
             const auto filename = path.u8string();
-            return array(self.call([&](clap::CLAP &model) {
+            return self.call([&](clap::CLAP &model) {
                 const auto decoded = clap::decode_audio(filename);
                 return model.encode_audio(decoded.samples, decoded.sample_rate, crop_offset);
-            }));
+            });
         }, py::arg("path"), py::arg("crop_offset") = 0)
-        .def("audio_frames", [](CLAP &self, const PCM &pcm, int sample_rate) {
+        .def("audio_frames", [](CLAP &self, const std::vector<float> &pcm, int sample_rate) {
             validate_rate(sample_rate);
-            auto input = samples(pcm);
-            return matrix(self.call([&](clap::CLAP &model) { return model.audio_frames(input, sample_rate); }));
+            validate_samples(pcm);
+            return matrix(self.call([&](clap::CLAP &model) { return model.audio_frames(pcm, sample_rate); }));
         }, py::arg("pcm"), py::arg("sample_rate") = 48000)
-        .def("clamp3_features", [](CLAP &self, const PCM &pcm, int sample_rate) {
+        .def("clamp3_features", [](CLAP &self, const std::vector<float> &pcm, int sample_rate) {
             validate_rate(sample_rate);
-            auto input = samples(pcm);
-            return matrix(self.call([&](clap::CLAP &model) { return model.clamp3_features(input, sample_rate); }));
+            validate_samples(pcm);
+            return matrix(self.call([&](clap::CLAP &model) { return model.clamp3_features(pcm, sample_rate); }));
         }, py::arg("pcm"), py::arg("sample_rate") = 24000)
         .def("close", &CLAP::close)
         .def("__enter__", [](CLAP &self) -> CLAP & {

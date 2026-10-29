@@ -78,7 +78,7 @@ jobs:
           CIBW_SKIP: '*-musllinux_* *-win32'
           CIBW_ARCHS: native
           CIBW_ENVIRONMENT: CMAKE_BUILD_PARALLEL_LEVEL=4
-          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_REQUIRES: pytest mypy>=1.8 typing_extensions>=4.2
           CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
       - uses: actions/upload-artifact@v4
         with:
