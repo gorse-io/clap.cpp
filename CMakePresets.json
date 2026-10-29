@@ -194,6 +194,7 @@
         "CMAKE_C_COMPILER": "$env{ROCM_PATH}/bin/clang.exe",
         "CMAKE_CXX_COMPILER": "$env{ROCM_PATH}/bin/clang++.exe",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded",
+        "CMAKE_USER_MAKE_RULES_OVERRIDE": "${sourceDir}/cmake/windows-clang-runtime.cmake",
         "GPU_TARGETS": "gfx1030;gfx1100;gfx1101;gfx1102;gfx1151;gfx1200;gfx1201",
         "GGML_METAL": "OFF",
         "GGML_HIP": "ON",
