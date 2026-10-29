@@ -74,6 +74,12 @@ jobs:
           components: rustfmt, clippy
           cache-workspaces: rust -> target
           build-warnings: ""
+      - name: Build configuration tests
+        shell: bash
+        run: |
+          mkdir -p rust/target
+          rustc --edition=2021 --test rust/build.rs -o rust/target/build-script-tests
+          rust/target/build-script-tests
       - name: Format
         run: cargo fmt --manifest-path rust/Cargo.toml -- --check
       - name: Lint
@@ -88,6 +94,49 @@ jobs:
         run: python rust/scripts/vendor.py
       - name: Verify standalone package build
         run: cargo package --manifest-path rust/Cargo.toml --allow-dirty
+
+  rust-gpu:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            feature: vulkan
+          - os: macos-latest
+            feature: metal
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_BUILD_JOBS: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          toolchain: stable
+          cache-workspaces: rust -> target
+          build-warnings: ""
+      - name: Install Vulkan SDK and software driver
+        if: matrix.feature == 'vulkan'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev glslc spirv-headers mesa-vulkan-drivers
+          icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
+          test -n "$icd"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          echo "GGML_VK_VISIBLE_DEVICES=0" >> "$GITHUB_ENV"
+      - name: Vendor pinned native sources and licenses
+        run: python rust/scripts/vendor.py
+      - name: Verify GPU source package builds and links
+        run: cargo package --manifest-path rust/Cargo.toml --allow-dirty --features ${{ matrix.feature }}
+      - name: GPU-enabled text and audio inference
+        run: cargo test --manifest-path rust/Cargo.toml --features ${{ matrix.feature }} --all-targets
+      - name: GPU-enabled documentation tests
+        run: cargo test --manifest-path rust/Cargo.toml --features ${{ matrix.feature }} --doc
 
   python:
     strategy:

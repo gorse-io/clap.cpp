@@ -7,11 +7,41 @@ cargo add clap-cpp
 ```
 
 Requires CMake 3.20 or newer and a C++17 compiler (MSVC on Windows). The
-published crate bundles the CPU-only clap.cpp, ggml, JSON, ICU Unicode/regex,
-and miniaudio sources. Builds do not download dependencies or require Git,
-Python, GPU SDKs, shared ICU libraries, or the parent repository. Cross-compiling
+published crate bundles clap.cpp, ggml, JSON, ICU Unicode/regex,
+and miniaudio sources. Default builds are CPU-only and do not download dependencies
+or require Git, Python, GPU SDKs, shared ICU libraries, or the parent repository. Cross-compiling
 is not currently supported. Python 3 is required only for integration-test
 fixture generation and maintainer packaging.
+
+## GPU features
+
+Enable an optional backend when adding the dependency:
+
+```sh
+cargo add clap-cpp --features cuda
+# Or: --features vulkan, --features rocm, --features metal
+```
+
+| Feature | Native backend | Build requirements |
+| --- | --- | --- |
+| `cuda` | GGML CUDA | NVIDIA CUDA Toolkit and a supported C++ host compiler |
+| `vulkan` | GGML Vulkan | Vulkan headers/loader, `glslc`, and SPIR-V headers |
+| `rocm` | GGML HIP | AMD ROCm/HIP SDK with hipBLAS and rocBLAS |
+| `metal` | GGML Metal | Apple SDK and Metal compiler on macOS |
+
+The CPU backend remains available with every feature. Features compile backends;
+they do not guarantee that a compatible GPU is present or that every operation
+runs on it. Backend selection follows clap.cpp's native behavior, without changes
+to the Rust API. CUDA and ROCm cannot be enabled together; do not use
+`--all-features` to test this crate. GPU SDKs and runtime drivers are external
+requirements and are not bundled in the crate. Enabled backends may introduce
+shared vendor runtime dependencies even though clap.cpp and ggml are linked
+statically.
+
+For checkout builds, use e.g. `cargo test --manifest-path rust/Cargo.toml
+--features vulkan --all-targets -j 3`. SDK discovery uses CMake; configure
+nonstandard installations with the SDK's usual environment variables (such as
+`VULKAN_SDK` or `HIP_PATH`) or a `CMAKE_TOOLCHAIN_FILE`.
 
 ## Building from Git
 
@@ -37,7 +67,8 @@ cargo package --manifest-path rust/Cargo.toml --allow-dirty --locked -j 3
 ```
 
 `vendor.py` rejects missing, wrong-revision, or dirty submodules before copying
-anything. It stages only the native CPU build source subsets, upstream licenses,
+anything. It stages the native build source subsets (including optional GPU
+backends), upstream licenses,
 root Apache license, submodule revision manifest, and the stdlib-only tiny-model
 fixture generator into ignored `rust/vendor/`. The script can be rerun; no
 vendored source or generated model/audio fixtures should be committed. Cargo's
