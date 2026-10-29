@@ -149,6 +149,27 @@ Audio read_mono(unsigned channels, unsigned sample_rate, Read read) {
     if (audio.samples.empty()) throw std::runtime_error("Empty or invalid audio");
     return audio;
 }
+
+Audio read_decoder(ma_decoder &decoder) {
+    const auto close = [](ma_decoder *value) { ma_decoder_uninit(value); };
+    const std::unique_ptr<ma_decoder, decltype(close)> guard(&decoder, close);
+    ma_uint32 channels = 0, sample_rate = 0;
+    if (ma_decoder_get_data_format(&decoder, nullptr, &channels, &sample_rate, nullptr, 0) != MA_SUCCESS)
+        throw std::runtime_error("Cannot read audio format");
+    ma_uint64 total = 0;
+    // Unknown-length FLAC is valid; never allocate from an untrusted frame count.
+    const bool known_length = ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total != 0;
+    auto audio = read_mono(channels, sample_rate, [&](size_t count, float *out) {
+        ma_uint64 frames = 0;
+        const auto result = ma_decoder_read_pcm_frames(&decoder, out, count, &frames);
+        if (result != MA_SUCCESS && result != MA_AT_END)
+            throw std::runtime_error("Invalid audio");
+        return static_cast<size_t>(frames);
+    });
+    if (known_length && audio.samples.size() != total)
+        throw std::runtime_error("Truncated audio");
+    return audio;
+}
 } // namespace
 
 Audio decode_audio(const std::string &path) {
@@ -163,28 +184,17 @@ Audio decode_audio(const std::string &path) {
 #else
     const auto init_result = ma_decoder_init_file(path.c_str(), &config, &decoder);
 #endif
-    if (init_result == MA_SUCCESS) {
-        const auto close = [](ma_decoder *value) { ma_decoder_uninit(value); };
-        const std::unique_ptr<ma_decoder, decltype(close)> guard(&decoder, close);
-        ma_uint32 channels = 0, sample_rate = 0;
-        if (ma_decoder_get_data_format(&decoder, nullptr, &channels, &sample_rate, nullptr, 0) != MA_SUCCESS)
-            throw std::runtime_error("Cannot read audio format: " + path);
-        ma_uint64 total = 0;
-        // Some FLAC files have an unknown length. MP3 length queries may scan
-        // the stream; do not allocate from any untrusted declared frame count.
-        const bool known_length = ma_decoder_get_length_in_pcm_frames(&decoder, &total) == MA_SUCCESS && total != 0;
-        auto audio = read_mono(channels, sample_rate, [&](size_t count, float *out) {
-            ma_uint64 frames = 0;
-            const auto result = ma_decoder_read_pcm_frames(&decoder, out, count, &frames);
-            if (result != MA_SUCCESS && result != MA_AT_END)
-                throw std::runtime_error("Invalid audio: " + path);
-            return static_cast<size_t>(frames);
-        });
-        if (known_length && audio.samples.size() != total)
-            throw std::runtime_error("Truncated audio: " + path);
-        return audio;
-    }
+    if (init_result == MA_SUCCESS) return read_decoder(decoder);
     throw std::runtime_error("Cannot decode audio (expected WAV, MP3 or FLAC): " + path);
+}
+
+Audio decode_audio(const void *data, size_t size) {
+    if (data == nullptr || size == 0) throw std::runtime_error("Empty audio input");
+    auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder{};
+    if (ma_decoder_init_memory(data, size, &config, &decoder) != MA_SUCCESS)
+        throw std::runtime_error("Cannot decode audio (expected WAV, MP3 or FLAC)");
+    return read_decoder(decoder);
 }
 
 Audio resample_audio(const Audio &audio, int sample_rate) {
