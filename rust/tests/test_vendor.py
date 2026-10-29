@@ -50,14 +50,14 @@ class VendorTests(unittest.TestCase):
 
     def test_repeatable_copy_and_license(self):
         vendor.main()
-        first = {str(p.relative_to(self.crate / "vendor")): p.read_bytes()
+        first = {p.relative_to(self.crate / "vendor").as_posix(): p.read_bytes()
                  for p in (self.crate / "vendor").rglob("*") if p.is_file()}
         (self.crate / "vendor/stale").write_text("remove me")
         vendor.main()
-        second = {str(p.relative_to(self.crate / "vendor")): p.read_bytes()
+        second = {p.relative_to(self.crate / "vendor").as_posix(): p.read_bytes()
                   for p in (self.crate / "vendor").rglob("*") if p.is_file()}
         self.assertEqual(first, second)
-        self.assertEqual(first["ggml/LICENSE"], b"license\n")
+        self.assertEqual(first["ggml/LICENSE"], (self.module / "LICENSE").read_bytes())
         self.assertIn("test-data/tiny_models.py", first)
         self.assertIn("revisions.json", first)
 
