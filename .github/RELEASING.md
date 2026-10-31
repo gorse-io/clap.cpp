@@ -67,5 +67,5 @@ npm test
 The checkout must contain the pinned initialized submodules. The Rust vendoring
 step copies the required sources and licenses into ignored generated directories;
 see `rust/README.md`. Node's `prepack` does the equivalent. Do not commit generated
-native trees or archives. CMake, a C++17 compiler and Python are needed for local
+native trees or archives. CMake, a C++20 compiler and Python are needed for local
 checks; install NumPy for Node's numerical oracle.

@@ -17,7 +17,7 @@ endif()
 message(STATUS "Using bundled ICU 78.3 (static Unicode/regex-only build)")
 
 add_library(clap-icu-options INTERFACE)
-target_compile_features(clap-icu-options INTERFACE cxx_std_17)
+target_compile_features(clap-icu-options INTERFACE cxx_std_20)
 target_include_directories(clap-icu-options SYSTEM INTERFACE
     "${CLAP_ICU_SOURCE}/common" "${CLAP_ICU_SOURCE}/i18n")
 target_compile_definitions(clap-icu-options INTERFACE

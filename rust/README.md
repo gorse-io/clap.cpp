@@ -6,7 +6,7 @@
 cargo add clap-cpp
 ```
 
-Requires CMake 3.20 or newer and a C++17 compiler (MSVC on Windows). The
+Requires CMake 3.20 or newer and a C++20 compiler (MSVC on Windows). The
 published crate bundles clap.cpp, ggml, JSON, ICU Unicode/regex,
 and miniaudio sources. Default builds are CPU-only and do not download dependencies
 or require Git, Python, GPU SDKs, shared ICU libraries, or the parent repository. Cross-compiling
