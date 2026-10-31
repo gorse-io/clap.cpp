@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: clap-go
+Description: Private native bridge for clap.cpp Go bindings
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lclap-go
+Cflags: -I${includedir}

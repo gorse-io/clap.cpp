@@ -53,6 +53,56 @@ jobs:
       - name: Install
         run: cmake --install build --config Release --prefix "${{ runner.temp }}/clap-install"
 
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build and install CPU bridge
+        shell: bash
+        run: |
+          prefix="$GITHUB_WORKSPACE/go/build/install"
+          cmake -S go/native -B go/build/native -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix"
+          cmake --build go/build/native --parallel 4
+          cmake --install go/build/native --component go
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
+      - name: Generate real tiny inference fixtures
+        run: python go/tests/generate.py
+      - name: Format, vet and race tests
+        working-directory: go
+        shell: bash
+        run: |
+          test -z "$(gofmt -l clap.go clap_test.go examples/embed/main.go)"
+          go vet ./...
+          go test -race -count=1 ./...
+      - name: Installed bridge and external consumer inference
+        shell: bash
+        run: |
+          consumer="$RUNNER_TEMP/clap-go-consumer"
+          mkdir -p "$consumer"
+          cp go/examples/embed/main.go "$consumer/main.go"
+          cd "$consumer"
+          go mod init example.com/clap-consumer
+          go mod edit -require=github.com/gorse-io/clap.cpp/go@v0.0.0
+          go mod edit -replace=github.com/gorse-io/clap.cpp/go="$GITHUB_WORKSPACE/go"
+          go mod tidy
+          go build -o embed .
+          ./embed "$GITHUB_WORKSPACE/go/build/fixtures/模型.gguf" Hi "$GITHUB_WORKSPACE/go/build/fixtures/音频.wav"
+
   rust:
     strategy:
       fail-fast: false
