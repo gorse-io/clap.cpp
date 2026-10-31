@@ -9,11 +9,17 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace py = pybind11;
 
 namespace {
+
+std::string utf8_path(const std::filesystem::path &path) {
+    const auto utf8 = path.u8string();
+    return std::string(utf8.begin(), utf8.end());
+}
 
 void validate_samples(const std::vector<float> &input) {
     if (input.empty()) {
@@ -47,7 +53,7 @@ public:
     CLAP(const std::filesystem::path &path, int threads) {
         if (threads < 0) throw std::invalid_argument("threads must be nonnegative");
         py::gil_scoped_release release;
-        model_ = std::make_unique<clap::CLAP>(path.u8string(), threads);
+        model_ = std::make_unique<clap::CLAP>(utf8_path(path), threads);
     }
 
     template <typename F>
@@ -99,7 +105,7 @@ PYBIND11_MODULE(_clap_cpp, module) {
         }, py::arg("pcm"), py::arg("sample_rate") = 48000, py::arg("crop_offset") = 0)
         .def("encode_audio", [](CLAP &self, const std::filesystem::path &path, py::ssize_t crop_offset) {
             if (crop_offset < 0) throw std::invalid_argument("crop_offset must be nonnegative");
-            const auto filename = path.u8string();
+            const auto filename = utf8_path(path);
             return self.call([&](clap::CLAP &model) {
                 const auto decoded = clap::decode_audio(filename);
                 return model.encode_audio(decoded.samples, decoded.sample_rate, crop_offset);
