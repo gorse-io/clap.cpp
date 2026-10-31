@@ -56,7 +56,7 @@ find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(pybind11 CONFIG REQUIRED)
 pybind11_add_module(_clap_cpp MODULE bindings.cpp)
 target_link_libraries(_clap_cpp PRIVATE clap)
-target_compile_features(_clap_cpp PRIVATE cxx_std_17)
+target_compile_features(_clap_cpp PRIVATE cxx_std_20)
 set_target_properties(_clap_cpp PROPERTIES CXX_EXTENSIONS OFF)
 install(TARGETS _clap_cpp LIBRARY DESTINATION ${CLAP_PYTHON_PACKAGE} COMPONENT python
                           RUNTIME DESTINATION ${CLAP_PYTHON_PACKAGE} COMPONENT python)

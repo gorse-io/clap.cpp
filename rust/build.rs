@@ -9,7 +9,7 @@ use std::{
 fn run(command: &mut Command) {
     let status = command
         .status()
-        .expect("cannot run CMake; install CMake >=3.20 and a C++17 compiler");
+        .expect("cannot run CMake; install CMake >=3.20 and a C++20 compiler");
     assert!(status.success(), "native CMake build failed: {command:?}");
 }
 

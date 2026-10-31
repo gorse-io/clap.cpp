@@ -14,7 +14,7 @@ add_library(clap
     ${CLAP_CORE_SOURCES}
     ${CLAP_MODELS_SOURCES})
 
-target_compile_features(clap PUBLIC cxx_std_17)
+target_compile_features(clap PUBLIC cxx_std_20)
 target_include_directories(clap
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

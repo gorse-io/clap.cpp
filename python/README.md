@@ -75,7 +75,7 @@ cd clap.cpp
 python -m pip install ./python
 ```
 
-Requires Python 3.9+, a C++17 compiler and CMake 3.20+. The build backend installs
+Requires Python 3.9+, a C++20 compiler and CMake 3.20+. The build backend installs
 CMake/Ninja if necessary. The CPU package has no runtime Python dependencies;
 PyTorch, FFmpeg, a separate `clap` executable and GPU drivers are not required.
 The extension statically links the CPU runtime and bundled ICU. The base package

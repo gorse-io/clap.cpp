@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml)
 
-C++17/ggml implementations of audio embedding inference features:
+C++20/ggml implementations of audio embedding inference features:
 
 - Supports WAV, MP3, and FLAC audio input.
 - Automatically resamples audio to the model's required.
