@@ -1,26 +1,16 @@
 #include "models.h"
 #include "clap.h"
-#include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>
 #include <complex>
-#include <cstring>
 #include <limits>
-#include <memory>
 #include <stdexcept>
 
 namespace clap::detail {
-namespace {
-constexpr double pi = 3.141592653589793238462643383279502884;
-float sigmoid(float value) {
-    if (value >= 0) return 1.0f / (1.0f + std::exp(-value));
-    const float e = std::exp(value); return e / (1.0f + e);
-}
-void silu(Matrix &x) { for (float &v : x.data) v *= sigmoid(v); }
-
-}
-MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), ops(source, threads) {
-    load_arch_hparams(); load_arch_tensors();
+MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
+    load_arch_hparams();
+    load_arch_tensors();
+    bind_tensors();
 }
 void MuqModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq.config"));
@@ -106,19 +96,45 @@ void MuqModel::load_arch_tensors() const {
         loader.shape(root + ".conv_module.pointwise_conv2.weight", {1, hidden, hidden});
     }
 }
+
+void MuqModel::bind_tensors() {
+    h = {config.at("encoder_dim"), encoder.at("num_attention_heads"), encoder.at("conv_depthwise_kernel_size"),
+         encoder.at("layer_norm_eps"), encoder.at("rotary_embedding_base"), config.at("stat").at("melspec_2048_mean"), config.at("stat").at("melspec_2048_std")};
+    window = loader.weight("frontend.window"); filters = loader.weight("frontend.filters");
+    for (int i = 0; i < 2; ++i) {
+        const auto p = "conv.conv." + std::to_string(i);
+        stages.push_back({LayerWeights::bind(loader,p+".conv1"), LayerWeights::bind(loader,p+".conv2"), LayerWeights::bind(loader,p+".conv3"),
+                          BatchNormWeights::bind(loader,p+".bn1"), BatchNormWeights::bind(loader,p+".bn2"), BatchNormWeights::bind(loader,p+".bn3")});
+    }
+    projection = LayerWeights::bind(loader,"conv.linear"); final_norm = LayerWeights::bind(loader,"conformer.layer_norm");
+    for (int i = 0; i < config.at("encoder_depth").get<int>(); ++i) {
+        const auto p = "conformer.layers." + std::to_string(i);
+        ConformerWeights layer;
+        layer.ffn1 = {LayerWeights::bind(loader,p+".ffn1_layer_norm"), LayerWeights::bind(loader,p+".ffn1.intermediate_dense"), LayerWeights::bind(loader,p+".ffn1.output_dense")};
+        layer.ffn2 = {LayerWeights::bind(loader,p+".ffn2_layer_norm"), LayerWeights::bind(loader,p+".ffn2.intermediate_dense"), LayerWeights::bind(loader,p+".ffn2.output_dense")};
+        layer.attention_norm = LayerWeights::bind(loader,p+".self_attn_layer_norm"); layer.final_norm = LayerWeights::bind(loader,p+".final_layer_norm");
+        layer.attention = {LayerWeights::bind(loader,p+".self_attn.linear_q"), LayerWeights::bind(loader,p+".self_attn.linear_k"), LayerWeights::bind(loader,p+".self_attn.linear_v"), LayerWeights::bind(loader,p+".self_attn.linear_out")};
+        layer.convolution.norm = LayerWeights::bind(loader,p+".conv_module.layer_norm");
+        layer.convolution.input = LayerWeights::bind(loader,p+".conv_module.pointwise_conv1",false);
+        layer.convolution.depthwise = LayerWeights::bind(loader,p+".conv_module.depthwise_conv",false);
+        layer.convolution.batch_norm = BatchNormWeights::bind(loader,p+".conv_module.batch_norm");
+        layer.convolution.output = LayerWeights::bind(loader,p+".conv_module.pointwise_conv2",false);
+        layers.push_back(layer);
+    }
+}
+
 TextParameters MuqModel::text_parameters() const { return {0, 0, 0}; }
-int MuqModel::projection_dimension() const { return config.at("encoder_dim"); }
+int MuqModel::projection_dimension() const { return h.hidden; }
 int MuqModel::mel_bins() const { return 128; }
 int MuqModel::sample_rate() const { return 24000; }
 bool MuqModel::is_waveform_encoder() const { return true; }
 std::vector<float> MuqModel::text(const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MuQ has no text encoder");
 }
-Matrix MuqModel::frontend(const std::vector<float> &pcm) const {
+HostMatrix MuqModel::frontend(const std::vector<float> &pcm) const {
     const int frames = static_cast<int>(pcm.size() / 240);
-    Matrix mel(frames, 128);
-    const auto *window = loader.weight("frontend.window"), *filters = loader.weight("frontend.filters");
-    const float mean = config.at("stat").at("melspec_2048_mean"), stddev = config.at("stat").at("melspec_2048_std");
+    HostMatrix mel(frames, 128);
+    const float mean = h.mean, stddev = h.stddev;
     std::vector<std::complex<double>> spectrum(2048);
     std::vector<float> power(1025);
     for (int frame = 0; frame < frames; ++frame) {
@@ -139,122 +155,75 @@ Matrix MuqModel::frontend(const std::vector<float> &pcm) const {
     }
     return mel;
 }
-void MuqModel::batch_norm(Matrix &x, const std::string &prefix) const {
-    const auto *weight = loader.weight(prefix + ".weight"), *bias = loader.weight(prefix + ".bias");
-    const auto *mean = loader.weight(prefix + ".running_mean"), *variance = loader.weight(prefix + ".running_var");
-    for (int column = 0; column < x.cols; ++column) {
-        const float scale = scalar(weight, column) / std::sqrt(scalar(variance, column) + 1e-5f);
-        for (int row = 0; row < x.rows; ++row)
-            x[row][column] = (x[row][column] - scalar(mean, column)) * scale + scalar(bias, column);
-    }
+ggml_tensor *MuqModel::batch_norm(Graph &g, ggml_tensor *x, const BatchNormWeights &weights) const {
+    auto *ctx = g.ctx();
+    auto *variance = ggml_add(ctx, g.weight(weights.variance), g.input({1e-5f}, 1, 1));
+    auto *scale = ggml_div(ctx, g.weight(weights.affine.weight), ggml_sqrt(ctx, variance));
+    return ggml_add(ctx, ggml_mul(ctx, ggml_sub(ctx, x, g.weight(weights.mean)), scale), g.weight(weights.affine.bias));
 }
-MuqModel::Image MuqModel::conv2d(const Image &input, const std::string &prefix, int stride) const {
-    const auto *weight = loader.weight(prefix + ".weight"), *bias = loader.weight(prefix + ".bias");
-    const int frequencies = (input.frequencies + stride - 1) / stride;
-    const int frames = (input.frames + stride - 1) / stride;
-    const int columns = static_cast<int>(weight->ne[3]), reduction = input.values.cols * 9;
-    Image result{frequencies, frames, Matrix(frequencies * frames, columns)};
-    // Bound im2col scratch independently of song duration. Conv aliases are CPU
-    // metadata only; do not cache their ephemeral addresses in the GPU backend.
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> alias(ggml_init({4096, nullptr, true}), ggml_free);
-    if (!(alias != nullptr))
-        throw std::runtime_error("CLAP: MuQ convolution metadata allocation failed");
-    auto *flat = ggml_new_tensor_2d(alias.get(), weight->type, reduction, columns);
-    flat->data = weight->data;
-    for (int start = 0; start < result.values.rows; start += 128) {
-        const int rows = std::min(128, result.values.rows - start);
-        const size_t bytes = (static_cast<size_t>(rows) * (reduction + columns)) * sizeof(float) + 2 * 1024 * 1024;
-        std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes, nullptr, false}), ggml_free);
-        if (!(ctx != nullptr))
-            throw std::runtime_error("CLAP: MuQ convolution allocation failed");
-        auto *patches = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, reduction, rows);
-        auto *data = static_cast<float *>(patches->data);
-        std::fill_n(data, static_cast<size_t>(rows) * reduction, 0.0f);
-        for (int row = 0; row < rows; ++row) {
-            const int frequency = (start + row) / frames, time = (start + row) % frames;
-            for (int channel = 0; channel < input.values.cols; ++channel)
-                for (int y = 0; y < 3; ++y) for (int x = 0; x < 3; ++x) {
-                    const int f = frequency * stride + y - 1, t = time * stride + x - 1;
-                    if (f >= 0 && f < input.frequencies && t >= 0 && t < input.frames)
-                        data[static_cast<size_t>(row) * reduction + channel * 9 + y * 3 + x] = input.values[f * input.frames + t][channel];
-                }
-        }
-        auto *output = ggml_mul_mat(ctx.get(), flat, patches);
-        auto *graph = ggml_new_graph_custom(ctx.get(), 32, false);
-        ggml_build_forward_expand(graph, output);
-        auto plan = ggml_graph_plan(graph, ops.threads(), nullptr);
-        std::vector<uint8_t> work(plan.work_size); plan.work_data = work.data();
-        if (!(ggml_graph_compute(graph, &plan) == GGML_STATUS_SUCCESS))
-            throw std::runtime_error("CLAP: MuQ convolution compute failed");
-        const auto *computed = static_cast<const float *>(output->data);
-        for (int row = 0; row < rows; ++row) for (int column = 0; column < columns; ++column)
-            result.values[start + row][column] = computed[row * columns + column] + scalar(bias, column);
+MuqModel::Image MuqModel::conv2d(Graph &g, const Image &input, const LayerWeights &weights, int stride) const {
+    auto *ctx = g.ctx();
+    auto *weight = g.weight(weights.weight);
+    const int frequencies = (input.frequencies + stride - 1) / stride, frames = (input.frames + stride - 1) / stride;
+    const int columns = int(weight->ne[3]), channels = int(input.values->ne[0]);
+    auto *data = ggml_reshape_3d(ctx, input.values, channels, input.frames, input.frequencies);
+    data = ggml_cont(ctx, ggml_permute(ctx, data, 2, 0, 1, 3));
+    data = ggml_pad_ext(ctx, data, 1, 1, 0, 0, 0, 0, 0, 0);
+    auto *flat = ggml_reshape_2d(ctx, weight, channels * 9, columns);
+    std::vector<ggml_tensor *> tiles;
+    // Bound im2col scratch for long songs; concatenate time tiles in a balanced tree.
+    for (int start = 0; start < frames; start += 32) {
+        const int count = std::min(32, frames - start), span = (count - 1) * stride + 3;
+        auto *tile = ggml_view_3d(ctx, data, span, input.frequencies, channels, data->nb[1], data->nb[2], size_t(start * stride) * data->nb[0]);
+        auto *patches = ggml_im2col(ctx, weight, ggml_cont(ctx, tile), stride, stride, 0, 1, 1, 1, true, GGML_TYPE_F32);
+        patches = ggml_reshape_2d(ctx, patches, channels * 9, count * frequencies);
+        auto *output = g.matmul(flat, patches);
+        tiles.push_back(ggml_reshape_3d(ctx, output, columns, count, frequencies));
     }
-    return result;
-}
-Matrix MuqModel::subsample(const Matrix &mel) const {
-    Image value{128, mel.rows, Matrix(128 * mel.rows, 1)};
-    for (int f = 0; f < 128; ++f) for (int t = 0; t < mel.rows; ++t) value.values[f * mel.rows + t][0] = mel[t][f];
-    for (int stage = 0; stage < 2; ++stage) {
-        const std::string root = "conv.conv." + std::to_string(stage);
-        auto residual = conv2d(value, root + ".conv3", 2); batch_norm(residual.values, root + ".bn3");
-        value = conv2d(value, root + ".conv1", 2); batch_norm(value.values, root + ".bn1");
-        for (float &v : value.values.data) v = std::max(v, 0.0f);
-        value = conv2d(value, root + ".conv2", 1); batch_norm(value.values, root + ".bn2");
-        add(value.values, residual.values);
-        for (float &v : value.values.data) v = std::max(v, 0.0f);
+    while (tiles.size() > 1) {
+        std::vector<ggml_tensor *> merged;
+        for (size_t i = 0; i < tiles.size(); i += 2)
+            merged.push_back(i + 1 < tiles.size() ? ggml_concat(ctx, tiles[i], tiles[i + 1], 1) : tiles[i]);
+        tiles = std::move(merged);
     }
-    Matrix flattened(value.frames, value.values.cols * value.frequencies);
-    for (int t = 0; t < value.frames; ++t) for (int c = 0; c < value.values.cols; ++c)
-        for (int f = 0; f < value.frequencies; ++f)
-            flattened[t][c * value.frequencies + f] = value.values[f * value.frames + t][c];
-    return ops.linear(flattened, "conv.linear");
+    auto *result = ggml_reshape_2d(ctx, tiles.front(), columns, frames * frequencies);
+    result = ggml_add(ctx, result, g.weight(weights.bias));
+    return {frequencies, frames, result};
 }
-Matrix MuqModel::attention(const Matrix &hidden, const std::string &prefix) const {
-    const int heads = encoder.at("num_attention_heads"), dimension = hidden.cols / heads, half = dimension / 2;
-    const float base = encoder.at("rotary_embedding_base");
-    Matrix rotated = hidden;
-    // Unlike MERT2, HF Wav2Vec2-Conformer rotates normalized hidden states
-    // BEFORE both Q/K projections; V is projected from the unrotated states.
-    for (int row = 0; row < hidden.rows; ++row) for (int head = 0; head < heads; ++head)
-        for (int column = 0; column < half; ++column) {
-            const float angle = row * std::pow(base, -2.0f * column / dimension);
-            const float c = std::cos(angle), s = std::sin(angle);
-            const int offset = head * dimension + column;
-            rotated[row][offset] = hidden[row][offset] * c - hidden[row][offset + half] * s;
-            rotated[row][offset + half] = hidden[row][offset + half] * c + hidden[row][offset] * s;
-        }
-    const auto query = ops.linear(rotated, prefix + ".linear_q"), key = ops.linear(rotated, prefix + ".linear_k");
-    const auto value = ops.linear(hidden, prefix + ".linear_v");
-    Matrix attended(hidden.rows, hidden.cols);
-    std::vector<float> scores(hidden.rows);
-    const float scale = 1.0f / std::sqrt(static_cast<float>(dimension));
-    for (int head = 0; head < heads; ++head) for (int row = 0; row < hidden.rows; ++row) {
-        float maximum = -std::numeric_limits<float>::infinity();
-        for (int source = 0; source < hidden.rows; ++source) {
-            float score = 0;
-            for (int column = 0; column < dimension; ++column)
-                score += query[row][head * dimension + column] * key[source][head * dimension + column];
-            scores[source] = score * scale; maximum = std::max(maximum, scores[source]);
-        }
-        float denominator = 0;
-        for (float &score : scores) { score = std::exp(score - maximum); denominator += score; }
-        for (int source = 0; source < hidden.rows; ++source)
-            for (int column = 0; column < dimension; ++column)
-                attended[row][head * dimension + column] += scores[source] / denominator * value[source][head * dimension + column];
+ggml_tensor *MuqModel::subsample(Graph &g, ggml_tensor *mel) const {
+    auto *ctx = g.ctx();
+    auto *data = ggml_cont(ctx, ggml_transpose(ctx, mel));
+    Image value{128, int(mel->ne[1]), ggml_reshape_2d(ctx, data, 1, ggml_nelements(data))};
+    for (const auto &stage : stages) {
+        auto residual = conv2d(g, value, stage.conv3, 2);
+        residual.values = batch_norm(g, residual.values, stage.bn3);
+        value = conv2d(g, value, stage.conv1, 2);
+        value.values = ggml_relu(ctx, batch_norm(g, value.values, stage.bn1));
+        value = conv2d(g, value, stage.conv2, 1);
+        value.values = batch_norm(g, value.values, stage.bn2);
+        value.values = ggml_relu(ctx, ggml_add(ctx, value.values, residual.values));
     }
-    return ops.linear(attended, prefix + ".linear_out");
+    data = ggml_reshape_3d(ctx, value.values, value.values->ne[0], value.frames, value.frequencies);
+    data = ggml_cont(ctx, ggml_permute(ctx, data, 1, 2, 0, 3));
+    return g.linear(ggml_reshape_2d(ctx, data, value.values->ne[0] * value.frequencies, value.frames), projection);
 }
-Matrix MuqModel::conformer_convolution(const Matrix &hidden, const std::string &prefix) const {
-    const int width = hidden.cols, kernel = encoder.at("conv_depthwise_kernel_size");
-    auto value = ops.norm(hidden, prefix + ".layer_norm", 1e-5f);
-    value = ops.conv1d(value, prefix + ".pointwise_conv1", 1, 1, 0, 1, false);
-    Matrix gated(value.rows, width);
-    for (int row = 0; row < value.rows; ++row) for (int column = 0; column < width; ++column)
-        gated[row][column] = value[row][column] * sigmoid(value[row][width + column]);
-    value = ops.conv1d(gated, prefix + ".depthwise_conv", kernel, 1, (kernel - 1) / 2, width, false);
-    batch_norm(value, prefix + ".batch_norm"); silu(value);
-    return ops.conv1d(value, prefix + ".pointwise_conv2", 1, 1, 0, 1, false);
+ggml_tensor *MuqModel::attention(Graph &g, ggml_tensor *hidden, const AttentionWeights &weights) const {
+    const int heads = h.heads;
+    // Wav2Vec2-Conformer rotates hidden states before Q/K projections.
+    auto *rotated = g.rope(hidden, heads, h.rotary_base);
+    auto *query = g.linear(rotated, weights.query), *key = g.linear(rotated, weights.key);
+    auto *value = g.linear(hidden, weights.value);
+    return g.linear(g.attention(query, key, value, heads), weights.output);
+}
+ggml_tensor *MuqModel::conformer_convolution(Graph &g, ggml_tensor *hidden, const ConvolutionWeights &weights) const {
+    auto *ctx = g.ctx();
+    const int width = int(hidden->ne[0]), kernel = h.kernel;
+    auto *value = g.norm(hidden, weights.norm, 1e-5f);
+    value = g.conv1d(value, weights.input, 1, 1, 0, 1);
+    auto *gated = ggml_mul(ctx, g.slice(value, 0, width), ggml_sigmoid(ctx, g.slice(value, width, width)));
+    value = g.conv1d(gated, weights.depthwise, kernel, 1, (kernel - 1) / 2, width);
+    value = ggml_silu(ctx, batch_norm(g, value, weights.batch_norm));
+    return g.conv1d(value, weights.output, 1, 1, 0, 1);
 }
 AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
     if (!(pcm.size() >= 1025))
@@ -263,23 +232,28 @@ AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
         throw std::runtime_error("CLAP: MuQ waveform exceeds 1 GiB");
     if (!(std::all_of(pcm.begin(), pcm.end(), [](float v) { return std::isfinite(v); })))
         throw std::runtime_error("CLAP: MuQ waveform contains non-finite samples");
-    auto hidden = subsample(frontend(pcm));
-    for (int layer = 0; layer < config.at("encoder_depth").get<int>(); ++layer) {
-        const std::string root = "conformer.layers." + std::to_string(layer);
-        for (int ffn = 1; ffn <= 2; ++ffn) {
-            const std::string branch = root + ".ffn" + std::to_string(ffn);
-            auto value = ops.linear(ops.norm(hidden, branch + "_layer_norm", 1e-5f), branch + ".intermediate_dense");
-            silu(value); value = ops.linear(value, branch + ".output_dense");
-            for (size_t i = 0; i < hidden.data.size(); ++i) hidden.data[i] += 0.5f * value.data[i];
-            if (ffn == 1) {
-                value = attention(ops.norm(hidden, root + ".self_attn_layer_norm", 1e-5f), root + ".self_attn");
-                add(hidden, value);
-                value = conformer_convolution(hidden, root + ".conv_module"); add(hidden, value);
+    const auto mel = frontend(pcm);
+    auto outputs = runtime.run_cached("frames", {GraphInput(mel)}, [&](Graph &g) {
+        auto *ctx = g.ctx();
+        auto *hidden = subsample(g, g.dynamic_input(0));
+        for (const auto &layer : layers) {
+            for (int ffn = 1; ffn <= 2; ++ffn) {
+                const auto &branch = ffn == 1 ? layer.ffn1 : layer.ffn2;
+                auto value = g.linear(g.norm(hidden, branch.norm, 1e-5f), branch.input);
+                value = ggml_silu(ctx, value); value = g.linear(value, branch.output);
+                hidden = ggml_add(ctx, hidden, ggml_scale(ctx, value, 0.5f));
+                if (ffn == 1) {
+                    value = attention(g, g.norm(hidden, layer.attention_norm, 1e-5f), layer.attention);
+                    hidden = ggml_add(ctx, hidden, value);
+                    value = conformer_convolution(g, hidden, layer.convolution); hidden = ggml_add(ctx, hidden, value);
+                }
             }
+            hidden = g.norm(hidden, layer.final_norm, 1e-5f);
         }
-        hidden = ops.norm(hidden, root + ".final_layer_norm", 1e-5f);
-    }
-    hidden = ops.norm(hidden, "conformer.layer_norm", encoder.at("layer_norm_eps"));
-    return {std::move(hidden.data), hidden.rows, hidden.cols};
+        hidden = g.norm(hidden, final_norm, h.epsilon);
+        return std::vector<ggml_tensor *>{hidden};
+    }, size_t(mel.rows) * 8);
+    auto &output = outputs.front();
+    return {std::move(output.values), int(output.rows), int(output.columns)};
 }
 } // namespace clap::detail

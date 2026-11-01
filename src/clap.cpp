@@ -1,4 +1,5 @@
 #include "embedding.h"
+#include "clap.h"
 #include "quantize.h"
 #include "server.h"
 
@@ -16,11 +17,14 @@ int main(int argc, char **argv) {
     int port = 8080;
     std::string server_model;
     int server_threads = 0;
+    std::string server_device;
+    auto *devices = app.add_subcommand("devices", "List available GGML devices");
     auto *serve = app.add_subcommand("serve", "Start the embeddings HTTP server");
     serve->add_option("-m,--model", server_model, "Converted model GGUF")
         ->required()->check(CLI::ExistingFile);
     serve->add_option("-t,--threads", server_threads, "ggml CPU threads (0: automatic)")
         ->check(CLI::NonNegativeNumber)->capture_default_str();
+    serve->add_option("--device", server_device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
     serve->add_option("--host", host, "Listen address")->capture_default_str();
     serve->add_option("--port", port, "Listen port")
         ->check(CLI::Range(1, 65535))->capture_default_str();
@@ -32,6 +36,7 @@ int main(int argc, char **argv) {
         ->required()->check(CLI::ExistingFile);
     embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: automatic)")
         ->check(CLI::NonNegativeNumber)->capture_default_str();
+    embedding->add_option("--device", options.device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
     auto *input = embedding->add_option_group("Input", "Choose one text prompt, text file, or audio file");
     input->require_option(1, 1);
     input->add_option("-p,--prompt", options.text, "Separator-delimited text (default output: raw)");
@@ -69,6 +74,11 @@ int main(int argc, char **argv) {
     }
 
     try {
+        if (*devices) {
+            for (const auto &device : clap::available_devices())
+                std::cout << device.name << "\t" << device.description << "\n";
+            return 0;
+        }
         if (*embedding) {
             options.single_text = text_option->count() != 0;
             options.crop_requested = crop_option->count() != 0;
@@ -97,7 +107,7 @@ int main(int argc, char **argv) {
             return run_embedding(options);
         }
         if (*serve) {
-            return run_server(host, port, server_model, server_threads);
+            return run_server(host, port, server_model, server_threads, server_device);
         }
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

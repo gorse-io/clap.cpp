@@ -12,8 +12,10 @@ void positive(const nlohmann::json &obj, const char *key) {
 }
 }
 MuqMulanModel::MuqMulanModel(const ModelLoader &source, int threads)
-    : loader(source), ops(source, threads), audio_backbone(source, threads) {
-    load_arch_hparams(); load_arch_tensors();
+    : loader(source), runtime(source, threads), audio_backbone(source, threads) {
+    load_arch_hparams();
+    load_arch_tensors();
+    bind_tensors();
 }
 void MuqMulanModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq_mulan.config"));
@@ -84,106 +86,103 @@ void MuqMulanModel::load_arch_tensors() const {
         loader.linear_shape(p+".1.1",dim,2*ff,false); loader.linear_shape(p+".1.4",ff,dim,false);
     }
     loader.linear_shape("audio_proj",audio_backbone.projection_dimension(),config.at("audio_transformer").at("dim"));
-    loader.linear_shape("audio_latent",config.at("audio_transformer").at("dim"),projection_dimension());
-    loader.linear_shape("text_proj",dim,projection_dimension());
+    loader.linear_shape("audio_latent",config.at("audio_transformer").at("dim"),config.at("mulan").at("dim_latent").get<int>());
+    loader.linear_shape("text_proj",dim,config.at("mulan").at("dim_latent").get<int>());
 }
+
+void MuqMulanModel::bind_tensors() {
+    h = {config.at("mulan").at("dim_latent"), text_config.at("max_position_embeddings"), text_config.at("vocab_size"),
+         text_config.at("num_attention_heads"), config.at("text_transformer").at("heads"), config.at("text_transformer").at("dim_head"),
+         config.at("mulan").at("clip_secs"), text_config.at("layer_norm_eps")};
+    embeddings = bind_embeddings(loader,"text.embeddings");
+    for (int i = 0; i < text_config.at("num_hidden_layers").get<int>(); ++i)
+        text_layers.push_back(bind_bert_layer(loader,"text.encoder.layer."+std::to_string(i)));
+    for (int i = 0; i < config.at("text_transformer").at("tf_depth").get<int>(); ++i) {
+        const auto p = "adapter.layers." + std::to_string(i);
+        adapter_layers.push_back({loader.weight(p+".0.norm.learned_gamma"), loader.weight(p+".1.0.learned_gamma"),
+            loader.weight(p+".0.q_scale"), loader.weight(p+".0.k_scale"), LayerWeights::bind(loader,p+".0.to_q",false),
+            LayerWeights::bind(loader,p+".0.to_kv",false), LayerWeights::bind(loader,p+".0.to_out.0",false),
+            LayerWeights::bind(loader,p+".1.1",false), LayerWeights::bind(loader,p+".1.4",false)});
+    }
+    text_projection = LayerWeights::bind(loader,"text_proj"); audio_projection = LayerWeights::bind(loader,"audio_proj");
+    audio_latent = LayerWeights::bind(loader,"audio_latent");
+}
+
 TextParameters MuqMulanModel::text_parameters() const {
     // Tokenize without truncation; reject over-context input in text(), since
     // the official wrapper also does not truncate or chunk a single item.
     return {0,2,std::numeric_limits<size_t>::max()};
 }
-int MuqMulanModel::projection_dimension() const { return config.at("mulan").at("dim_latent"); }
+int MuqMulanModel::projection_dimension() const { return h.projection; }
 AudioFrames MuqMulanModel::audio_frames(const std::vector<float> &) const { throw std::runtime_error("CLAP: MuLan exposes embeddings, not frames"); }
-Matrix MuqMulanModel::encode_text(const Matrix &embeddings) const {
-    const int heads=text_config.at("num_attention_heads"), hd=embeddings.cols/heads;
-    const float eps=text_config.at("layer_norm_eps");
-    auto x=ops.norm(embeddings,"text.embeddings.LayerNorm",eps);
-    for(int layer=0;layer<text_config.at("num_hidden_layers").get<int>();++layer) {
-        const auto p="text.encoder.layer."+std::to_string(layer);
-        auto q=ops.linear(x,p+".attention.self.query"), k=ops.linear(x,p+".attention.self.key"), v=ops.linear(x,p+".attention.self.value");
-        Matrix y(x.rows,x.cols); std::vector<float> scores(x.rows);
-        for(int h=0;h<heads;++h) for(int i=0;i<x.rows;++i) {
-            float maximum=-std::numeric_limits<float>::infinity();
-            for(int j=0;j<x.rows;++j) {
-                float sum=0; for(int d=0;d<hd;++d) sum+=q[i][h*hd+d]*k[j][h*hd+d];
-                scores[j]=sum/std::sqrt(static_cast<float>(hd)); maximum=std::max(maximum,scores[j]);
-            }
-            float sum=0; for(float &s:scores) {s=std::exp(s-maximum);sum+=s;}
-            for(int j=0;j<x.rows;++j) for(int d=0;d<hd;++d) y[i][h*hd+d]+=scores[j]/sum*v[j][h*hd+d];
-        }
-        y=ops.linear(y,p+".attention.output.dense");add(y,x);x=ops.norm(y,p+".attention.output.LayerNorm",eps);
-        y=ops.linear(x,p+".intermediate.dense");gelu(y);y=ops.linear(y,p+".output.dense");add(y,x);
-        x=ops.norm(y,p+".output.LayerNorm",eps);
+ggml_tensor *MuqMulanModel::encode_text(Graph &g, ggml_tensor *embeddings) const {
+    auto *ctx = g.ctx();
+    const int heads = h.heads;
+    const float eps = h.epsilon;
+    auto *x = g.norm(embeddings, this->embeddings.norm, eps);
+    for (const auto &layer : text_layers) {
+        auto *q = g.linear(x, layer.attention.query), *k = g.linear(x, layer.attention.key), *v = g.linear(x, layer.attention.value);
+        auto *y = g.linear(g.attention(q, k, v, heads), layer.attention.output);
+        x = g.norm(ggml_add(ctx, y, x), layer.attention_norm, eps);
+        y = ggml_gelu_erf(ctx, g.linear(x, layer.intermediate));
+        y = g.linear(y, layer.output);
+        x = g.norm(ggml_add(ctx, y, x), layer.output_norm, eps);
     }
     return x;
 }
-Matrix MuqMulanModel::biasless_norm(const Matrix &x,const std::string &name) const {
-    Matrix y(x.rows,x.cols); const auto *gamma=loader.weight(name+".learned_gamma");
-    for(int r=0;r<x.rows;++r) {
-        double mean=0,var=0; for(int c=0;c<x.cols;++c) mean+=x[r][c]; mean/=x.cols;
-        for(int c=0;c<x.cols;++c) {double d=x[r][c]-mean;var+=d*d;}
-        const float scale=1/std::sqrt(var/x.cols+1e-5);
-        for(int c=0;c<x.cols;++c) y[r][c]=(x[r][c]-static_cast<float>(mean))*scale*scalar(gamma,c);
-    }
-    return y;
+ggml_tensor *MuqMulanModel::biasless_norm(Graph &g, ggml_tensor *x, ggml_tensor *weight) const {
+    return ggml_mul(g.ctx(), ggml_norm(g.ctx(), x, 1e-5f), g.weight(weight));
 }
-Matrix MuqMulanModel::adapter(Matrix x) const {
-    const auto &t=config.at("text_transformer"); const int heads=t.at("heads"),hd=t.at("dim_head"),inner=heads*hd;
-    for(int layer=0;layer<t.at("tf_depth").get<int>();++layer) {
-        const auto p="adapter.layers."+std::to_string(layer);
-        auto normalized=biasless_norm(x,p+".0.norm");
-        auto q=ops.linear(normalized,p+".0.to_q",false), kv=ops.linear(normalized,p+".0.to_kv",false);
-        const auto *qs=loader.weight(p+".0.q_scale"),*ks=loader.weight(p+".0.k_scale");
-        for(int r=0;r<x.rows;++r) for(int h=0;h<heads;++h) {
-            float qnorm=0,knorm=0;
-            for(int d=0;d<hd;++d) {qnorm+=q[r][h*hd+d]*q[r][h*hd+d];knorm+=kv[r][h*hd+d]*kv[r][h*hd+d];}
-            qnorm=std::max(std::sqrt(qnorm),1e-12f);knorm=std::max(std::sqrt(knorm),1e-12f);
-            for(int d=0;d<hd;++d) {q[r][h*hd+d]=q[r][h*hd+d]/qnorm*scalar(qs,d);kv[r][h*hd+d]=kv[r][h*hd+d]/knorm*scalar(ks,d);}
-        }
-        Matrix attended(x.rows,inner);std::vector<float> scores(x.rows);
-        for(int h=0;h<heads;++h) for(int i=0;i<x.rows;++i) {
-            float maximum=-std::numeric_limits<float>::infinity();
-            for(int j=0;j<x.rows;++j) {float sum=0;for(int d=0;d<hd;++d) sum+=q[i][h*hd+d]*kv[j][h*hd+d];scores[j]=sum*8;maximum=std::max(maximum,scores[j]);}
-            float sum=0;for(float &s:scores) {s=std::exp(s-maximum);sum+=s;}
-            for(int j=0;j<x.rows;++j) for(int d=0;d<hd;++d) attended[i][h*hd+d]+=scores[j]/sum*kv[j][inner+h*hd+d];
-        }
-        auto y=ops.linear(attended,p+".0.to_out.0",false);add(x,y);
-        y=ops.linear(biasless_norm(x,p+".1.0"),p+".1.1",false);
-        const int ff=y.cols/2;Matrix gate(y.rows,ff),value(y.rows,ff);
-        for(int r=0;r<y.rows;++r) for(int c=0;c<ff;++c) {value[r][c]=y[r][c];gate[r][c]=y[r][ff+c];}
-        gelu(gate);for(size_t i=0;i<value.data.size();++i) value.data[i]*=gate.data[i];
-        y=ops.linear(value,p+".1.4",false);add(x,y);
+ggml_tensor *MuqMulanModel::adapter(Graph &g, ggml_tensor *x) const {
+    auto *ctx = g.ctx();
+    const int heads = h.adapter_heads, hd = h.head_dim, inner = heads * hd;
+    for (const auto &layer : adapter_layers) {
+        auto *normalized = biasless_norm(g, x, layer.norm);
+        auto *q = g.linear(normalized, layer.query), *kv = g.linear(normalized, layer.key_value);
+        auto *k = g.slice(kv, 0, inner), *v = g.slice(kv, inner, inner);
+        auto normalize_heads = [&](ggml_tensor *value, ggml_tensor *weight) {
+            value = ggml_reshape_3d(ctx, value, hd, heads, x->ne[1]);
+            value = ggml_mul(ctx, g.l2_normalize(value), g.weight(weight));
+            return ggml_reshape_2d(ctx, value, inner, x->ne[1]);
+        };
+        q = normalize_heads(q, layer.q_scale);
+        k = normalize_heads(k, layer.k_scale);
+        auto *attended = g.attention(q, k, v, heads, nullptr, 8.0f);
+        x = ggml_add(ctx, x, g.linear(attended, layer.output));
+        auto *y = g.linear(biasless_norm(g, x, layer.ffn_norm), layer.ffn_input);
+        const int64_t ff = y->ne[0] / 2;
+        y = ggml_mul(ctx, g.slice(y, 0, ff), ggml_gelu_erf(ctx, g.slice(y, ff, ff)));
+        x = ggml_add(ctx, x, g.linear(y, layer.ffn_output));
     }
     return x;
 }
-std::vector<float> MuqMulanModel::project(const Matrix &x,const std::string &name) const {
-    Matrix pooled(1,x.cols);for(int r=0;r<x.rows;++r) for(int c=0;c<x.cols;++c) pooled[0][c]+=x[r][c]/x.rows;
-    auto result=ops.linear(pooled,name).data;
-    float norm=0;for(float v:result) norm+=v*v;norm=std::max(std::sqrt(norm),1e-12f);
-    for(float &v:result) {v/=norm;if(!std::isfinite(v)) throw std::runtime_error("CLAP: non-finite MuLan embedding");}
-    return result;
+ggml_tensor *MuqMulanModel::project(Graph &g, ggml_tensor *x, const LayerWeights &weights) const {
+    return g.l2_normalize(g.linear(g.mean_pool(x), weights));
 }
 std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
-    const int dim=text_config.at("hidden_size"),positions=text_config.at("max_position_embeddings"),vocab=text_config.at("vocab_size");
+    const int positions=h.positions,vocab=h.vocab;
     if(ids.empty() || ids.size()>static_cast<size_t>(positions-2)) throw std::runtime_error("CLAP: MuLan text is empty or exceeds XLM-R context; truncation/chunking unsupported");
-    Matrix x(static_cast<int>(ids.size()),dim);std::vector<float> pos(dim),type(dim);
-    tensor_row(loader.weight("text.embeddings.token_type_embeddings.weight"),0,type.data());
+    std::vector<int> position_ids(ids.size());
     int position=1;
     for(size_t r=0;r<ids.size();++r) {
         const int id=ids[r];if(id<0 || id>=vocab) throw std::runtime_error("CLAP: MuLan token ID out of vocabulary");
         const int p=id==1?1:++position;
         if(p>=positions) throw std::runtime_error("CLAP: MuLan text positions exceed context");
-        tensor_row(loader.weight("text.embeddings.word_embeddings.weight"),id,x[static_cast<int>(r)]);
-        tensor_row(loader.weight("text.embeddings.position_embeddings.weight"),p,pos.data());
-        for(int c=0;c<dim;++c) x[static_cast<int>(r)][c]+=pos[c]+type[c];
+        position_ids[r] = p;
     }
-    return project(adapter(encode_text(x)),"text_proj");
+    auto outputs = runtime.run_cached("text", {GraphInput(ids), GraphInput(position_ids)}, [&](Graph &g) {
+        auto *x = ggml_add(g.ctx(), g.embedding(embeddings.word, g.dynamic_input(0)),
+                           ggml_add(g.ctx(), g.embedding(embeddings.position, g.dynamic_input(1)),
+                                    g.embedding(embeddings.type, std::vector<int>{0})));
+        return std::vector<ggml_tensor *>{project(g, adapter(g, encode_text(g, x)), text_projection)};
+    });
+    return std::move(outputs.front().values);
 }
 std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
     if (crop_offset != 0) throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
     if(pcm.empty() || pcm.size()>(size_t{1}<<28) || !std::all_of(pcm.begin(),pcm.end(),[](float v){return std::isfinite(v);}))
         throw std::runtime_error("CLAP: MuLan requires finite nonempty waveform of at most 1 GiB");
-    const size_t delta=24000*config.at("mulan").at("clip_secs").get<size_t>();
+    const size_t delta=24000*h.clip_seconds;
     std::vector<float> result(projection_dimension());size_t count=0;
     for(size_t start=0;start<pcm.size();start+=delta) {
         const size_t remaining=std::min(delta,pcm.size()-start);
@@ -191,8 +190,10 @@ std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &p
         // Exactly one prefix slice, even when it cannot fill a ten-second clip.
         if(remaining<delta) clip.insert(clip.end(),pcm.begin(),pcm.begin()+std::min(delta-remaining,pcm.size()));
         auto frames=audio_backbone.audio_frames(clip);
-        Matrix hidden(frames.frames,frames.dimension);hidden.data=std::move(frames.values);
-        const auto vector=project(ops.linear(hidden,"audio_proj"),"audio_latent");
+        const auto outputs = runtime.run_cached("audio", {GraphInput(frames.values, frames.dimension, frames.frames)}, [&](Graph &g) {
+            return std::vector<ggml_tensor *>{project(g, g.linear(g.dynamic_input(0), audio_projection), audio_latent)};
+        });
+        const auto &vector = outputs.front().values;
         for(size_t d=0;d<result.size();++d) result[d]+=vector[d];
         ++count;
     }

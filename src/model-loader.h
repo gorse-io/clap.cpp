@@ -1,11 +1,13 @@
 #pragma once
 
+#include "clap.h"
 #include <ggml.h>
 #include <gguf.h>
 #include <cstdint>
 #include <initializer_list>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -15,7 +17,9 @@ namespace clap::detail {
 // Keep this alive longer than all model architectures and tensor operations.
 class ModelLoader {
 public:
-    ModelLoader() = default;
+    explicit ModelLoader(RuntimeOptions options = {}) : options(std::move(options)) {}
+    const RuntimeOptions &runtime_options() const { return source ? source->runtime_options() : options; }
+    size_t tensor_count() const { return source ? source->tensor_count() : tensor_index.size(); }
     // Non-owning namespace view: the source mapping must outlive this view.
     ModelLoader(const ModelLoader &source, std::string tensor_prefix, std::string metadata_prefix)
         : source(&source), tensor_prefix(std::move(tensor_prefix)), metadata_prefix(std::move(metadata_prefix)) {}
@@ -35,6 +39,8 @@ public:
     bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
     void validate_tensor_coverage() const;
 private:
+    RuntimeOptions options;
+    std::unordered_map<std::string, ggml_tensor *> tensor_index;
     const ModelLoader *source = nullptr;
     std::string tensor_prefix, metadata_prefix;
     bool bundled = false;

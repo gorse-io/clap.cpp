@@ -1,6 +1,6 @@
 #include "model-loader.h"
 #include "quantization-policy.h"
-#include "model-ops.h"
+#include "tensor-data.h"
 #include <stdexcept>
 #include <fstream>
 #include <filesystem>
@@ -24,7 +24,8 @@ ModelLoader::~ModelLoader() {
 
 ggml_tensor *ModelLoader::weight(const std::string &name) const {
     if (source) return source->weight(tensor_prefix + name);
-    auto *w = ggml_get_tensor(weights, name.c_str());
+    const auto found = tensor_index.find(name);
+    auto *w = found == tensor_index.end() ? nullptr : found->second;
     if (w == nullptr)
         throw std::runtime_error("CLAP: missing tensor " + name);
     return w;
@@ -80,6 +81,8 @@ void ModelLoader::load(const std::string &path, bool inference) {
     gguf = gguf_init_from_file(path.c_str(), {true, &weights});
     if (!(gguf && weights))
         throw std::runtime_error("CLAP: cannot load GGUF " + path);
+    for (auto *tensor = ggml_get_first_tensor(weights); tensor; tensor = ggml_get_next_tensor(weights, tensor))
+        tensor_index.emplace(ggml_get_name(tensor), tensor);
 #ifndef _WIN32
     const int fd = open(path.c_str(), O_RDONLY);
     if (!(fd >= 0))

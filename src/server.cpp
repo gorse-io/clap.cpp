@@ -161,11 +161,11 @@ void embeddings(const httplib::Request &request, httplib::Response &response,
 
 } // namespace
 
-int run_server(const std::string &host, int port, const std::string &model_path, int threads) {
+int run_server(const std::string &host, int port, const std::string &model_path, int threads, const std::string &device) {
     try {
         // Load once, before opening the listening socket. A bad model must fail
         // startup rather than leave a live server that can never serve requests.
-        clap::CLAP model(model_path, threads);
+        clap::CLAP model(model_path, clap::RuntimeOptions{threads, device});
         const auto identifier = std::filesystem::path(model_path).filename().string();
         const int dimensions = model.projection_dimension();
         if (dimensions <= 0) throw std::runtime_error("Model projection dimension must be positive");

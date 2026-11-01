@@ -2,7 +2,8 @@
 
 #include "model.h"
 #include "model-loader.h"
-#include "model-ops.h"
+#include "graph.h"
+#include "model-weights.h"
 #include <nlohmann/json.hpp>
 
 namespace clap::detail {
@@ -26,14 +27,31 @@ private:
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
+    void bind_tensors();
     void load_arch_tensors() const override;
-    Matrix attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
-                     const std::vector<int> *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
-    std::vector<float> project(const Matrix &pooled, const std::string &prefix) const;
+    ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights, int heads, int tokens,
+                     ggml_tensor *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
+    struct Projection;
+    ggml_tensor *project(Graph &g, ggml_tensor *pooled, const Projection &weights) const;
 
     const ModelLoader &loader;
-    TensorOps ops;
+    GraphRuntime runtime;
     nlohmann::json config, a, t;
+    struct Parameters {
+        int projection, bins, spec, patch_width, window, hidden, pad, vocab, positions, heads, bos, eos;
+        float audio_epsilon, text_epsilon;
+    } h;
+    struct Stage {
+        int heads;
+        std::vector<TransformerWeights> blocks;
+        LayerWeights norm, reduction;
+    };
+    std::vector<Stage> stages;
+    EmbeddingWeights embeddings;
+    std::vector<TransformerWeights> text_layers;
+    LayerWeights patch, patch_norm, audio_norm, pooler;
+    struct Projection { LayerWeights input, output; } audio_projection, text_projection;
+    BatchNormWeights batch_norm;
 };
 
 // CLaMP3 text (XLM-R) and audio (BERT), optionally with a bundled MERT frontend.
@@ -55,20 +73,29 @@ private:
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
+    void bind_tensors();
     void load_arch_tensors() const override;
-    Matrix encode(const Matrix &embeddings, const std::vector<int> &mask,
-                  const nlohmann::json &branch, const std::string &prefix) const;
-    Matrix attention(const Matrix &x, const std::vector<int> &mask,
-                     const std::string &prefix, int heads) const;
+    struct Branch;
+    ggml_tensor *encode(Graph &g, ggml_tensor *embeddings, const std::vector<int> &mask, const Branch &branch) const;
+    ggml_tensor *attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask, const AttentionWeights &weights, int heads) const;
     std::vector<float> chunked_text(const std::vector<int> &ids) const;
-    std::vector<float> chunked_audio(const Matrix &features) const;
-    std::vector<float> pool_project(const Matrix &hidden, const std::vector<int> &mask,
-                                    const std::string &projection) const;
+    std::vector<float> chunked_audio(const HostMatrix &features) const;
+    ggml_tensor *pool_project(Graph &g, ggml_tensor *hidden, const std::vector<int> &mask,
+                                    const LayerWeights &projection) const;
 
     const ModelLoader &loader;
-    TensorOps ops;
+    GraphRuntime runtime;
     nlohmann::json config, audio_config, text_config;
     std::unique_ptr<MertModel> frontend;
+    struct Branch {
+        int hidden, heads, pad, vocab, positions, bos, eos;
+        float epsilon;
+        EmbeddingWeights embeddings;
+        std::vector<TransformerWeights> layers;
+        LayerWeights projection;
+    };
+    Branch audio_branch, text_branch;
+    int chunk_length = 128, projection_dim = 0;
 };
 
 // Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,
@@ -85,15 +112,26 @@ public:
     bool is_waveform_encoder() const override;
 private:
     void load_arch_hparams() override;
+    void bind_tensors();
     void load_arch_tensors() const override;
-    Matrix frontend(const std::vector<float> &pcm) const;
-    Matrix subsample(Matrix hidden) const;
-    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
-    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
+    HostMatrix frontend(const std::vector<float> &pcm) const;
+    ggml_tensor *subsample(Graph &g, ggml_tensor *hidden) const;
+    ggml_tensor *attention(Graph &g, ggml_tensor *hidden, const AttentionWeights &weights) const;
+    ggml_tensor *conformer_convolution(Graph &g, ggml_tensor *hidden, const ConvolutionWeights &weights) const;
 
     const ModelLoader &loader;
-    TensorOps ops;
+    GraphRuntime runtime;
     nlohmann::json config;
+    struct Parameters {
+        int hidden, bins, sample_rate, fft, hop, heads, kernel;
+        size_t minimum_samples;
+        float epsilon, subsampling_epsilon, rotary_base;
+    } h;
+    ggml_tensor *window = nullptr, *filters = nullptr, *mean = nullptr, *stddev = nullptr;
+    struct ConvNext { LayerWeights depthwise, norm, input, response, output; };
+    struct Stage { int width; LayerWeights norm, resample; std::vector<ConvNext> blocks; };
+    std::vector<Stage> stages;
+    std::vector<ConformerWeights> layers;
 };
 // MERT-v1-95M: normalized waveform, HuBERT convolutional frontend and
 // post-layer-normalized transformer. CLaMP3 pooling is a separate contract.
@@ -105,23 +143,30 @@ public:
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override { return {0,0,0}; }
-    int projection_dimension() const override { return config.at("hidden_size"); }
+    int projection_dimension() const override { return h.hidden; }
     int mel_bins() const override { return 0; }
     int sample_rate() const override { return 24000; }
     bool is_waveform_encoder() const override { return true; }
 private:
     void load_arch_hparams() override;
+    void bind_tensors();
     void load_arch_tensors() const override;
     std::vector<float> normalize(const std::vector<float> &pcm) const;
-    Matrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
-    Matrix convolution(const Matrix &x, const std::string &name, int kernel,
-                       int stride, int padding, int groups, bool bias) const;
-    Matrix linear(const Matrix &x, const std::string &name) const;
-    Matrix attention(const Matrix &x, const std::string &name) const;
+    HostMatrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
+    ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights) const;
     ModelLoader loader;
-    TensorOps ops;
+    GraphRuntime runtime;
     nlohmann::json config;
     int minimum_samples = 0;
+    struct Parameters {
+        int hidden, heads, position_kernel, position_groups;
+        float epsilon;
+        std::vector<int> channels, kernels, strides;
+        bool conv_bias;
+    } h;
+    std::vector<LayerWeights> convolutions;
+    LayerWeights frontend_norm, projection_norm, projection, position, encoder_norm;
+    std::vector<TransformerWeights> layers;
 };
 
 // OpenMuQ/MuQ-large-msd-iter: native log-mel, residual 2D subsampling and
@@ -137,18 +182,25 @@ public:
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
 private:
-    struct Image { int frequencies; int frames; Matrix values; };
+    struct Image { int frequencies; int frames; ggml_tensor *values; };
     void load_arch_hparams() override;
+    void bind_tensors();
     void load_arch_tensors() const override;
-    Matrix frontend(const std::vector<float> &pcm) const;
-    Matrix subsample(const Matrix &mel) const;
-    Image conv2d(const Image &input, const std::string &prefix, int stride) const;
-    void batch_norm(Matrix &input, const std::string &prefix) const;
-    Matrix attention(const Matrix &hidden, const std::string &prefix) const;
-    Matrix conformer_convolution(const Matrix &hidden, const std::string &prefix) const;
+    HostMatrix frontend(const std::vector<float> &pcm) const;
+    ggml_tensor *subsample(Graph &g, ggml_tensor *mel) const;
+    Image conv2d(Graph &g, const Image &input, const LayerWeights &weights, int stride) const;
+    ggml_tensor *batch_norm(Graph &g, ggml_tensor *input, const BatchNormWeights &weights) const;
+    ggml_tensor *attention(Graph &g, ggml_tensor *hidden, const AttentionWeights &weights) const;
+    ggml_tensor *conformer_convolution(Graph &g, ggml_tensor *hidden, const ConvolutionWeights &weights) const;
     const ModelLoader &loader;
-    TensorOps ops;
+    GraphRuntime runtime;
     nlohmann::json config, encoder;
+    struct Parameters { int hidden, heads, kernel; float epsilon, rotary_base, mean, stddev; } h;
+    ggml_tensor *window = nullptr, *filters = nullptr;
+    struct Stage { LayerWeights conv1, conv2, conv3; BatchNormWeights bn1, bn2, bn3; };
+    std::vector<Stage> stages;
+    std::vector<ConformerWeights> layers;
+    LayerWeights projection, final_norm;
 };
 
 // Joint MuQ-MuLan embeddings: the audio backbone remains the exact MuqModel.
@@ -166,14 +218,24 @@ public:
     bool has_waveform_embeddings() const override { return true; }
 private:
     void load_arch_hparams() override;
+    void bind_tensors();
     void load_arch_tensors() const override;
-    Matrix encode_text(const Matrix &x) const;
-    Matrix adapter(Matrix x) const;
-    Matrix biasless_norm(const Matrix &x, const std::string &name) const;
-    std::vector<float> project(const Matrix &x, const std::string &name) const;
+    ggml_tensor *encode_text(Graph &g, ggml_tensor *x) const;
+    ggml_tensor *adapter(Graph &g, ggml_tensor *x) const;
+    ggml_tensor *biasless_norm(Graph &g, ggml_tensor *x, ggml_tensor *weight) const;
+    ggml_tensor *project(Graph &g, ggml_tensor *x, const LayerWeights &weights) const;
     const ModelLoader &loader;
-    TensorOps ops;
+    GraphRuntime runtime;
     MuqModel audio_backbone;
     nlohmann::json config, text_config;
+    struct Parameters { int projection, positions, vocab, heads, adapter_heads, head_dim; size_t clip_seconds; float epsilon; } h;
+    EmbeddingWeights embeddings;
+    std::vector<TransformerWeights> text_layers;
+    struct AdapterLayer {
+        ggml_tensor *norm, *ffn_norm, *q_scale, *k_scale;
+        LayerWeights query, key_value, output, ffn_input, ffn_output;
+    };
+    std::vector<AdapterLayer> adapter_layers;
+    LayerWeights text_projection, audio_projection, audio_latent;
 };
 } // namespace clap::detail

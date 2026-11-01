@@ -6,6 +6,7 @@
 struct EmbeddingOptions {
     std::string model_path;
     int threads = 0;
+    std::string device;
     std::string text;
     std::string audio_path;
     std::string separator = "\n";

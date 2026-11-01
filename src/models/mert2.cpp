@@ -9,19 +9,11 @@
 
 namespace clap::detail {
 using json = nlohmann::json;
-namespace {
-
-float sigmoid(float value) {
-    if (value >= 0) return 1.0f / (1.0f + std::exp(-value));
-    const float exponential = std::exp(value);
-    return exponential / (1.0f + exponential);
-}
-} // namespace
-
 Mert2Model::Mert2Model(const ModelLoader &source, int threads)
-    : loader(source), ops(source, threads) {
+    : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
+    bind_tensors();
 }
 
 void Mert2Model::load_arch_hparams() {
@@ -118,10 +110,44 @@ void Mert2Model::load_arch_tensors() const {
     }
 }
 
+void Mert2Model::bind_tensors() {
+    h = {config.at("hidden_size"), config.at("num_mel_bins"), config.at("sampling_rate"), config.at("n_fft"), config.at("hop_length"),
+         config.at("num_attention_heads"), config.at("conv_depthwise_kernel_size"), config.at("minimum_input_samples"),
+         config.at("layer_norm_eps"), config.at("subsampling_layer_norm_eps"), config.at("rotary_embedding_base")};
+    window = loader.weight("feature_extractor.spectrogram.window"); filters = loader.weight("feature_extractor.mel_scale.fb");
+    mean = loader.weight("feature_extractor.mel_mean"); stddev = loader.weight("feature_extractor.mel_std");
+    for (int i = 0; i < 3; ++i) {
+        Stage stage; stage.width = config.at("subsampling_channels")[i];
+        const auto root = "subsampling_module." + std::to_string(i);
+        if (i > 0) { stage.norm = LayerWeights::bind(loader,root+".resampling_layer.0"); stage.resample = LayerWeights::bind(loader,root+".resampling_layer.2"); }
+        for (int j = 0; j < config.at("subsampling_depths")[i].get<int>(); ++j) {
+            const auto p = root + ".convnext_layers." + std::to_string(j);
+            stage.blocks.push_back({LayerWeights::bind(loader,p+".depthwise_block.1"), LayerWeights::bind(loader,p+".pointwise_block.0"),
+                                    LayerWeights::bind(loader,p+".pointwise_block.1"), LayerWeights::bind(loader,p+".pointwise_block.3"), LayerWeights::bind(loader,p+".pointwise_block.4")});
+        }
+        stages.push_back(std::move(stage));
+    }
+    for (int i = 0; i < config.at("num_hidden_layers").get<int>(); ++i) {
+        const auto p = "layers." + std::to_string(i);
+        ConformerWeights layer;
+        layer.ffn1 = {LayerWeights::bind(loader,p+".ffn1_layer_norm"), LayerWeights::bind(loader,p+".ffn1.w_1"), LayerWeights::bind(loader,p+".ffn1.w_2")};
+        layer.ffn2 = {LayerWeights::bind(loader,p+".ffn2_layer_norm"), LayerWeights::bind(loader,p+".ffn2.w_1"), LayerWeights::bind(loader,p+".ffn2.w_2")};
+        layer.attention_norm = LayerWeights::bind(loader,p+".attn_layer_norm"); layer.final_norm = LayerWeights::bind(loader,p+".final_layer_norm");
+        layer.attention = {LayerWeights::bind(loader,p+".attn.query_proj"), LayerWeights::bind(loader,p+".attn.key_proj"), LayerWeights::bind(loader,p+".attn.value_proj"), LayerWeights::bind(loader,p+".attn.out_proj")};
+        layer.convolution.norm = LayerWeights::bind(loader,p+".conv_module.layer_norm");
+        layer.convolution.input = LayerWeights::bind(loader,p+".conv_module.conv_block.1",false);
+        layer.convolution.depthwise = LayerWeights::bind(loader,p+".conv_module.conv_block.3",false);
+        layer.convolution.output_norm = LayerWeights::bind(loader,p+".conv_module.conv_block.4.1");
+        layer.convolution.output = LayerWeights::bind(loader,p+".conv_module.conv_block.6",false);
+        layers.push_back(layer);
+    }
+}
+
+
 TextParameters Mert2Model::text_parameters() const { return {0, 0, 0}; }
-int Mert2Model::projection_dimension() const { return config.at("hidden_size"); }
-int Mert2Model::mel_bins() const { return config.at("num_mel_bins"); }
-int Mert2Model::sample_rate() const { return config.at("sampling_rate"); }
+int Mert2Model::projection_dimension() const { return h.hidden; }
+int Mert2Model::mel_bins() const { return h.bins; }
+int Mert2Model::sample_rate() const { return h.sample_rate; }
 bool Mert2Model::is_waveform_encoder() const { return true; }
 
 std::vector<float> Mert2Model::text(const std::vector<int> &) const {
@@ -129,17 +155,13 @@ std::vector<float> Mert2Model::text(const std::vector<int> &) const {
 }
 
 
-Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
-    const int fft_size = config.at("n_fft"), hop = config.at("hop_length");
-    const int bins = config.at("num_mel_bins"), frequencies = fft_size / 2 + 1;
+HostMatrix Mert2Model::frontend(const std::vector<float> &pcm) const {
+    const int fft_size = h.fft, hop = h.hop;
+    const int bins = h.bins, frequencies = fft_size / 2 + 1;
     const int frames = static_cast<int>(pcm.size() / static_cast<size_t>(hop));
     if (!(frames > 0))
         throw std::runtime_error("CLAP: MERT2 waveform produces no feature frames");
-    Matrix mel(frames, bins);
-    const auto *window = loader.weight("feature_extractor.spectrogram.window");
-    const auto *filters = loader.weight("feature_extractor.mel_scale.fb");
-    const auto *mean = loader.weight("feature_extractor.mel_mean");
-    const auto *standard_deviation = loader.weight("feature_extractor.mel_std");
+    HostMatrix mel(frames, bins);
     std::vector<std::complex<double>> spectrum(fft_size);
     std::vector<float> power(frequencies);
     for (int frame = 0; frame < frames; ++frame) {
@@ -159,137 +181,90 @@ Matrix Mert2Model::frontend(const std::vector<float> &pcm) const {
                 value += power[frequency] * scalar(filters, static_cast<size_t>(frequency) * bins + bin);
             value = 10.0f * std::log10(std::max(value, 1e-10f));
             mel[frame][bin] = (value - scalar(mean, bin)) /
-                              std::max(scalar(standard_deviation, bin), 1e-5f);
+                              std::max(scalar(stddev, bin), 1e-5f);
         }
     }
     return mel;
 }
 
-Matrix Mert2Model::subsample(Matrix hidden) const {
-    const auto channels = config.at("subsampling_channels");
-    const auto depths = config.at("subsampling_depths");
-    const float epsilon = config.at("subsampling_layer_norm_eps");
+ggml_tensor *Mert2Model::subsample(Graph &g, ggml_tensor *hidden) const {
+    auto *ctx = g.ctx();
+    const float epsilon = h.subsampling_epsilon;
     for (int stage = 0; stage < 3; ++stage) {
-        const int width = channels[stage];
-        const std::string root = "subsampling_module." + std::to_string(stage);
+        const auto &weights = stages[stage];
+        const int width = weights.width;
         if (stage > 0) {
-            hidden = ops.norm(hidden, root + ".resampling_layer.0", epsilon);
-            hidden = ops.conv1d(hidden, root + ".resampling_layer.2", 2, 2, 0, 1);
+            hidden = g.norm(hidden, weights.norm, epsilon);
+            hidden = g.conv1d(hidden, weights.resample, 2, 2, 0, 1);
         }
-        for (int layer = 0; layer < depths[stage].get<int>(); ++layer) {
-            const std::string prefix = root + ".convnext_layers." + std::to_string(layer);
-            Matrix residual = hidden;
-            auto value = ops.conv1d(hidden, prefix + ".depthwise_block.1", 7, 1, 3, width);
-            value = ops.norm(value, prefix + ".pointwise_block.0", epsilon);
-            value = ops.linear(value, prefix + ".pointwise_block.1");
-            gelu(value);
-            std::vector<double> magnitude(value.cols);
-            for (int column = 0; column < value.cols; ++column) {
-                for (int row = 0; row < value.rows; ++row)
-                    magnitude[column] += static_cast<double>(value[row][column]) * value[row][column];
-                magnitude[column] = std::sqrt(magnitude[column]);
-            }
-            double average = 0;
-            for (double item : magnitude) average += item;
-            average /= value.cols;
-            const auto *weight = loader.weight(prefix + ".pointwise_block.3.weight");
-            const auto *bias = loader.weight(prefix + ".pointwise_block.3.bias");
-            for (int row = 0; row < value.rows; ++row) for (int column = 0; column < value.cols; ++column) {
-                const float normalized = static_cast<float>(magnitude[column] / (average + 1e-6));
-                value[row][column] = scalar(weight, column) * value[row][column] * normalized +
-                                     scalar(bias, column) + value[row][column];
-            }
-            value = ops.linear(value, prefix + ".pointwise_block.4");
-            add(value, residual);
-            hidden = std::move(value);
+        for (const auto &block : weights.blocks) {
+            auto *value = g.conv1d(hidden, block.depthwise, 7, 1, 3, width);
+            value = g.norm(value, block.norm, epsilon);
+            value = ggml_gelu_erf(ctx, g.linear(value, block.input));
+            auto *time_major = ggml_cont(ctx, ggml_transpose(ctx, value));
+            auto *magnitude = ggml_cont(ctx, ggml_transpose(ctx, ggml_sqrt(ctx, ggml_sum_rows(ctx, ggml_sqr(ctx, time_major)))));
+            auto *average = ggml_add(ctx, ggml_mean(ctx, magnitude), g.input({1e-6f}, 1, 1));
+            auto *normalized = ggml_div(ctx, magnitude, average);
+            auto *scaled = ggml_mul(ctx, ggml_mul(ctx, value, g.weight(block.response.weight)), normalized);
+            value = ggml_add(ctx, ggml_add(ctx, scaled, g.weight(block.response.bias)), value);
+            value = g.linear(value, block.output);
+            hidden = ggml_add(ctx, value, hidden);
         }
     }
     return hidden;
 }
 
-Matrix Mert2Model::attention(const Matrix &hidden, const std::string &prefix) const {
-    Matrix query = ops.linear(hidden, prefix + ".query_proj");
-    Matrix key = ops.linear(hidden, prefix + ".key_proj");
-    const Matrix value = ops.linear(hidden, prefix + ".value_proj");
-    const int heads = config.at("num_attention_heads"), head_dimension = hidden.cols / heads;
-    const int half = head_dimension / 2;
-    const float base = config.at("rotary_embedding_base");
-    for (int row = 0; row < hidden.rows; ++row) for (int head = 0; head < heads; ++head) {
-        const int offset = head * head_dimension;
-        for (int column = 0; column < half; ++column) {
-            const float inverse = std::pow(base, -2.0f * column / head_dimension);
-            const float cosine = std::cos(row * inverse), sine = std::sin(row * inverse);
-            const float q_first = query[row][offset + column], q_second = query[row][offset + half + column];
-            const float k_first = key[row][offset + column], k_second = key[row][offset + half + column];
-            query[row][offset + column] = q_first * cosine - q_second * sine;
-            query[row][offset + half + column] = q_second * cosine + q_first * sine;
-            key[row][offset + column] = k_first * cosine - k_second * sine;
-            key[row][offset + half + column] = k_second * cosine + k_first * sine;
-        }
-    }
-    Matrix attended(hidden.rows, hidden.cols);
-    const float scale = 1.0f / std::sqrt(static_cast<float>(head_dimension));
-    std::vector<float> scores(hidden.rows);
-    for (int head = 0; head < heads; ++head) for (int row = 0; row < hidden.rows; ++row) {
-        float maximum = -std::numeric_limits<float>::infinity();
-        for (int source = 0; source < hidden.rows; ++source) {
-            float score = 0;
-            for (int column = 0; column < head_dimension; ++column)
-                score += query[row][head * head_dimension + column] * key[source][head * head_dimension + column];
-            scores[source] = score * scale;
-            maximum = std::max(maximum, scores[source]);
-        }
-        float denominator = 0;
-        for (float &score : scores) { score = std::exp(score - maximum); denominator += score; }
-        for (int source = 0; source < hidden.rows; ++source) {
-            const float probability = scores[source] / denominator;
-            for (int column = 0; column < head_dimension; ++column)
-                attended[row][head * head_dimension + column] +=
-                    probability * value[source][head * head_dimension + column];
-        }
-    }
-    return ops.linear(attended, prefix + ".out_proj");
+ggml_tensor *Mert2Model::attention(Graph &g, ggml_tensor *hidden, const AttentionWeights &weights) const {
+    const int heads = h.heads;
+    const float base = h.rotary_base;
+    auto *query = g.rope(g.linear(hidden, weights.query), heads, base);
+    auto *key = g.rope(g.linear(hidden, weights.key), heads, base);
+    auto *value = g.linear(hidden, weights.value);
+    return g.linear(g.attention(query, key, value, heads), weights.output);
 }
 
-Matrix Mert2Model::conformer_convolution(const Matrix &hidden, const std::string &prefix) const {
-    const int width = config.at("hidden_size"), kernel = config.at("conv_depthwise_kernel_size");
-    auto value = ops.norm(hidden, prefix + ".layer_norm", config.at("layer_norm_eps"));
-    value = ops.conv1d(value, prefix + ".conv_block.1", 1, 1, 0, 1, false);
-    Matrix gated(value.rows, width);
-    for (int row = 0; row < value.rows; ++row) for (int column = 0; column < width; ++column)
-        gated[row][column] = value[row][column] * sigmoid(value[row][width + column]);
-    value = ops.conv1d(gated, prefix + ".conv_block.3", kernel, 1, (kernel - 1) / 2, width, false);
-    value = ops.norm(value, prefix + ".conv_block.4.1", config.at("layer_norm_eps"));
-    gelu(value);
-    return ops.conv1d(value, prefix + ".conv_block.6", 1, 1, 0, 1, false);
+ggml_tensor *Mert2Model::conformer_convolution(Graph &g, ggml_tensor *hidden, const ConvolutionWeights &weights) const {
+    auto *ctx = g.ctx();
+    const int width = h.hidden, kernel = h.kernel;
+    auto *value = g.norm(hidden, weights.norm, h.epsilon);
+    value = g.conv1d(value, weights.input, 1, 1, 0, 1);
+    auto *gated = ggml_mul(ctx, g.slice(value, 0, width), ggml_sigmoid(ctx, g.slice(value, width, width)));
+    value = g.conv1d(gated, weights.depthwise, kernel, 1, (kernel - 1) / 2, width);
+    value = ggml_gelu_erf(ctx, g.norm(value, weights.output_norm, h.epsilon));
+    return g.conv1d(value, weights.output, 1, 1, 0, 1);
 }
 
 AudioFrames Mert2Model::audio_frames(const std::vector<float> &pcm) const {
     const size_t maximum = (size_t{1} << 30) / sizeof(float);
-    if (!(pcm.size() >= config.at("minimum_input_samples").get<size_t>()))
+    if (!(pcm.size() >= h.minimum_samples))
         throw std::runtime_error("CLAP: MERT2 waveform is shorter than minimum_input_samples");
     if (!(pcm.size() <= maximum))
         throw std::runtime_error("CLAP: MERT2 waveform exceeds 1 GiB");
     if (!(std::all_of(pcm.begin(), pcm.end(), [](float value) { return std::isfinite(value); })))
         throw std::runtime_error("CLAP: MERT2 waveform contains a non-finite sample");
-    Matrix hidden = subsample(frontend(pcm));
-    const float epsilon = config.at("layer_norm_eps");
-    for (int layer = 0; layer < config.at("num_hidden_layers").get<int>(); ++layer) {
-        const std::string prefix = "layers." + std::to_string(layer);
-        auto branch = ops.linear(ops.norm(hidden, prefix + ".ffn1_layer_norm", epsilon), prefix + ".ffn1.w_1");
-        gelu(branch);
-        branch = ops.linear(branch, prefix + ".ffn1.w_2");
-        for (size_t index = 0; index < hidden.data.size(); ++index) hidden.data[index] += 0.5f * branch.data[index];
-        branch = attention(ops.norm(hidden, prefix + ".attn_layer_norm", epsilon), prefix + ".attn");
-        add(hidden, branch);
-        branch = conformer_convolution(hidden, prefix + ".conv_module");
-        add(hidden, branch);
-        branch = ops.linear(ops.norm(hidden, prefix + ".ffn2_layer_norm", epsilon), prefix + ".ffn2.w_1");
-        gelu(branch);
-        branch = ops.linear(branch, prefix + ".ffn2.w_2");
-        for (size_t index = 0; index < hidden.data.size(); ++index) hidden.data[index] += 0.5f * branch.data[index];
-        hidden = ops.norm(hidden, prefix + ".final_layer_norm", epsilon);
-    }
-    return {std::move(hidden.data), hidden.rows, hidden.cols};
+    const auto mel = frontend(pcm);
+    auto outputs = runtime.run_cached("frames", {GraphInput(mel)}, [&](Graph &g) {
+        auto *ctx = g.ctx();
+        auto *hidden = subsample(g, g.dynamic_input(0));
+        const float epsilon = h.epsilon;
+        for (const auto &layer : layers) {
+            auto branch = g.linear(g.norm(hidden, layer.ffn1.norm, epsilon), layer.ffn1.input);
+            branch = ggml_gelu_erf(ctx, branch);
+            branch = g.linear(branch, layer.ffn1.output);
+            hidden = ggml_add(ctx, hidden, ggml_scale(ctx, branch, 0.5f));
+            branch = attention(g, g.norm(hidden, layer.attention_norm, epsilon), layer.attention);
+            hidden = ggml_add(ctx, hidden, branch);
+            branch = conformer_convolution(g, hidden, layer.convolution);
+            hidden = ggml_add(ctx, hidden, branch);
+            branch = g.linear(g.norm(hidden, layer.ffn2.norm, epsilon), layer.ffn2.input);
+            branch = ggml_gelu_erf(ctx, branch);
+            branch = g.linear(branch, layer.ffn2.output);
+            hidden = ggml_add(ctx, hidden, ggml_scale(ctx, branch, 0.5f));
+            hidden = g.norm(hidden, layer.final_norm, epsilon);
+        }
+        return std::vector<ggml_tensor *>{hidden};
+    });
+    auto &output = outputs.front();
+    return {std::move(output.values), int(output.rows), int(output.columns)};
 }
 } // namespace clap::detail

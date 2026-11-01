@@ -1,4 +1,4 @@
-#include "model-ops.h"
+#include "graph-test-helpers.h"
 #include <gguf.h>
 #include <cmath>
 #include <cstdio>
@@ -7,9 +7,9 @@
 #include <stdexcept>
 #include <string>
 
-using clap::detail::Matrix;
+using clap::detail::HostMatrix;
 using clap::detail::ModelLoader;
-using clap::detail::TensorOps;
+using clap::detail::GraphRuntime;
 
 static void require(bool condition, const char *message) {
     if (!condition) throw std::runtime_error(message);
@@ -51,9 +51,15 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
     gguf_free(file);
     ggml_free(ctx);
     require(written, "cannot write fixture");
-    ModelLoader loader;
+    clap::RuntimeOptions options;
+    if (strict) {
+        for (const auto &device : clap::available_devices())
+            if (device.name.rfind("Vulkan", 0) == 0) { options.device = device.name; break; }
+        require(!options.device.empty(), "strict mode: no Vulkan device available");
+    }
+    ModelLoader loader(options);
     loader.load(path.string());
-    TensorOps ops(loader, 2);
+    GraphRuntime ops(loader, 2);
     size_t expected_uploads = 0;
     bool parity = true;
     for (int out : output_sizes) for (auto type : types) {
@@ -62,14 +68,14 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
         const std::string name = std::string(ggml_type_name(type)) + "." + std::to_string(out);
         int call = 0;
         for (int rows : batch_sizes) {
-            Matrix x(rows, in);
+            HostMatrix x(rows, in);
             for (size_t i = 0; i < x.data.size(); ++i)
                 // Exactly representable constant rows isolate weight decoding and
                 // tile padding from CPU activation-packing approximation.
                 x.data[i] = quantized ? (int(i / in) % 3 - 1) * 0.25f :
                     std::cos(float(i) * 0.13f + float(call)) * 0.5f;
             const bool bias = call % 2 == 0;
-            const auto result = ops.linear(x, name, bias);
+            const auto result = graph_linear(ops, x, name, bias);
             require(result.rows == x.rows && result.cols == out, "linear returned padded dimensions");
             const auto *w = loader.weight(name + ".weight");
             const auto *b = loader.weight(name + ".bias");
@@ -82,16 +88,16 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
                               << " shape=" << x.rows << 'x' << x.cols << " bias=" << bias
                               << " row=" << r << " col=" << c << " actual=" << result[r][c]
                               << " expected=" << expected << " error=" << result[r][c] - expected
-                              << " vulkan=" << ops.last_linear_used_vulkan() << '\n';
+                              << " vulkan=" << ops.last_graph_used_vulkan() << '\n';
                     parity = false;
                 }
             }
             if (cpu) {
-                require(!ops.last_linear_used_vulkan(), "CPU fallback was ignored");
-                require(ops.vulkan_weight_uploads() == 0, "CPU path uploaded weights to Vulkan");
+                require(ops.stats().device == "CPU", "CPU fallback was ignored");
+                require(ops.stats().weight_uploads == 0, "CPU path uploaded weights to a device");
             }
             if (strict) {
-                require(ops.last_linear_used_vulkan(), "strict mode: linear did not execute on Vulkan");
+                require(ops.last_graph_used_vulkan(), "strict mode: linear did not execute on Vulkan");
                 if (call == 0) ++expected_uploads;
                 require(ops.vulkan_weight_uploads() == expected_uploads, "weights were not cached across repeated calls");
             }
@@ -100,7 +106,7 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
     }
     require(parity, "linear disagrees with scalar oracle");
     std::cout << "F32/F16/Q8_0/Q4_K/Q6_K scalar parity, bias/no-bias, repeated calls: PASS ("
-              << (ops.last_linear_used_vulkan() ? "Vulkan" : "CPU") << ")\n";
+              << ops.stats().device << ")\n";
 }
 
 int main(int argc, char **argv) {

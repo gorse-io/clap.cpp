@@ -28,10 +28,13 @@ static void compare(const std::vector<float> &actual, const std::vector<float> &
 
 int main(int argc, char **argv) {
     try {
-        require(argc == 3, "usage: clamp3-model-test MODEL.gguf FIXTURE.json");
+        require(argc == 3 || (argc == 4 && std::string(argv[3]) == "--f32"), "usage: clamp3-model-test MODEL.gguf FIXTURE.json [--f32]");
         std::ifstream input(argv[2]);
         nlohmann::json fixture; input >> fixture;
-        clap::CLAP model(argv[1], 2);
+        clap::RuntimeOptions options;
+        options.threads = 2;
+        if (argc == 4) options.activation_precision = clap::ActivationPrecision::F32;
+        clap::CLAP model(argv[1], options);
         require(model.projection_dimension() == fixture.at("projection_dim"), "projection dimension");
         const float tolerance = fixture.value("embedding_tolerance", 8e-5f);
         for (const auto &test : fixture.at("tokenizer_cases")) {
@@ -46,7 +49,7 @@ int main(int argc, char **argv) {
                         test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
         }
         for (const auto &test : fixture.at("audio_cases"))
-            compare(clap::detail::FeatureTestAccess::encode(argv[1], test.at("features").get<std::vector<float>>(), test.at("frames")),
+            compare(clap::detail::FeatureTestAccess::encode(argv[1], test.at("features").get<std::vector<float>>(), test.at("frames"), options),
                     test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
 
         bool rejected = false;

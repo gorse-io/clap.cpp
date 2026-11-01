@@ -8,9 +8,10 @@ namespace clap::detail {
 using json = nlohmann::json;
 
 Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
-    : loader(source), ops(source, threads) {
+    : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
+    bind_tensors();
     if (loader.has_metadata_prefix("clamp3.audio_frontend")) {
         if (loader.metadata("clamp3.audio_frontend") != "mert-v1")
             throw std::runtime_error("CLAP: unsupported CLaMP3 audio frontend");
@@ -109,11 +110,29 @@ void Clamp3Model::load_arch_tensors() const {
     loader.linear_shape("audio_proj", audio_config.at("hidden_size"), config.at("projection_dim"));
 }
 
+void Clamp3Model::bind_tensors() {
+    projection_dim = config.at("projection_dim");
+    auto bind = [&](Branch &branch, const json &c, const std::string &prefix, bool text) {
+        branch.hidden = c.at("hidden_size"); branch.heads = c.at("num_attention_heads");
+        branch.epsilon = c.at("layer_norm_eps"); branch.positions = c.at("max_position_embeddings");
+        branch.pad = c.value("pad_token_id", 0); branch.vocab = c.value("vocab_size", 0);
+        branch.bos = text ? c.at("bos_token_id").get<int>() : 0;
+        branch.eos = text ? c.at("eos_token_id").get<int>() : 0;
+        branch.embeddings = bind_embeddings(loader, prefix + ".embeddings", text);
+        for (int i = 0; i < c.at("num_hidden_layers").get<int>(); ++i)
+            branch.layers.push_back(bind_bert_layer(loader, prefix + ".encoder.layer." + std::to_string(i)));
+        branch.projection = LayerWeights::bind(loader, prefix + "_proj");
+    };
+    bind(audio_branch, audio_config, "audio", false);
+    bind(text_branch, text_config, "text", true);
+}
+
+
 TextParameters Clamp3Model::text_parameters() const {
-    return {text_config.at("bos_token_id"), text_config.at("eos_token_id"),
+    return {text_branch.bos, text_branch.eos,
             std::numeric_limits<size_t>::max()};
 }
-int Clamp3Model::projection_dimension() const { return config.at("projection_dim"); }
+int Clamp3Model::projection_dimension() const { return projection_dim; }
 int Clamp3Model::mel_bins() const { return 0; }
 int Clamp3Model::sample_rate() const { return frontend ? frontend->sample_rate() : 0; }
 bool Clamp3Model::is_waveform_encoder() const { return false; }
@@ -121,77 +140,38 @@ AudioFrames Clamp3Model::audio_frames(const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLaMP3 requires precomputed MERT-v1-95M features");
 }
 
-Matrix Clamp3Model::attention(const Matrix &x, const std::vector<int> &mask,
-                              const std::string &prefix, int heads) const {
-    const auto q = ops.linear(x, prefix + ".query");
-    const auto k = ops.linear(x, prefix + ".key");
-    const auto v = ops.linear(x, prefix + ".value");
-    Matrix result(x.rows, x.cols);
-    const int head_dim = x.cols / heads;
-    const float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
-    std::vector<float> scores(x.rows);
-    for (int head = 0; head < heads; ++head) for (int i = 0; i < x.rows; ++i) {
-        float maximum = -std::numeric_limits<float>::infinity();
-        for (int j = 0; j < x.rows; ++j) {
-            float score = 0;
-            for (int d = 0; d < head_dim; ++d)
-                score += q[i][head * head_dim + d] * k[j][head * head_dim + d];
-            score = mask[j] ? score * scale : -1e30f;
-            scores[j] = score;
-            maximum = std::max(maximum, score);
-        }
-        float sum = 0;
-        for (float &score : scores) { score = std::exp(score - maximum); sum += score; }
-        for (int j = 0; j < x.rows; ++j) {
-            const float probability = scores[j] / sum;
-            for (int d = 0; d < head_dim; ++d)
-                result[i][head * head_dim + d] += probability * v[j][head * head_dim + d];
-        }
-    }
-    return result;
+ggml_tensor *Clamp3Model::attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask,
+                                    const AttentionWeights &weights, int heads) const {
+    std::vector<float> scores(mask.size());
+    for (size_t i = 0; i < mask.size(); ++i) scores[i] = mask[i] ? 0.0f : -1e30f;
+    return g.attention(g.linear(x, weights.query), g.linear(x, weights.key),
+                       g.linear(x, weights.value), heads, g.input(scores, scores.size(), 1));
 }
 
-Matrix Clamp3Model::encode(const Matrix &embeddings, const std::vector<int> &mask,
-                           const json &branch, const std::string &prefix) const {
-    Matrix x = ops.norm(embeddings, prefix + ".embeddings.LayerNorm", branch.at("layer_norm_eps"));
-    for (int layer = 0; layer < branch.at("num_hidden_layers").get<int>(); ++layer) {
-        const auto p = prefix + ".encoder.layer." + std::to_string(layer);
-        auto y = attention(x, mask, p + ".attention.self", branch.at("num_attention_heads"));
-        y = ops.linear(y, p + ".attention.output.dense");
-        add(y, x);
-        x = ops.norm(y, p + ".attention.output.LayerNorm", branch.at("layer_norm_eps"));
-        y = ops.linear(x, p + ".intermediate.dense");
-        gelu(y);
-        y = ops.linear(y, p + ".output.dense");
-        add(y, x);
-        x = ops.norm(y, p + ".output.LayerNorm", branch.at("layer_norm_eps"));
+ggml_tensor *Clamp3Model::encode(Graph &g, ggml_tensor *embeddings, const std::vector<int> &mask,
+                                 const Branch &branch) const {
+    auto *ctx = g.ctx();
+    auto *x = g.norm(embeddings, branch.embeddings.norm, branch.epsilon);
+    for (const auto &layer : branch.layers) {
+        auto *y = attention(g, x, mask, layer.attention, branch.heads);
+        y = g.linear(y, layer.attention.output);
+        x = g.norm(ggml_add(ctx, y, x), layer.attention_norm, branch.epsilon);
+        y = ggml_gelu_erf(ctx, g.linear(x, layer.intermediate));
+        y = g.linear(y, layer.output);
+        x = g.norm(ggml_add(ctx, y, x), layer.output_norm, branch.epsilon);
     }
     return x;
 }
 
-std::vector<float> Clamp3Model::pool_project(const Matrix &hidden, const std::vector<int> &mask,
-                                              const std::string &projection) const {
-    int count = 0;
-    Matrix pooled(1, hidden.cols);
-    for (int r = 0; r < hidden.rows; ++r) if (mask[r]) {
-        ++count;
-        for (int c = 0; c < hidden.cols; ++c) pooled[0][c] += hidden[r][c];
-    }
-    if (!(count > 0))
-        throw std::runtime_error("CLAP: CLaMP3 chunk contains no input");
-    for (float &value : pooled.data) value /= count;
-    return ops.linear(pooled, projection).data;
+ggml_tensor *Clamp3Model::pool_project(Graph &g, ggml_tensor *hidden, const std::vector<int> &mask,
+                                       const LayerWeights &projection) const {
+    return g.linear(g.mean_pool(hidden, mask), projection);
 }
 
 std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const {
-    const int chunk = config.at("chunk_length"), dim = text_config.at("hidden_size");
-    const int pad = text_config.at("pad_token_id"), vocab = text_config.at("vocab_size");
-    const auto *words = loader.weight("text.embeddings.word_embeddings.weight");
-    const auto *positions = loader.weight("text.embeddings.position_embeddings.weight");
-    const auto *types = loader.weight("text.embeddings.token_type_embeddings.weight");
+    const int chunk = chunk_length;
+    const int pad = text_branch.pad, vocab = text_branch.vocab;
     std::vector<float> result(projection_dimension());
-    std::vector<float> position_row(dim), type_row(dim);
-    tensor_row(types, 0, type_row.data());
     const size_t segments = (ids.size() + chunk - 1) / chunk;
     const size_t remainder = ids.size() % chunk;
     double total_weight = 0;
@@ -199,8 +179,7 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
         const size_t start = part + 1 == segments && ids.size() > static_cast<size_t>(chunk)
                            ? ids.size() - chunk : part * chunk;
         const size_t length = std::min(static_cast<size_t>(chunk), ids.size() - start);
-        Matrix embeddings(chunk, dim);
-        std::vector<int> mask(chunk);
+        std::vector<int> mask(chunk), tokens(chunk), positions(chunk);
         int position = pad;
         for (int row = 0; row < chunk; ++row) {
             const int id = static_cast<size_t>(row) < length ? ids[start + row] : pad;
@@ -208,13 +187,18 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
                 throw std::runtime_error("CLAP: token ID out of vocabulary");
             mask[row] = static_cast<size_t>(row) < length;
             const int pos = id == pad ? pad : ++position;
-            if (!(pos < text_config.at("max_position_embeddings").get<int>()))
+            if (!(pos < text_branch.positions))
                 throw std::runtime_error("CLAP: text positions overflow");
-            tensor_row(words, id, embeddings[row]);
-            tensor_row(positions, pos, position_row.data());
-            for (int c = 0; c < dim; ++c) embeddings[row][c] = embeddings[row][c] + position_row[c] + type_row[c];
+            tokens[row] = id;
+            positions[row] = pos;
         }
-        const auto projected = pool_project(encode(embeddings, mask, text_config, "text"), mask, "text_proj");
+        const auto output = runtime.run_cached("text:" + std::to_string(length), {GraphInput(tokens), GraphInput(positions)}, [&](Graph &g) {
+            auto *embeddings = ggml_add(g.ctx(), g.embedding(text_branch.embeddings.word, g.dynamic_input(0)),
+                                       g.embedding(text_branch.embeddings.position, g.dynamic_input(1)));
+            embeddings = ggml_add(g.ctx(), embeddings, g.embedding(text_branch.embeddings.type, std::vector<int>{0}));
+            return std::vector<ggml_tensor *>{pool_project(g, encode(g, embeddings, mask, text_branch), mask, text_branch.projection)};
+        });
+        const auto &projected = output.front().values;
         const size_t weight = part + 1 == segments && remainder ? remainder : chunk;
         total_weight += weight;
         for (size_t i = 0; i < result.size(); ++i) result[i] += projected[i] * weight;
@@ -223,13 +207,9 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
     return result;
 }
 
-std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
-    const int chunk = config.at("chunk_length"), dim = audio_config.at("hidden_size");
-    const auto *positions = loader.weight("audio.embeddings.position_embeddings.weight");
-    const auto *types = loader.weight("audio.embeddings.token_type_embeddings.weight");
+std::vector<float> Clamp3Model::chunked_audio(const HostMatrix &features) const {
+    const int chunk = chunk_length, dim = audio_branch.hidden;
     std::vector<float> result(projection_dimension());
-    std::vector<float> position_row(dim), type_row(dim);
-    tensor_row(types, 0, type_row.data());
     const size_t frames = features.rows;
     const size_t segments = (frames + chunk - 1) / chunk;
     const size_t remainder = frames % chunk;
@@ -238,17 +218,22 @@ std::vector<float> Clamp3Model::chunked_audio(const Matrix &features) const {
         const size_t start = part + 1 == segments && frames > static_cast<size_t>(chunk)
                            ? frames - chunk : part * chunk;
         const size_t length = std::min(static_cast<size_t>(chunk), frames - start);
-        Matrix embeddings(chunk, dim);
-        std::vector<int> mask(chunk);
+        HostMatrix input_values(chunk, dim);
+        std::vector<int> mask(chunk), positions(chunk);
         for (int row = 0; row < chunk; ++row) {
             mask[row] = static_cast<size_t>(row) < length;
-            tensor_row(positions, row, position_row.data());
+            positions[row] = row;
             for (int c = 0; c < dim; ++c) {
                 const float input = mask[row] ? features[static_cast<int>(start) + row][c] : 0.0f;
-                embeddings[row][c] = input + position_row[c] + type_row[c];
+                input_values[row][c] = input;
             }
         }
-        const auto projected = pool_project(encode(embeddings, mask, audio_config, "audio"), mask, "audio_proj");
+        const auto output = runtime.run_cached("audio:" + std::to_string(length), {GraphInput(input_values)}, [&](Graph &g) {
+            auto *embeddings = ggml_add(g.ctx(), g.dynamic_input(0), g.embedding(audio_branch.embeddings.position, positions));
+            embeddings = ggml_add(g.ctx(), embeddings, g.embedding(audio_branch.embeddings.type, std::vector<int>{0}));
+            return std::vector<ggml_tensor *>{pool_project(g, encode(g, embeddings, mask, audio_branch), mask, audio_branch.projection)};
+        });
+        const auto &projected = output.front().values;
         const size_t weight = part + 1 == segments && remainder ? remainder : chunk;
         total_weight += weight;
         for (size_t i = 0; i < result.size(); ++i) result[i] += projected[i] * weight;
@@ -264,13 +249,13 @@ std::vector<float> Clamp3Model::text(const std::vector<int> &ids) const {
 }
 
 std::vector<float> Clamp3Model::encode_features(const std::vector<float> &features, int frames) const {
-    const int dim = config.at("audio_feature_dim");
+    const int dim = audio_branch.hidden;
     if (!(frames > 0 && frames <= std::numeric_limits<int>::max() - 2 &&
           features.size() == static_cast<size_t>(frames) * dim))
         throw std::runtime_error("CLAP: invalid MERT-v1-95M feature shape");
     if (!(std::all_of(features.begin(), features.end(), [](float value) { return std::isfinite(value); })))
         throw std::runtime_error("CLAP: non-finite MERT-v1-95M features");
-    Matrix bordered(frames + 2, dim);
+    HostMatrix bordered(frames + 2, dim);
     std::copy(features.begin(), features.end(), bordered.data.begin() + dim);
     return chunked_audio(bordered);
 }

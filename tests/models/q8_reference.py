@@ -63,8 +63,8 @@ def tensors(path, decoder=None):
             yield name, typ, data
 
 
-def load_storage(model, path, name_map, decoder=None):
-    """Install stored values and emulate ggml's per-linear activation packing."""
+def load_storage(model, path, name_map, decoder=None, pack_activations=True):
+    """Install stored values, optionally emulating GGML CPU activation packing."""
     stored = {name: (typ, data) for name, typ, data in tensors(path, decoder)}
     for handle in getattr(model, '_q8_oracle_hooks', []):
         handle.remove()
@@ -87,7 +87,7 @@ def load_storage(model, path, name_map, decoder=None):
         return ((packed * scale.half().float()).reshape(x.shape), *args[1:])
     for name, module in model.named_modules():
         entry = stored.get(name_map(name + '.weight'))
-        if isinstance(module, torch.nn.Linear) and entry and entry[0] in (1, 8, 12, 14):
+        if pack_activations and isinstance(module, torch.nn.Linear) and entry and entry[0] in (1, 8, 12, 14):
             module._gguf_type = entry[0]
             model._q8_oracle_hooks.append(module.register_forward_pre_hook(pack_input))
     quantized = 0
