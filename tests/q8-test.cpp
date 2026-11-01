@@ -1,5 +1,5 @@
 #include "model-loader.h"
-#include "model-ops.h"
+#include "graph-test-helpers.h"
 #include <ggml.h>
 #include <gguf.h>
 #include <cmath>
@@ -117,10 +117,10 @@ static void verify(const std::string &source, const std::string &output, bool k 
         }
     }
     require(!k || (q4 > 0 && q6 > 0), "K fixture must exercise both Q4_K and Q6_K");
-    TensorOps ops(quantized, 2);
-    Matrix input(3, 64);
+    GraphRuntime ops(quantized, 2);
+    HostMatrix input(3, 64);
     for (size_t i = 0; i < input.data.size(); ++i) input.data[i] = std::sin(static_cast<float>(i));
-    auto actual = ops.linear(input, "dense");
+    auto actual = graph_linear(ops, input, "dense");
     for (int r = 0; r < input.rows; ++r) for (int c = 0; c < actual.cols; ++c) {
         float expected = scalar(quantized.weight("dense.bias"), c);
         for (int k = 0; k < input.cols; ++k) expected += input[r][k] * scalar(quantized.weight("dense.weight"), c * input.cols + k);
@@ -129,9 +129,9 @@ static void verify(const std::string &source, const std::string &output, bool k 
     if (k) for (const auto *name : {"text.encoder.layer.0.attention.self.value",
                                     "text.encoder.layer.0.output.dense"}) {
         auto *weight = quantized.weight(std::string(name) + ".weight");
-        Matrix x(3, static_cast<int>(weight->ne[0]));
+        HostMatrix x(3, static_cast<int>(weight->ne[0]));
         for (auto &v : x.data) v = 0.25f;
-        const auto y = ops.linear(x, name, false);
+        const auto y = graph_linear(ops, x, name, false);
         for (int c = 0; c < y.cols; ++c) {
             float expected = 0;
             for (int j = 0; j < x.cols; ++j) expected += 0.25f * scalar(weight, c * x.cols + j);
@@ -139,9 +139,9 @@ static void verify(const std::string &source, const std::string &output, bool k 
         }
     }
     // >2 MiB activation packing scratch: graph work must not use fixed arena spare.
-    Matrix large(10000, 256);
+    HostMatrix large(10000, 256);
     for (auto &v : large.data) v = 0.25f;
-    const auto result = ops.linear(large, "large", false);
+    const auto result = graph_linear(ops, large, "large", false);
     require(result.rows == large.rows && result.cols == 64, "large matmul shape");
     for (int c = 0; c < result.cols; ++c) {
         float expected = 0;

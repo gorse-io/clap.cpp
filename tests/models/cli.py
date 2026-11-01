@@ -28,9 +28,12 @@ control_wav = fixture / 'native-rate.wav'
 with wave.open(str(control_wav), 'wb') as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000); w.writeframes(b'\0\0' * 300)
 control = subprocess.run([str(cli), 'embedding', '--model', str(model), '--audio', str(control_wav)], capture_output=True, text=True)
-assert (p.returncode, p.stdout, p.stderr) == (control.returncode, control.stdout, control.stderr)
+# Backend initialization diagnostics contain timings and addresses, so compare
+# the CLI result and its actual error contract rather than the entire stderr.
+assert (p.returncode, p.stdout) == (control.returncode, control.stdout)
 if p.returncode:
-    assert 'waveform frontend requires 64 mel bins' in p.stderr, p.stderr
+    for result in (p, control):
+        assert 'waveform frontend requires 64 mel bins' in result.stderr, result.stderr
 else:
     assert len(json.loads(p.stdout)) == len(reference['text_cases'][0]['expected'])
 print('Native model CLI contract passed')

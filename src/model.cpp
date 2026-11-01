@@ -13,7 +13,8 @@ struct CLAP::Impl {
     std::unique_ptr<detail::ModelArchitecture> architecture;
     std::unique_ptr<detail::Vocabulary> vocabulary;
 
-    Impl(const std::string &path, int threads) {
+    Impl(const std::string &path, const RuntimeOptions &options) : loader(options) {
+        const int threads = options.threads;
         loader.load(path);
         const auto name = loader.metadata("general.architecture");
         if (name == "clap") architecture = std::make_unique<detail::ClapModel>(loader, threads);
@@ -35,7 +36,8 @@ struct CLAP::Impl {
     }
 };
 
-CLAP::CLAP(const std::string &path, int threads) : impl_(std::make_unique<Impl>(path, threads)) {}
+CLAP::CLAP(const std::string &path, int threads) : CLAP(path, RuntimeOptions{threads, {}, ActivationPrecision::ModelDefault}) {}
+CLAP::CLAP(const std::string &path, const RuntimeOptions &options) : impl_(std::make_unique<Impl>(path, options)) {}
 CLAP::~CLAP() = default;
 CLAP::CLAP(CLAP &&) noexcept = default;
 CLAP &CLAP::operator=(CLAP &&) noexcept = default;

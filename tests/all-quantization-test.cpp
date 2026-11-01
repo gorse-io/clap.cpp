@@ -1,5 +1,5 @@
 #include "model-loader.h"
-#include "model-ops.h"
+#include "graph-test-helpers.h"
 #include "quantize.h"
 #include <ggml.h>
 #include <gguf.h>
@@ -72,9 +72,9 @@ int main(int argc,char **argv) {
                     require(std::memcmp(b->data,expected.data(),expected.size())==0,arch+" noncanonical bytes");
                     ggml_get_type_traits(b->type)->to_float(b->data,decoded.data(),decoded.size());
                     for(size_t i=0;i<decoded.size();++i) require(scalar(b,i)==decoded[i],"scalar decode");
-                    TensorOps ops(loader,2); Matrix x(3,256);
+                    GraphRuntime ops(loader,2); HostMatrix x(3,256);
                     for(size_t i=0;i<x.data.size();++i) x.data[i]=std::sin(float(i)*0.071f)*0.17f;
-                    auto y=ops.linear(x,std::string(role.name).substr(0,std::strlen(role.name)-7),false);
+                    auto y=graph_linear(ops, x,std::string(role.name).substr(0,std::strlen(role.name)-7),false);
                     for(int r=0;r<x.rows;++r) for(int c=0;c<y.cols;++c) {
                         float expected_y=0;for(int j=0;j<x.cols;++j)expected_y+=x[r][j]*decoded[c*x.cols+j];
                         require(std::abs(y[r][c]-expected_y)<2e-5f,arch+" storage-rounded F32 activation matmul drift");

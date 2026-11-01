@@ -1,9 +1,7 @@
 #include "models.h"
 #include <stdexcept>
-#include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <limits>
 
 namespace clap::detail {
@@ -18,9 +16,10 @@ float cubic(float x) {
 }
 } // namespace
 
-ClapModel::ClapModel(const ModelLoader &source, int threads) : loader(source), ops(source, threads) {
+ClapModel::ClapModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
+    bind_tensors();
 }
 
 void ClapModel::load_arch_hparams() {
@@ -109,112 +108,129 @@ void ClapModel::load_arch_tensors() const {
     }
 }
 
-TextParameters ClapModel::text_parameters() const {
-    return {t.at("bos_token_id"), t.at("eos_token_id"),
-            static_cast<size_t>(t.at("max_position_embeddings").get<int>() - 2)};
+void ClapModel::bind_tensors() {
+    h = {config.at("projection_dim"), a.at("num_mel_bins"), a.at("spec_size"), a.at("patch_embeds_hidden_size"),
+         a.at("window_size"), t.at("hidden_size"), t.at("pad_token_id"), t.at("vocab_size"), t.at("max_position_embeddings"),
+         t.at("num_attention_heads"), t.at("bos_token_id"), t.at("eos_token_id"), a.value("layer_norm_eps", 1e-5f), t.at("layer_norm_eps")};
+    embeddings = bind_embeddings(loader, "text.embeddings");
+    for (int i = 0; i < t.at("num_hidden_layers").get<int>(); ++i)
+        text_layers.push_back(bind_bert_layer(loader, "text.encoder.layer." + std::to_string(i)));
+    for (int i = 0; i < 4; ++i) {
+        Stage stage; stage.heads = a.at("num_attention_heads")[i];
+        const auto root = "audio.layers." + std::to_string(i);
+        for (int j = 0; j < a.at("depths")[i].get<int>(); ++j) {
+            const auto p = root + ".blocks." + std::to_string(j);
+            TransformerWeights block;
+            block.attention = {LayerWeights::bind(loader,p+".attention.self.query"), LayerWeights::bind(loader,p+".attention.self.key"),
+                               LayerWeights::bind(loader,p+".attention.self.value"), LayerWeights::bind(loader,p+".attention.output.dense"),
+                               loader.weight(p+".attention.self.rel_bias")};
+            block.attention_norm = LayerWeights::bind(loader,p+".layernorm_before");
+            block.output_norm = LayerWeights::bind(loader,p+".layernorm_after");
+            block.intermediate = LayerWeights::bind(loader,p+".intermediate.dense");
+            block.output = LayerWeights::bind(loader,p+".output.dense");
+            stage.blocks.push_back(block);
+        }
+        if (i < 3) {
+            stage.norm = LayerWeights::bind(loader,root+".downsample.norm");
+            stage.reduction = LayerWeights::bind(loader,root+".downsample.reduction", false);
+        }
+        stages.push_back(std::move(stage));
+    }
+    patch = LayerWeights::bind(loader,"audio.patch_embed.proj");
+    patch_norm = LayerWeights::bind(loader,"audio.patch_embed.norm");
+    audio_norm = LayerWeights::bind(loader,"audio.norm");
+    pooler = LayerWeights::bind(loader,"text.pooler.dense");
+    audio_projection = {LayerWeights::bind(loader,"audio_proj.linear1"), LayerWeights::bind(loader,"audio_proj.linear2")};
+    text_projection = {LayerWeights::bind(loader,"text_proj.linear1"), LayerWeights::bind(loader,"text_proj.linear2")};
+    batch_norm = BatchNormWeights::bind(loader,"audio.batch_norm");
 }
-int ClapModel::projection_dimension() const { return config.at("projection_dim"); }
-int ClapModel::mel_bins() const { return a.at("num_mel_bins"); }
+
+
+TextParameters ClapModel::text_parameters() const {
+    return {h.bos, h.eos,
+            static_cast<size_t>(h.positions - 2)};
+}
+int ClapModel::projection_dimension() const { return h.projection; }
+int ClapModel::mel_bins() const { return h.bins; }
 int ClapModel::sample_rate() const { return 48000; }
 bool ClapModel::is_waveform_encoder() const { return false; }
 AudioFrames ClapModel::audio_frames(const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLAP exposes one pooled audio projection, not frame representations");
 }
 
-Matrix ClapModel::attention(const Matrix &x, const std::string &prefix, int heads, int tokens,
-                 const std::vector<int> *mask, int window, int shift, int grid) const {
-    const auto q = ops.linear(x, prefix + ".query"), k = ops.linear(x, prefix + ".key"), v = ops.linear(x, prefix + ".value");
-    Matrix result(x.rows, x.cols);
-    const int d = x.cols / heads;
-    const float scale = 1 / std::sqrt(static_cast<float>(d));
-    const auto *bias = window ? loader.weight(prefix + ".rel_bias") : nullptr;
-    std::vector<float> scores(tokens);
-    auto region = [&](int r, int c) {
-        const auto section = [&](int p) { return p < grid - window ? 0 : p < grid - shift ? 1 : 2; };
-        return section(r) * 3 + section(c);
-    };
-    for (int start = 0; start < x.rows; start += tokens) {
-        const int win = start / tokens, windows_per_row = window ? grid / window : 0;
-        for (int h = 0; h < heads; ++h) for (int i = 0; i < tokens; ++i) {
-            float maximum = -std::numeric_limits<float>::infinity();
-            for (int j = 0; j < tokens; ++j) {
-                float score = 0;
-                for (int z = 0; z < d; ++z) score += q[start + i][h * d + z] * k[start + j][h * d + z];
-                score *= scale;
-                if (mask && (*mask)[j] == 0) score = -1e30f;
-                if (window) {
-                    const int pos = (i / window - j / window + window - 1) * (2 * window - 1) + i % window - j % window + window - 1;
-                    score += scalar(bias, static_cast<size_t>(pos) * heads + h);
-                    if (shift) {
-                        const int r = win / windows_per_row * window, c = win % windows_per_row * window;
-                        if (region(r + i / window, c + i % window) != region(r + j / window, c + j % window)) score -= 100;
-                    }
-                }
-                scores[j] = score; maximum = std::max(maximum, score);
+ggml_tensor *ClapModel::attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights, int heads, int tokens,
+                                    ggml_tensor *mask, int window, int shift, int grid) const {
+    auto *ctx = g.ctx();
+    ggml_tensor *bias = nullptr;
+    if (window) {
+        std::vector<int> indices(tokens * tokens);
+        for (int i = 0; i < tokens; ++i) for (int j = 0; j < tokens; ++j)
+            indices[i * tokens + j] = (i / window - j / window + window - 1) * (2 * window - 1) + i % window - j % window + window - 1;
+        bias = g.embedding(weights.relative_bias, indices);
+        bias = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, bias, heads, tokens, tokens), 2, 0, 1, 3));
+        if (shift) {
+            const int windows = int(x->ne[1]) / tokens, per_row = grid / window;
+            std::vector<float> values(size_t(tokens) * tokens * windows);
+            auto region = [&](int r, int c) {
+                auto section = [&](int p) { return p < grid - window ? 0 : p < grid - shift ? 1 : 2; };
+                return section(r) * 3 + section(c);
+            };
+            for (int win = 0; win < windows; ++win) for (int i = 0; i < tokens; ++i) for (int j = 0; j < tokens; ++j) {
+                const int r = win / per_row * window, c = win % per_row * window;
+                values[(size_t(win) * tokens + i) * tokens + j] = region(r + i / window, c + i % window) == region(r + j / window, c + j % window) ? 0.0f : -100.0f;
             }
-            float sum = 0;
-            for (float &s : scores) { s = std::exp(s - maximum); sum += s; }
-            for (int j = 0; j < tokens; ++j) {
-                const float p = scores[j] / sum;
-                for (int z = 0; z < d; ++z) result[start + i][h * d + z] += p * v[start + j][h * d + z];
-            }
+            auto *shift_mask = ggml_reshape_4d(ctx, g.input(values, tokens, tokens * windows), tokens, tokens, 1, windows);
+            // Expand the shared relative bias across windows before adding each shift mask.
+            bias = ggml_add(ctx, ggml_repeat_4d(ctx, bias, tokens, tokens, heads, windows), shift_mask);
         }
-    }
-    return result;
+    } else bias = mask;
+
+    return g.attention(g.linear(x, weights.query), g.linear(x, weights.key),
+                       g.linear(x, weights.value), heads, bias, 0, tokens);
 }
 
-std::vector<float> ClapModel::project(const Matrix &pooled, const std::string &prefix) const {
-    auto h = ops.linear(pooled, prefix + ".linear1");
-    for (float &v : h.data) v = std::max(v, 0.0f);
-    auto y = ops.linear(h, prefix + ".linear2");
-    double square = 0;
-    for (float v : y.data) square += v * v;
-    if (!(std::isfinite(square) && square > 0))
-        throw std::runtime_error("CLAP: invalid projection norm");
-    const float length = static_cast<float>(std::sqrt(square));
-    for (float &v : y.data) v /= length;
-    return y.data;
+ggml_tensor *ClapModel::project(Graph &g, ggml_tensor *pooled, const Projection &weights) const {
+    auto *hidden = ggml_relu(g.ctx(), g.linear(pooled, weights.input));
+    return g.l2_normalize(g.linear(hidden, weights.output), 0);
 }
 
 std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
-    const int dim = t.at("hidden_size"), pad = t.at("pad_token_id"), vocab = t.at("vocab_size");
-    if (!(!ids.empty() && ids.size() <= static_cast<size_t>(t.at("max_position_embeddings").get<int>() - 2)))
+    const int dim = h.hidden, pad = h.pad, vocab = h.vocab;
+    if (ids.empty() || ids.size() > static_cast<size_t>(h.positions - 2))
         throw std::runtime_error("CLAP: text length outside model context");
-    const auto *word = loader.weight("text.embeddings.word_embeddings.weight"), *position = loader.weight("text.embeddings.position_embeddings.weight"),
-               *type = loader.weight("text.embeddings.token_type_embeddings.weight");
-    Matrix x(static_cast<int>(ids.size()), dim);
-    std::vector<int> mask(ids.size());
-    std::vector<float> position_row(dim), type_row(dim);
-    tensor_row(type, 0, type_row.data());
+    std::vector<int> mask(ids.size()), positions(ids.size());
     int counter = pad;
-    for (int i = 0; i < x.rows; ++i) {
-        if (!(ids[i] >= 0 && ids[i] < vocab))
-            throw std::runtime_error("CLAP: token ID out of vocabulary");
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (ids[i] < 0 || ids[i] >= vocab) throw std::runtime_error("CLAP: token ID out of vocabulary");
         mask[i] = ids[i] != pad;
-        const int pos = mask[i] ? ++counter : pad;
-        if (!(pos < t.at("max_position_embeddings").get<int>()))
-            throw std::runtime_error("CLAP: text positions overflow");
-        tensor_row(word, ids[i], x[i]);
-        tensor_row(position, pos, position_row.data());
-        for (int c = 0; c < dim; ++c) x[i][c] = x[i][c] + position_row[c] + type_row[c];
+        positions[i] = mask[i] ? ++counter : pad;
+        if (positions[i] >= h.positions) throw std::runtime_error("CLAP: text positions overflow");
     }
-    if (!(std::any_of(mask.begin(), mask.end(), [](int x) { return x; })))
-        throw std::runtime_error("CLAP: text contains only padding");
-    const float eps = t.at("layer_norm_eps");
-    x = ops.norm(x, "text.embeddings.LayerNorm", eps);
-    for (int l = 0; l < t.at("num_hidden_layers").get<int>(); ++l) {
-        const auto p = "text.encoder.layer." + std::to_string(l);
-        auto y = attention(x, p + ".attention.self", t.at("num_attention_heads"), x.rows, &mask);
-        y = ops.linear(y, p + ".attention.output.dense"); add(y, x);
-        x = ops.norm(y, p + ".attention.output.LayerNorm", eps);
-        y = ops.linear(x, p + ".intermediate.dense"); gelu(y);
-        y = ops.linear(y, p + ".output.dense"); add(y, x);
-        x = ops.norm(y, p + ".output.LayerNorm", eps);
-    }
-    Matrix first(1, dim); std::copy_n(x[0], dim, first[0]);
-    auto pooled = ops.linear(first, "text.pooler.dense");
-    for (float &v : pooled.data) v = std::tanh(v);
-    return project(pooled, "text_proj");
+    if (!std::any_of(mask.begin(), mask.end(), [](int x) { return x; })) throw std::runtime_error("CLAP: text contains only padding");
+    std::vector<float> scores(mask.size());
+    for (size_t i = 0; i < mask.size(); ++i) scores[i] = mask[i] ? 0.0f : -1e30f;
+    auto outputs = runtime.run_cached("text", {GraphInput(ids), GraphInput(positions), GraphInput(scores, scores.size(), 1)}, [&](Graph &g) {
+        auto *ctx = g.ctx();
+        auto *x = ggml_add(ctx, g.embedding(embeddings.word, g.dynamic_input(0)), g.embedding(embeddings.position, g.dynamic_input(1)));
+        x = ggml_add(ctx, x, g.embedding(embeddings.type, std::vector<int>{0}));
+        const float eps = h.text_epsilon;
+        x = g.norm(x, embeddings.norm, eps);
+        for (const auto &layer : text_layers) {
+            auto *y = attention(g, x, layer.attention, h.heads, int(ids.size()), g.dynamic_input(2));
+            y = g.linear(y, layer.attention.output);
+            x = g.norm(ggml_add(ctx, y, x), layer.attention_norm, eps);
+            y = ggml_gelu_erf(ctx, g.linear(x, layer.intermediate));
+            y = g.linear(y, layer.output);
+            x = g.norm(ggml_add(ctx, y, x), layer.output_norm, eps);
+        }
+        auto *first = ggml_view_2d(ctx, x, dim, 1, x->nb[1], 0);
+        auto *pooled = ggml_tanh(ctx, g.linear(first, pooler));
+        return std::vector<ggml_tensor *>{project(g, pooled, text_projection)};
+    });
+    auto result = std::move(outputs.front().values);
+    if (!std::all_of(result.begin(), result.end(), [](float v) { return std::isfinite(v); }))
+        throw std::runtime_error("CLAP: invalid projection norm");
+    return result;
 }
 
 std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
@@ -223,108 +239,90 @@ std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, 
 }
 
 std::vector<float> ClapModel::encode_features(const std::vector<float> &features, int frames) const {
-    const int bins = a.at("num_mel_bins"), spec = a.at("spec_size"), ratio = spec / bins;
+    const int bins = h.bins, spec = h.spec, ratio = spec / bins;
     const int target_time = spec * ratio;
     if (!(frames > 0 && frames <= target_time && features.size() == static_cast<size_t>(frames) * bins))
         throw std::runtime_error("CLAP: invalid mel feature shape");
     if (!(std::all_of(features.begin(), features.end(), [](float x) { return std::isfinite(x); })))
         throw std::runtime_error("CLAP: non-finite mel features");
-    Matrix mel(frames, bins);
-    const auto *bnw = loader.weight("audio.batch_norm.weight"), *bnb = loader.weight("audio.batch_norm.bias"),
-               *mean = loader.weight("audio.batch_norm.running_mean"), *variance = loader.weight("audio.batch_norm.running_var");
-    for (int t = 0; t < frames; ++t) for (int f = 0; f < bins; ++f)
-        mel[t][f] = (features[static_cast<size_t>(t) * bins + f] - scalar(mean, f)) / std::sqrt(scalar(variance, f) + 1e-5f) * scalar(bnw, f) + scalar(bnb, f);
-    Matrix resized(target_time, bins);
-    if (frames == target_time) resized = std::move(mel);
-    else for (int t = 0; t < target_time; ++t) {
-        const float source = static_cast<float>(t) * (frames - 1) / (target_time - 1);
-        const int base = static_cast<int>(std::floor(source));
-        const float frac = source - base;
-        float coeff[4]; for (int k = 0; k < 4; ++k) coeff[k] = cubic(frac - (k - 1));
-        for (int f = 0; f < bins; ++f) for (int k = 0; k < 4; ++k)
-            resized[t][f] += mel[std::max(0, std::min(frames - 1, base + k - 1))][f] * coeff[k];
-    }
-    // mel2img: [ratio, time/ratio, bins] -> [ratio, bins, time/ratio]
-    // -> [spec,spec]. Patch convolution lowered to one ggml matrix multiply.
-    const int patchdim = a.at("patch_embeds_hidden_size");
-    int grid = spec / 4;
-    Matrix patches(grid * grid, 16);
-    for (int r = 0; r < grid; ++r) for (int c = 0; c < grid; ++c)
-        for (int y = 0; y < 4; ++y) for (int z = 0; z < 4; ++z) {
-            const int image_row = r * 4 + y, image_col = c * 4 + z;
-            const int time = (image_row / bins) * spec + image_col, freq = image_row % bins;
-            patches[r * grid + c][y * 4 + z] = resized[time][freq];
-        }
-    // The stored Conv2d [out,1,4,4] has the same contiguous bytes as [out,16].
-    const auto *conv = loader.weight("audio.patch_embed.proj.weight");
-    std::unique_ptr<ggml_context, decltype(&ggml_free)> convctx(ggml_init({4096, nullptr, true}), ggml_free);
-    if (convctx == nullptr)
-        throw std::runtime_error("CLAP: conv metadata allocation failed");
-    auto *flat = ggml_new_tensor_2d(convctx.get(), conv->type, 16, patchdim);
-    flat->data = conv->data;
-    // Use a temporary alias name only in this instance's metadata context.
-    // Avoid changing the immutable stored tensor: linear accepts a matrix view.
-    auto conv_linear = [&](const Matrix &input) {
-        const size_t bytes = (input.data.size() + static_cast<size_t>(input.rows) * patchdim) * sizeof(float) + 2 * 1024 * 1024;
-        std::unique_ptr<ggml_context, decltype(&ggml_free)> ctx(ggml_init({bytes, nullptr, false}), ggml_free);
-        if (ctx == nullptr)
-            throw std::runtime_error("CLAP: patch allocation failed");
-        auto *in = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, 16, input.rows);
-        std::memcpy(in->data, input.data.data(), input.data.size() * sizeof(float));
-        auto *out = ggml_mul_mat(ctx.get(), flat, in);
-        auto *graph = ggml_new_graph_custom(ctx.get(), 32, false); ggml_build_forward_expand(graph, out);
-        if (ggml_graph_compute_with_ctx(ctx.get(), graph, ops.threads()) != GGML_STATUS_SUCCESS)
-            throw std::runtime_error("CLAP: patch convolution failed");
-        Matrix result(input.rows, patchdim);
-        std::memcpy(result.data.data(), out->data, result.data.size() * sizeof(float));
-        const auto *bias = loader.weight("audio.patch_embed.proj.bias");
-        for (int r = 0; r < result.rows; ++r) for (int c = 0; c < patchdim; ++c) result[r][c] += scalar(bias, c);
-        return result;
-    };
-    Matrix x = ops.norm(conv_linear(patches), "audio.patch_embed.norm", 1e-5f);
-    const float eps = a.at("layer_norm_eps");
-    for (int stage = 0; stage < 4; ++stage) {
-        const int depth = a.at("depths")[stage], heads = a.at("num_attention_heads")[stage], window = a.at("window_size");
-        const int padded = (grid + window - 1) / window * window;
-        for (int block = 0; block < depth; ++block) {
-            const auto p = "audio.layers." + std::to_string(stage) + ".blocks." + std::to_string(block);
-            const int shift = grid <= window ? 0 : (block % 2) * (window / 2);
-            auto normalized = ops.norm(x, p + ".layernorm_before", eps);
-            Matrix windows(padded * padded, x.cols);
-            // Partition a cyclically shifted, zero-padded image into windows.
-            for (int r = 0; r < padded; ++r) for (int c = 0; c < padded; ++c) {
-                const int sr = (r + shift) % padded, sc = (c + shift) % padded;
-                const int index = ((r / window) * (padded / window) + c / window) * window * window + (r % window) * window + c % window;
-                if (sr < grid && sc < grid) std::copy_n(normalized[sr * grid + sc], x.cols, windows[index]);
-            }
-            auto attended = attention(windows, p + ".attention.self", heads, window * window, nullptr, window, shift, padded);
-            attended = ops.linear(attended, p + ".attention.output.dense");
-            Matrix y(x.rows, x.cols);
-            for (int r = 0; r < grid; ++r) for (int c = 0; c < grid; ++c) {
-                const int sr = (r - shift + padded) % padded, sc = (c - shift + padded) % padded;
-                const int index = ((sr / window) * (padded / window) + sc / window) * window * window + (sr % window) * window + sc % window;
-                std::copy_n(attended[index], x.cols, y[r * grid + c]);
-            }
-            add(x, y);
-            y = ops.linear(ops.norm(x, p + ".layernorm_after", eps), p + ".intermediate.dense"); gelu(y);
-            y = ops.linear(y, p + ".output.dense"); add(x, y);
-        }
-        if (stage < 3) {
-            if (grid % 2 != 0)
-                throw std::runtime_error("CLAP: odd stage grid not supported");
-            Matrix merged((grid / 2) * (grid / 2), x.cols * 4);
-            for (int r = 0; r < grid / 2; ++r) for (int c = 0; c < grid / 2; ++c)
-                for (int part = 0; part < 4; ++part) {
-                    const int sr = 2 * r + part % 2, sc = 2 * c + part / 2;
-                    std::copy_n(x[sr * grid + sc], x.cols, merged[r * (grid / 2) + c] + part * x.cols);
+    auto outputs = runtime.run_cached("audio", {GraphInput(features, bins, frames)}, [&](Graph &g) {
+        auto *ctx = g.ctx();
+        auto *mel = g.dynamic_input(0);
+        auto *variance = ggml_add(ctx, g.weight(batch_norm.variance), g.input({1e-5f}, 1, 1));
+        mel = ggml_div(ctx, ggml_sub(ctx, mel, g.weight(batch_norm.mean)), ggml_sqrt(ctx, variance));
+        mel = ggml_add(ctx, ggml_mul(ctx, mel, g.weight(batch_norm.affine.weight)), g.weight(batch_norm.affine.bias));
+        ggml_tensor *resized = mel;
+        if (frames != target_time) {
+            resized = nullptr;
+            for (int tap = 0; tap < 4; ++tap) {
+                std::vector<int> rows(target_time);
+                std::vector<float> coefficients(target_time);
+                for (int time = 0; time < target_time; ++time) {
+                    const float source = float(time) * (frames - 1) / (target_time - 1);
+                    const int base = int(std::floor(source));
+                    rows[time] = std::clamp(base + tap - 1, 0, frames - 1);
+                    coefficients[time] = cubic(source - base - (tap - 1));
                 }
-            const auto p = "audio.layers." + std::to_string(stage) + ".downsample";
-            x = ops.linear(ops.norm(merged, p + ".norm", 1e-5f), p + ".reduction", false);
-            grid /= 2;
+                auto *values = ggml_get_rows(ctx, mel, g.indices(rows));
+                values = ggml_mul(ctx, values, g.input(coefficients, 1, target_time));
+                resized = resized ? ggml_add(ctx, resized, values) : values;
+            }
         }
-    }
-    x = ops.norm(x, "audio.norm", 1e-5f);
-    Matrix pooled(1, x.cols);
-    for (int r = 0; r < x.rows; ++r) for (int c = 0; c < x.cols; ++c) pooled[0][c] += x[r][c] / x.rows;
-    return project(pooled, "audio_proj");
-}} // namespace clap::detail
+        const int patchdim = h.patch_width;
+        int grid = spec / 4;
+        auto *image = ggml_reshape_3d(ctx, resized, bins, spec, ratio);
+        image = ggml_cont(ctx, ggml_permute(ctx, image, 1, 0, 2, 3));
+        image = ggml_reshape_3d(ctx, image, spec, spec, 1);
+        auto *conv = g.weight(patch.weight, false);
+        auto *patches = ggml_im2col(ctx, conv, image, 4, 4, 0, 0, 1, 1, true, GGML_TYPE_F32);
+        patches = ggml_reshape_2d(ctx, patches, 16, grid * grid);
+        auto *x = g.matmul(ggml_reshape_2d(ctx, conv, 16, patchdim), patches);
+        x = ggml_add(ctx, x, g.weight(patch.bias));
+        x = g.norm(x, patch_norm, 1e-5f);
+        const float eps = h.audio_epsilon;
+        for (int stage = 0; stage < 4; ++stage) {
+            const auto &stage_weights = stages[stage];
+            const int depth = int(stage_weights.blocks.size()), heads = stage_weights.heads, window = h.window;
+            const int padded = (grid + window - 1) / window * window;
+            for (int block = 0; block < depth; ++block) {
+                const auto &layer = stage_weights.blocks[block];
+                const int shift = grid <= window ? 0 : (block % 2) * (window / 2);
+                auto *normalized = g.norm(x, layer.attention_norm, eps);
+                std::vector<int> partition(padded * padded, grid * grid), restore(grid * grid);
+                for (int r = 0; r < padded; ++r) for (int c = 0; c < padded; ++c) {
+                    const int sr = (r + shift) % padded, sc = (c + shift) % padded;
+                    const int index = ((r / window) * (padded / window) + c / window) * window * window + (r % window) * window + c % window;
+                    if (sr < grid && sc < grid) partition[index] = sr * grid + sc;
+                }
+                for (int r = 0; r < grid; ++r) for (int c = 0; c < grid; ++c) {
+                    const int sr = (r - shift + padded) % padded, sc = (c - shift + padded) % padded;
+                    restore[r * grid + c] = ((sr / window) * (padded / window) + sc / window) * window * window + (sr % window) * window + sc % window;
+                }
+                auto *windows = ggml_get_rows(ctx, ggml_pad(ctx, normalized, 0, 1, 0, 0), g.indices(partition));
+                auto *attended = attention(g, windows, layer.attention, heads, window * window, nullptr, window, shift, padded);
+                attended = g.linear(attended, layer.attention.output);
+                x = ggml_add(ctx, x, ggml_get_rows(ctx, attended, g.indices(restore)));
+                auto *y = ggml_gelu_erf(ctx, g.linear(g.norm(x, layer.output_norm, eps), layer.intermediate));
+                x = ggml_add(ctx, x, g.linear(y, layer.output));
+            }
+            if (stage < 3) {
+                if (grid % 2) throw std::runtime_error("CLAP: odd stage grid not supported");
+                std::vector<int> rows(grid * grid);
+                for (int r = 0; r < grid / 2; ++r) for (int c = 0; c < grid / 2; ++c)
+                    for (int part = 0; part < 4; ++part)
+                        rows[(r * (grid / 2) + c) * 4 + part] = (2 * r + part % 2) * grid + 2 * c + part / 2;
+                auto *merged = ggml_get_rows(ctx, x, g.indices(rows));
+                merged = ggml_reshape_2d(ctx, merged, x->ne[0] * 4, grid * grid / 4);
+                x = g.linear(g.norm(merged, stage_weights.norm, 1e-5f), stage_weights.reduction);
+                grid /= 2;
+            }
+        }
+        x = g.norm(x, audio_norm, 1e-5f);
+        return std::vector<ggml_tensor *>{project(g, g.mean_pool(x), audio_projection)};
+    });
+    auto result = std::move(outputs.front().values);
+    if (!std::all_of(result.begin(), result.end(), [](float v) { return std::isfinite(v); }))
+        throw std::runtime_error("CLAP: invalid projection norm");
+    return result;
+}
+} // namespace clap::detail

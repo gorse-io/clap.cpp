@@ -5,7 +5,8 @@ file(GLOB CLAP_MODELS_SOURCES CONFIGURE_DEPENDS "models/*.cpp")
 set(CLAP_CORE_SOURCES
     model.cpp
     model-loader.cpp
-    model-ops.cpp
+    graph.cpp
+    tensor-data.cpp
     audio.cpp
     vocab.cpp)
 
@@ -22,20 +23,6 @@ target_include_directories(clap SYSTEM PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/miniaudio")
 target_link_libraries(clap PUBLIC ggml
     PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
-if(GGML_CUDA OR GGML_HIP OR GGML_VULKAN)
-    target_compile_definitions(clap PRIVATE CLAP_USE_GPU)
-endif()
-if(GGML_CUDA)
-    target_link_libraries(clap PRIVATE ggml-cuda)
-    target_compile_definitions(clap PRIVATE CLAP_USE_CUDA)
-elseif(GGML_HIP)
-    target_link_libraries(clap PRIVATE ggml-hip)
-    target_compile_definitions(clap PRIVATE CLAP_USE_HIP)
-endif()
-if(GGML_VULKAN)
-    target_link_libraries(clap PRIVATE ggml-vulkan)
-    target_compile_definitions(clap PRIVATE CLAP_USE_VULKAN)
-endif()
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
 if(NOT MSVC)
     target_compile_options(clap PRIVATE -Wall -Wextra -Wpedantic)
