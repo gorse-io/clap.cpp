@@ -30,7 +30,10 @@ struct GraphInput {
     explicit GraphInput(const HostMatrix &values) : GraphInput(values.data, values.cols, values.rows) {}
     explicit GraphInput(const std::vector<int> &values);
 };
-struct GraphOutput { std::vector<float> values; int64_t columns, rows; };
+struct GraphOutput {
+    std::vector<float> values;
+    int64_t columns, rows;
+};
 struct GraphStats {
     size_t builds = 0, hits = 0, weight_uploads = 0;
     std::string device;
@@ -40,7 +43,7 @@ class Graph;
 
 // Persistent backend and immutable weight ownership. One graph executes at a time.
 class GraphRuntime {
-public:
+  public:
     GraphRuntime(const ModelLoader &loader, int threads, bool f32_activations = false);
     ~GraphRuntime();
     bool last_graph_used_vulkan() const;
@@ -49,8 +52,10 @@ public:
     // One bounded cache per runtime. The key encodes branch and scalar options;
     // input types/shapes are also checked. Builders run only on cache misses.
     std::vector<GraphOutput> run_cached(const std::string &key, const std::vector<GraphInput> &inputs,
-        const std::function<std::vector<ggml_tensor *>(Graph &)> &build, size_t extra_nodes = 0) const;
-private:
+                                        const std::function<std::vector<ggml_tensor *>(Graph &)> &build,
+                                        size_t extra_nodes = 0) const;
+
+  private:
     friend class Graph;
     struct State;
     std::unique_ptr<State> state;
@@ -58,7 +63,7 @@ private:
 
 // Graph builders create nodes only; compute() allocates and executes the graph.
 class Graph {
-public:
+  public:
     explicit Graph(const GraphRuntime &runtime, size_t extra_nodes = 0);
     ~Graph();
     Graph(const Graph &) = delete;
@@ -78,19 +83,20 @@ public:
     ggml_tensor *weight(const std::string &name, bool f32 = true);
     ggml_tensor *linear(ggml_tensor *x, const std::string &name, bool bias = true);
     ggml_tensor *norm(ggml_tensor *x, const std::string &name, float epsilon);
-    ggml_tensor *conv1d(ggml_tensor *x, const std::string &name, int kernel, int stride,
-                        int padding, int groups, bool bias = true);
+    ggml_tensor *conv1d(ggml_tensor *x, const std::string &name, int kernel, int stride, int padding, int groups,
+                        bool bias = true);
     ggml_tensor *embedding(const std::string &name, const std::vector<int> &rows);
     ggml_tensor *slice(ggml_tensor *x, int64_t first, int64_t columns);
     ggml_tensor *mean_pool(ggml_tensor *x, const std::vector<int> &mask = {});
     ggml_tensor *l2_normalize(ggml_tensor *x, float epsilon = 1e-12f);
-    ggml_tensor *attention(ggml_tensor *q, ggml_tensor *k, ggml_tensor *v, int heads,
-                           ggml_tensor *mask = nullptr, float scale = 0, int window_tokens = 0);
+    ggml_tensor *attention(ggml_tensor *q, ggml_tensor *k, ggml_tensor *v, int heads, ggml_tensor *mask = nullptr,
+                           float scale = 0, int window_tokens = 0);
     ggml_tensor *rope(ggml_tensor *x, int heads, float base);
     void compute(const std::vector<ggml_tensor *> &outputs);
     std::vector<float> read(ggml_tensor *output) const;
     std::vector<float> run(ggml_tensor *output);
-private:
+
+  private:
     friend class GraphRuntime;
     Graph(const GraphRuntime &runtime, size_t extra_nodes, bool cached);
     void allocate(const std::vector<ggml_tensor *> &outputs);
@@ -99,7 +105,10 @@ private:
     GraphRuntime::State &runtime;
     std::unique_lock<std::mutex> lock;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free};
-    struct Input { ggml_tensor *tensor; std::vector<uint8_t> bytes; };
+    struct Input {
+        ggml_tensor *tensor;
+        std::vector<uint8_t> bytes;
+    };
     std::vector<Input> inputs;
     std::unordered_map<ggml_tensor *, ggml_tensor *> converted;
     std::vector<ggml_tensor *> cpu_nodes, device_nodes;
@@ -109,4 +118,4 @@ private:
     size_t capacity;
     ggml_tensor *raw_weight(ggml_tensor *source, bool dense);
 };
-}
+} // namespace clap::detail

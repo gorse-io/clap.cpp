@@ -13,27 +13,32 @@ struct Result {
     std::vector<float> floats;
     char error[1024] = {};
 };
-}
+} // namespace
 extern "C" {
 // Arguments are borrowed synchronously. cr_free releases every result.
 // Inline diagnostics keep exception translation allocation-free.
 // Ops: 0=open, 1=encode_text, 2=encode_audio (file).
-Result *cr_call(int op, clap::CLAP *model, const char *s,
-                int threads, size_t crop_offset) noexcept {
+Result *cr_call(int op, clap::CLAP *model, const char *s, int threads, size_t crop_offset) noexcept {
     auto result = std::unique_ptr<Result>(new (std::nothrow) Result);
-    if (!result) return nullptr;
+    if (!result)
+        return nullptr;
     try {
         switch (op) {
         case 0:
-            if (threads < 0) throw std::invalid_argument("threads must be nonnegative");
-            result->model = std::make_unique<clap::CLAP>(s, threads); break;
-        case 1: result->floats = model->encode_text(s); break;
+            if (threads < 0)
+                throw std::invalid_argument("threads must be nonnegative");
+            result->model = std::make_unique<clap::CLAP>(s, threads);
+            break;
+        case 1:
+            result->floats = model->encode_text(s);
+            break;
         case 2: {
             const auto audio = clap::decode_audio(s);
             result->floats = model->encode_audio(audio.samples, audio.sample_rate, crop_offset);
             break;
         }
-        default: throw std::invalid_argument("unknown operation");
+        default:
+            throw std::invalid_argument("unknown operation");
         }
     } catch (const std::exception &e) {
         std::snprintf(result->error, sizeof(result->error), "%s", e.what());

@@ -16,7 +16,7 @@ struct TextParameters {
 // Public API, shared loading, tokenization and audio preprocessing live outside
 // src/models; each architecture supplies its parameter/tensor contract and encoders.
 class ModelArchitecture {
-public:
+  public:
     virtual ~ModelArchitecture() = default;
     virtual std::vector<float> text(const std::vector<int> &ids) const = 0;
     virtual AudioFrames audio_frames(const std::vector<float> &pcm) const = 0;
@@ -36,7 +36,8 @@ public:
     virtual std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const {
         throw std::runtime_error("CLAP: this architecture has no waveform embeddings");
     }
-protected:
+
+  protected:
     virtual void load_arch_hparams() = 0;
     virtual void load_arch_tensors() const = 0;
 };

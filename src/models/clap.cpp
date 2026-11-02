@@ -10,8 +10,10 @@ namespace {
 // PyTorch bicubic interpolation, A=-0.75, align_corners=True.
 float cubic(float x) {
     x = std::abs(x);
-    if (x <= 1) return ((1.25f * x - 2.25f) * x) * x + 1;
-    if (x < 2) return ((-0.75f * x + 3.75f) * x - 6) * x + 3;
+    if (x <= 1)
+        return ((1.25f * x - 2.25f) * x) * x + 1;
+    if (x < 2)
+        return ((-0.75f * x + 3.75f) * x - 6) * x + 3;
     return 0;
 }
 } // namespace
@@ -44,8 +46,8 @@ void ClapModel::load_arch_hparams() {
     if (t.value("position_embedding_type", std::string("absolute")) != "absolute")
         throw std::runtime_error("CLAP: unsupported text position embedding type");
     const int spec = a.at("spec_size"), bins = a.at("num_mel_bins"), window = a.at("window_size");
-    if (!(spec > 0 && spec % 32 == 0 && bins > 0 && spec % bins == 0 && window > 0 &&
-          spec / 32 >= spec / bins)) throw std::runtime_error("CLAP: invalid spectrogram geometry");
+    if (!(spec > 0 && spec % 32 == 0 && bins > 0 && spec % bins == 0 && window > 0 && spec / 32 >= spec / bins))
+        throw std::runtime_error("CLAP: invalid spectrogram geometry");
     int dim = a.at("patch_embeds_hidden_size");
     if (!(dim > 0 && dim * 8 == a.at("hidden_size")))
         throw std::runtime_error("CLAP: audio hidden size mismatch");
@@ -58,7 +60,8 @@ void ClapModel::load_arch_tensors() const {
     loader.shape("audio.patch_embed.proj.bias", {dim});
     loader.norm_shape("audio.patch_embed.norm", dim);
     loader.norm_shape("audio.batch_norm", bins);
-    loader.shape("audio.batch_norm.running_mean", {bins}); loader.shape("audio.batch_norm.running_var", {bins});
+    loader.shape("audio.batch_norm.running_mean", {bins});
+    loader.shape("audio.batch_norm.running_var", {bins});
     for (int s = 0; s < 4; ++s) {
         const int heads = a.at("num_attention_heads")[s], depth = a.at("depths")[s];
         if (!(heads > 0 && dim % heads == 0 && depth > 0))
@@ -67,34 +70,41 @@ void ClapModel::load_arch_tensors() const {
             throw std::runtime_error("CLAP: window larger than stage resolution is unsupported");
         for (int b = 0; b < depth; ++b) {
             const std::string p = "audio.layers." + std::to_string(s) + ".blocks." + std::to_string(b);
-            loader.norm_shape(p + ".layernorm_before", dim); loader.norm_shape(p + ".layernorm_after", dim);
-            for (const auto *q : {"query", "key", "value"}) loader.linear_shape(p + ".attention.self." + q, dim, dim);
+            loader.norm_shape(p + ".layernorm_before", dim);
+            loader.norm_shape(p + ".layernorm_after", dim);
+            for (const auto *q : {"query", "key", "value"})
+                loader.linear_shape(p + ".attention.self." + q, dim, dim);
             loader.shape(p + ".attention.self.rel_bias", {heads, (2 * window - 1) * (2 * window - 1)});
             loader.linear_shape(p + ".attention.output.dense", dim, dim);
             const int inner = static_cast<int>(dim * a.at("mlp_ratio").get<double>());
-            loader.linear_shape(p + ".intermediate.dense", dim, inner); loader.linear_shape(p + ".output.dense", inner, dim);
+            loader.linear_shape(p + ".intermediate.dense", dim, inner);
+            loader.linear_shape(p + ".output.dense", inner, dim);
         }
         if (s < 3) {
             const auto p = "audio.layers." + std::to_string(s) + ".downsample";
-            loader.norm_shape(p + ".norm", dim * 4); loader.linear_shape(p + ".reduction", dim * 4, dim * 2, false);
+            loader.norm_shape(p + ".norm", dim * 4);
+            loader.linear_shape(p + ".reduction", dim * 4, dim * 2, false);
         }
         dim *= 2;
     }
     loader.norm_shape("audio.norm", dim / 2);
     dim = t.at("hidden_size");
     const int heads = t.at("num_attention_heads"), layers = t.at("num_hidden_layers");
-    if (!(dim > 0 && heads > 0 && dim % heads == 0 && layers > 0 &&
-          t.at("type_vocab_size").get<int>() > 0)) throw std::runtime_error("CLAP: invalid text dimensions");
+    if (!(dim > 0 && heads > 0 && dim % heads == 0 && layers > 0 && t.at("type_vocab_size").get<int>() > 0))
+        throw std::runtime_error("CLAP: invalid text dimensions");
     loader.shape("text.embeddings.word_embeddings.weight", {dim, t.at("vocab_size").get<int>()});
     loader.shape("text.embeddings.position_embeddings.weight", {dim, t.at("max_position_embeddings").get<int>()});
     loader.shape("text.embeddings.token_type_embeddings.weight", {dim, t.at("type_vocab_size").get<int>()});
     loader.norm_shape("text.embeddings.LayerNorm", dim);
     for (int l = 0; l < layers; ++l) {
         const auto p = "text.encoder.layer." + std::to_string(l);
-        for (const auto *q : {"query", "key", "value"}) loader.linear_shape(p + ".attention.self." + q, dim, dim);
-        loader.linear_shape(p + ".attention.output.dense", dim, dim); loader.norm_shape(p + ".attention.output.LayerNorm", dim);
+        for (const auto *q : {"query", "key", "value"})
+            loader.linear_shape(p + ".attention.self." + q, dim, dim);
+        loader.linear_shape(p + ".attention.output.dense", dim, dim);
+        loader.norm_shape(p + ".attention.output.LayerNorm", dim);
         const int inner = t.at("intermediate_size");
-        loader.linear_shape(p + ".intermediate.dense", dim, inner); loader.linear_shape(p + ".output.dense", inner, dim);
+        loader.linear_shape(p + ".intermediate.dense", dim, inner);
+        loader.linear_shape(p + ".output.dense", inner, dim);
         loader.norm_shape(p + ".output.LayerNorm", dim);
     }
     loader.linear_shape("text.pooler.dense", dim, dim);
@@ -109,47 +119,59 @@ void ClapModel::load_arch_tensors() const {
 }
 
 void ClapModel::bind_tensors() {
-    h = {config.at("projection_dim"), a.at("num_mel_bins"), a.at("spec_size"), a.at("patch_embeds_hidden_size"),
-         a.at("window_size"), t.at("hidden_size"), t.at("pad_token_id"), t.at("vocab_size"), t.at("max_position_embeddings"),
-         t.at("num_attention_heads"), t.at("bos_token_id"), t.at("eos_token_id"), a.value("layer_norm_eps", 1e-5f), t.at("layer_norm_eps")};
+    h = {config.at("projection_dim"),
+         a.at("num_mel_bins"),
+         a.at("spec_size"),
+         a.at("patch_embeds_hidden_size"),
+         a.at("window_size"),
+         t.at("hidden_size"),
+         t.at("pad_token_id"),
+         t.at("vocab_size"),
+         t.at("max_position_embeddings"),
+         t.at("num_attention_heads"),
+         t.at("bos_token_id"),
+         t.at("eos_token_id"),
+         a.value("layer_norm_eps", 1e-5f),
+         t.at("layer_norm_eps")};
     embeddings = bind_embeddings(loader, "text.embeddings");
     for (int i = 0; i < t.at("num_hidden_layers").get<int>(); ++i)
         text_layers.push_back(bind_bert_layer(loader, "text.encoder.layer." + std::to_string(i)));
     for (int i = 0; i < 4; ++i) {
-        Stage stage; stage.heads = a.at("num_attention_heads")[i];
+        Stage stage;
+        stage.heads = a.at("num_attention_heads")[i];
         const auto root = "audio.layers." + std::to_string(i);
         for (int j = 0; j < a.at("depths")[i].get<int>(); ++j) {
             const auto p = root + ".blocks." + std::to_string(j);
             TransformerWeights block;
-            block.attention = {LayerWeights::bind(loader,p+".attention.self.query"), LayerWeights::bind(loader,p+".attention.self.key"),
-                               LayerWeights::bind(loader,p+".attention.self.value"), LayerWeights::bind(loader,p+".attention.output.dense"),
-                               loader.weight(p+".attention.self.rel_bias")};
-            block.attention_norm = LayerWeights::bind(loader,p+".layernorm_before");
-            block.output_norm = LayerWeights::bind(loader,p+".layernorm_after");
-            block.intermediate = LayerWeights::bind(loader,p+".intermediate.dense");
-            block.output = LayerWeights::bind(loader,p+".output.dense");
+            block.attention = {LayerWeights::bind(loader, p + ".attention.self.query"),
+                               LayerWeights::bind(loader, p + ".attention.self.key"),
+                               LayerWeights::bind(loader, p + ".attention.self.value"),
+                               LayerWeights::bind(loader, p + ".attention.output.dense"),
+                               loader.weight(p + ".attention.self.rel_bias")};
+            block.attention_norm = LayerWeights::bind(loader, p + ".layernorm_before");
+            block.output_norm = LayerWeights::bind(loader, p + ".layernorm_after");
+            block.intermediate = LayerWeights::bind(loader, p + ".intermediate.dense");
+            block.output = LayerWeights::bind(loader, p + ".output.dense");
             stage.blocks.push_back(block);
         }
         if (i < 3) {
-            stage.norm = LayerWeights::bind(loader,root+".downsample.norm");
-            stage.reduction = LayerWeights::bind(loader,root+".downsample.reduction", false);
+            stage.norm = LayerWeights::bind(loader, root + ".downsample.norm");
+            stage.reduction = LayerWeights::bind(loader, root + ".downsample.reduction", false);
         }
         stages.push_back(std::move(stage));
     }
-    patch = LayerWeights::bind(loader,"audio.patch_embed.proj");
-    patch_norm = LayerWeights::bind(loader,"audio.patch_embed.norm");
-    audio_norm = LayerWeights::bind(loader,"audio.norm");
-    pooler = LayerWeights::bind(loader,"text.pooler.dense");
-    audio_projection = {LayerWeights::bind(loader,"audio_proj.linear1"), LayerWeights::bind(loader,"audio_proj.linear2")};
-    text_projection = {LayerWeights::bind(loader,"text_proj.linear1"), LayerWeights::bind(loader,"text_proj.linear2")};
-    batch_norm = BatchNormWeights::bind(loader,"audio.batch_norm");
+    patch = LayerWeights::bind(loader, "audio.patch_embed.proj");
+    patch_norm = LayerWeights::bind(loader, "audio.patch_embed.norm");
+    audio_norm = LayerWeights::bind(loader, "audio.norm");
+    pooler = LayerWeights::bind(loader, "text.pooler.dense");
+    audio_projection = {LayerWeights::bind(loader, "audio_proj.linear1"),
+                        LayerWeights::bind(loader, "audio_proj.linear2")};
+    text_projection = {LayerWeights::bind(loader, "text_proj.linear1"),
+                       LayerWeights::bind(loader, "text_proj.linear2")};
+    batch_norm = BatchNormWeights::bind(loader, "audio.batch_norm");
 }
 
-
-TextParameters ClapModel::text_parameters() const {
-    return {h.bos, h.eos,
-            static_cast<size_t>(h.positions - 2)};
-}
+TextParameters ClapModel::text_parameters() const { return {h.bos, h.eos, static_cast<size_t>(h.positions - 2)}; }
 int ClapModel::projection_dimension() const { return h.projection; }
 int ClapModel::mel_bins() const { return h.bins; }
 int ClapModel::sample_rate() const { return 48000; }
@@ -159,13 +181,15 @@ AudioFrames ClapModel::audio_frames(const std::vector<float> &) const {
 }
 
 ggml_tensor *ClapModel::attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights, int heads, int tokens,
-                                    ggml_tensor *mask, int window, int shift, int grid) const {
+                                  ggml_tensor *mask, int window, int shift, int grid) const {
     auto *ctx = g.ctx();
     ggml_tensor *bias = nullptr;
     if (window) {
         std::vector<int> indices(tokens * tokens);
-        for (int i = 0; i < tokens; ++i) for (int j = 0; j < tokens; ++j)
-            indices[i * tokens + j] = (i / window - j / window + window - 1) * (2 * window - 1) + i % window - j % window + window - 1;
+        for (int i = 0; i < tokens; ++i)
+            for (int j = 0; j < tokens; ++j)
+                indices[i * tokens + j] =
+                    (i / window - j / window + window - 1) * (2 * window - 1) + i % window - j % window + window - 1;
         bias = g.embedding(weights.relative_bias, indices);
         bias = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, bias, heads, tokens, tokens), 2, 0, 1, 3));
         if (shift) {
@@ -175,18 +199,24 @@ ggml_tensor *ClapModel::attention(Graph &g, ggml_tensor *x, const AttentionWeigh
                 auto section = [&](int p) { return p < grid - window ? 0 : p < grid - shift ? 1 : 2; };
                 return section(r) * 3 + section(c);
             };
-            for (int win = 0; win < windows; ++win) for (int i = 0; i < tokens; ++i) for (int j = 0; j < tokens; ++j) {
-                const int r = win / per_row * window, c = win % per_row * window;
-                values[(size_t(win) * tokens + i) * tokens + j] = region(r + i / window, c + i % window) == region(r + j / window, c + j % window) ? 0.0f : -100.0f;
-            }
-            auto *shift_mask = ggml_reshape_4d(ctx, g.input(values, tokens, tokens * windows), tokens, tokens, 1, windows);
+            for (int win = 0; win < windows; ++win)
+                for (int i = 0; i < tokens; ++i)
+                    for (int j = 0; j < tokens; ++j) {
+                        const int r = win / per_row * window, c = win % per_row * window;
+                        values[(size_t(win) * tokens + i) * tokens + j] =
+                            region(r + i / window, c + i % window) == region(r + j / window, c + j % window) ? 0.0f
+                                                                                                             : -100.0f;
+                    }
+            auto *shift_mask =
+                ggml_reshape_4d(ctx, g.input(values, tokens, tokens * windows), tokens, tokens, 1, windows);
             // Expand the shared relative bias across windows before adding each shift mask.
             bias = ggml_add(ctx, ggml_repeat_4d(ctx, bias, tokens, tokens, heads, windows), shift_mask);
         }
-    } else bias = mask;
+    } else
+        bias = mask;
 
-    return g.attention(g.linear(x, weights.query), g.linear(x, weights.key),
-                       g.linear(x, weights.value), heads, bias, 0, tokens);
+    return g.attention(g.linear(x, weights.query), g.linear(x, weights.key), g.linear(x, weights.value), heads, bias, 0,
+                       tokens);
 }
 
 ggml_tensor *ClapModel::project(Graph &g, ggml_tensor *pooled, const Projection &weights) const {
@@ -201,32 +231,38 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
     std::vector<int> mask(ids.size()), positions(ids.size());
     int counter = pad;
     for (size_t i = 0; i < ids.size(); ++i) {
-        if (ids[i] < 0 || ids[i] >= vocab) throw std::runtime_error("CLAP: token ID out of vocabulary");
+        if (ids[i] < 0 || ids[i] >= vocab)
+            throw std::runtime_error("CLAP: token ID out of vocabulary");
         mask[i] = ids[i] != pad;
         positions[i] = mask[i] ? ++counter : pad;
-        if (positions[i] >= h.positions) throw std::runtime_error("CLAP: text positions overflow");
+        if (positions[i] >= h.positions)
+            throw std::runtime_error("CLAP: text positions overflow");
     }
-    if (!std::any_of(mask.begin(), mask.end(), [](int x) { return x; })) throw std::runtime_error("CLAP: text contains only padding");
+    if (!std::any_of(mask.begin(), mask.end(), [](int x) { return x; }))
+        throw std::runtime_error("CLAP: text contains only padding");
     std::vector<float> scores(mask.size());
-    for (size_t i = 0; i < mask.size(); ++i) scores[i] = mask[i] ? 0.0f : -1e30f;
-    auto outputs = runtime.run_cached("text", {GraphInput(ids), GraphInput(positions), GraphInput(scores, scores.size(), 1)}, [&](Graph &g) {
-        auto *ctx = g.ctx();
-        auto *x = ggml_add(ctx, g.embedding(embeddings.word, g.dynamic_input(0)), g.embedding(embeddings.position, g.dynamic_input(1)));
-        x = ggml_add(ctx, x, g.embedding(embeddings.type, std::vector<int>{0}));
-        const float eps = h.text_epsilon;
-        x = g.norm(x, embeddings.norm, eps);
-        for (const auto &layer : text_layers) {
-            auto *y = attention(g, x, layer.attention, h.heads, int(ids.size()), g.dynamic_input(2));
-            y = g.linear(y, layer.attention.output);
-            x = g.norm(ggml_add(ctx, y, x), layer.attention_norm, eps);
-            y = ggml_gelu_erf(ctx, g.linear(x, layer.intermediate));
-            y = g.linear(y, layer.output);
-            x = g.norm(ggml_add(ctx, y, x), layer.output_norm, eps);
-        }
-        auto *first = ggml_view_2d(ctx, x, dim, 1, x->nb[1], 0);
-        auto *pooled = ggml_tanh(ctx, g.linear(first, pooler));
-        return std::vector<ggml_tensor *>{project(g, pooled, text_projection)};
-    });
+    for (size_t i = 0; i < mask.size(); ++i)
+        scores[i] = mask[i] ? 0.0f : -1e30f;
+    auto outputs = runtime.run_cached(
+        "text", {GraphInput(ids), GraphInput(positions), GraphInput(scores, scores.size(), 1)}, [&](Graph &g) {
+            auto *ctx = g.ctx();
+            auto *x = ggml_add(ctx, g.embedding(embeddings.word, g.dynamic_input(0)),
+                               g.embedding(embeddings.position, g.dynamic_input(1)));
+            x = ggml_add(ctx, x, g.embedding(embeddings.type, std::vector<int>{0}));
+            const float eps = h.text_epsilon;
+            x = g.norm(x, embeddings.norm, eps);
+            for (const auto &layer : text_layers) {
+                auto *y = attention(g, x, layer.attention, h.heads, int(ids.size()), g.dynamic_input(2));
+                y = g.linear(y, layer.attention.output);
+                x = g.norm(ggml_add(ctx, y, x), layer.attention_norm, eps);
+                y = ggml_gelu_erf(ctx, g.linear(x, layer.intermediate));
+                y = g.linear(y, layer.output);
+                x = g.norm(ggml_add(ctx, y, x), layer.output_norm, eps);
+            }
+            auto *first = ggml_view_2d(ctx, x, dim, 1, x->nb[1], 0);
+            auto *pooled = ggml_tanh(ctx, g.linear(first, pooler));
+            return std::vector<ggml_tensor *>{project(g, pooled, text_projection)};
+        });
     auto result = std::move(outputs.front().values);
     if (!std::all_of(result.begin(), result.end(), [](float v) { return std::isfinite(v); }))
         throw std::runtime_error("CLAP: invalid projection norm");
@@ -234,7 +270,8 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
 }
 
 std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
-    if (mel_bins() != 64) throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
+    if (mel_bins() != 64)
+        throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
     return encode_features(clap::log_mel(pcm, 48000, crop_offset), 1001);
 }
 
@@ -289,28 +326,36 @@ std::vector<float> ClapModel::encode_features(const std::vector<float> &features
                 const int shift = grid <= window ? 0 : (block % 2) * (window / 2);
                 auto *normalized = g.norm(x, layer.attention_norm, eps);
                 std::vector<int> partition(padded * padded, grid * grid), restore(grid * grid);
-                for (int r = 0; r < padded; ++r) for (int c = 0; c < padded; ++c) {
-                    const int sr = (r + shift) % padded, sc = (c + shift) % padded;
-                    const int index = ((r / window) * (padded / window) + c / window) * window * window + (r % window) * window + c % window;
-                    if (sr < grid && sc < grid) partition[index] = sr * grid + sc;
-                }
-                for (int r = 0; r < grid; ++r) for (int c = 0; c < grid; ++c) {
-                    const int sr = (r - shift + padded) % padded, sc = (c - shift + padded) % padded;
-                    restore[r * grid + c] = ((sr / window) * (padded / window) + sc / window) * window * window + (sr % window) * window + sc % window;
-                }
+                for (int r = 0; r < padded; ++r)
+                    for (int c = 0; c < padded; ++c) {
+                        const int sr = (r + shift) % padded, sc = (c + shift) % padded;
+                        const int index = ((r / window) * (padded / window) + c / window) * window * window +
+                                          (r % window) * window + c % window;
+                        if (sr < grid && sc < grid)
+                            partition[index] = sr * grid + sc;
+                    }
+                for (int r = 0; r < grid; ++r)
+                    for (int c = 0; c < grid; ++c) {
+                        const int sr = (r - shift + padded) % padded, sc = (c - shift + padded) % padded;
+                        restore[r * grid + c] = ((sr / window) * (padded / window) + sc / window) * window * window +
+                                                (sr % window) * window + sc % window;
+                    }
                 auto *windows = ggml_get_rows(ctx, ggml_pad(ctx, normalized, 0, 1, 0, 0), g.indices(partition));
-                auto *attended = attention(g, windows, layer.attention, heads, window * window, nullptr, window, shift, padded);
+                auto *attended =
+                    attention(g, windows, layer.attention, heads, window * window, nullptr, window, shift, padded);
                 attended = g.linear(attended, layer.attention.output);
                 x = ggml_add(ctx, x, ggml_get_rows(ctx, attended, g.indices(restore)));
                 auto *y = ggml_gelu_erf(ctx, g.linear(g.norm(x, layer.output_norm, eps), layer.intermediate));
                 x = ggml_add(ctx, x, g.linear(y, layer.output));
             }
             if (stage < 3) {
-                if (grid % 2) throw std::runtime_error("CLAP: odd stage grid not supported");
+                if (grid % 2)
+                    throw std::runtime_error("CLAP: odd stage grid not supported");
                 std::vector<int> rows(grid * grid);
-                for (int r = 0; r < grid / 2; ++r) for (int c = 0; c < grid / 2; ++c)
-                    for (int part = 0; part < 4; ++part)
-                        rows[(r * (grid / 2) + c) * 4 + part] = (2 * r + part % 2) * grid + 2 * c + part / 2;
+                for (int r = 0; r < grid / 2; ++r)
+                    for (int c = 0; c < grid / 2; ++c)
+                        for (int part = 0; part < 4; ++part)
+                            rows[(r * (grid / 2) + c) * 4 + part] = (2 * r + part % 2) * grid + 2 * c + part / 2;
                 auto *merged = ggml_get_rows(ctx, x, g.indices(rows));
                 merged = ggml_reshape_2d(ctx, merged, x->ne[0] * 4, grid * grid / 4);
                 x = g.linear(g.norm(merged, stage_weights.norm, 1e-5f), stage_weights.reduction);

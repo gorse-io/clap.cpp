@@ -9,8 +9,7 @@
 
 namespace clap::detail {
 using json = nlohmann::json;
-Mert2Model::Mert2Model(const ModelLoader &source, int threads)
-    : loader(source), runtime(source, threads) {
+Mert2Model::Mert2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
     bind_tensors();
@@ -25,11 +24,11 @@ void Mert2Model::load_arch_hparams() {
     const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
     const int layers = config.at("num_hidden_layers"), heads = config.at("num_attention_heads");
     if (!(hidden > 0 && intermediate > 0 && layers > 0 && heads > 0 && hidden % heads == 0 &&
-          (hidden / heads) % 2 == 0)) throw std::runtime_error("CLAP: invalid MERT2 encoder dimensions");
+          (hidden / heads) % 2 == 0))
+        throw std::runtime_error("CLAP: invalid MERT2 encoder dimensions");
     const int bins = config.at("num_mel_bins"), rate = config.at("sampling_rate");
     const int fft_size = config.at("n_fft"), window = config.at("win_length"), hop = config.at("hop_length");
-    if (!(bins > 0 && rate > 0 && fft_size > 0 && (fft_size & (fft_size - 1)) == 0 &&
-          window == fft_size && hop > 0))
+    if (!(bins > 0 && rate > 0 && fft_size > 0 && (fft_size & (fft_size - 1)) == 0 && window == fft_size && hop > 0))
         throw std::runtime_error("CLAP: unsupported MERT2 waveform frontend geometry");
     if (config.at("minimum_input_samples").get<int>() != fft_size / 2 + 1)
         throw std::runtime_error("CLAP: invalid MERT2 minimum input length");
@@ -68,7 +67,7 @@ void Mert2Model::load_arch_tensors() const {
     const auto depths = config.at("subsampling_depths");
     int input = bins;
     const float ignored = config.at("subsampling_layer_norm_eps");
-    (void) ignored;
+    (void)ignored;
     for (int stage = 0; stage < 3; ++stage) {
         const int output = channels[stage];
         const std::string root = "subsampling_module." + std::to_string(stage);
@@ -111,38 +110,59 @@ void Mert2Model::load_arch_tensors() const {
 }
 
 void Mert2Model::bind_tensors() {
-    h = {config.at("hidden_size"), config.at("num_mel_bins"), config.at("sampling_rate"), config.at("n_fft"), config.at("hop_length"),
-         config.at("num_attention_heads"), config.at("conv_depthwise_kernel_size"), config.at("minimum_input_samples"),
-         config.at("layer_norm_eps"), config.at("subsampling_layer_norm_eps"), config.at("rotary_embedding_base")};
-    window = loader.weight("feature_extractor.spectrogram.window"); filters = loader.weight("feature_extractor.mel_scale.fb");
-    mean = loader.weight("feature_extractor.mel_mean"); stddev = loader.weight("feature_extractor.mel_std");
+    h = {config.at("hidden_size"),
+         config.at("num_mel_bins"),
+         config.at("sampling_rate"),
+         config.at("n_fft"),
+         config.at("hop_length"),
+         config.at("num_attention_heads"),
+         config.at("conv_depthwise_kernel_size"),
+         config.at("minimum_input_samples"),
+         config.at("layer_norm_eps"),
+         config.at("subsampling_layer_norm_eps"),
+         config.at("rotary_embedding_base")};
+    window = loader.weight("feature_extractor.spectrogram.window");
+    filters = loader.weight("feature_extractor.mel_scale.fb");
+    mean = loader.weight("feature_extractor.mel_mean");
+    stddev = loader.weight("feature_extractor.mel_std");
     for (int i = 0; i < 3; ++i) {
-        Stage stage; stage.width = config.at("subsampling_channels")[i];
+        Stage stage;
+        stage.width = config.at("subsampling_channels")[i];
         const auto root = "subsampling_module." + std::to_string(i);
-        if (i > 0) { stage.norm = LayerWeights::bind(loader,root+".resampling_layer.0"); stage.resample = LayerWeights::bind(loader,root+".resampling_layer.2"); }
+        if (i > 0) {
+            stage.norm = LayerWeights::bind(loader, root + ".resampling_layer.0");
+            stage.resample = LayerWeights::bind(loader, root + ".resampling_layer.2");
+        }
         for (int j = 0; j < config.at("subsampling_depths")[i].get<int>(); ++j) {
             const auto p = root + ".convnext_layers." + std::to_string(j);
-            stage.blocks.push_back({LayerWeights::bind(loader,p+".depthwise_block.1"), LayerWeights::bind(loader,p+".pointwise_block.0"),
-                                    LayerWeights::bind(loader,p+".pointwise_block.1"), LayerWeights::bind(loader,p+".pointwise_block.3"), LayerWeights::bind(loader,p+".pointwise_block.4")});
+            stage.blocks.push_back({LayerWeights::bind(loader, p + ".depthwise_block.1"),
+                                    LayerWeights::bind(loader, p + ".pointwise_block.0"),
+                                    LayerWeights::bind(loader, p + ".pointwise_block.1"),
+                                    LayerWeights::bind(loader, p + ".pointwise_block.3"),
+                                    LayerWeights::bind(loader, p + ".pointwise_block.4")});
         }
         stages.push_back(std::move(stage));
     }
     for (int i = 0; i < config.at("num_hidden_layers").get<int>(); ++i) {
         const auto p = "layers." + std::to_string(i);
         ConformerWeights layer;
-        layer.ffn1 = {LayerWeights::bind(loader,p+".ffn1_layer_norm"), LayerWeights::bind(loader,p+".ffn1.w_1"), LayerWeights::bind(loader,p+".ffn1.w_2")};
-        layer.ffn2 = {LayerWeights::bind(loader,p+".ffn2_layer_norm"), LayerWeights::bind(loader,p+".ffn2.w_1"), LayerWeights::bind(loader,p+".ffn2.w_2")};
-        layer.attention_norm = LayerWeights::bind(loader,p+".attn_layer_norm"); layer.final_norm = LayerWeights::bind(loader,p+".final_layer_norm");
-        layer.attention = {LayerWeights::bind(loader,p+".attn.query_proj"), LayerWeights::bind(loader,p+".attn.key_proj"), LayerWeights::bind(loader,p+".attn.value_proj"), LayerWeights::bind(loader,p+".attn.out_proj")};
-        layer.convolution.norm = LayerWeights::bind(loader,p+".conv_module.layer_norm");
-        layer.convolution.input = LayerWeights::bind(loader,p+".conv_module.conv_block.1",false);
-        layer.convolution.depthwise = LayerWeights::bind(loader,p+".conv_module.conv_block.3",false);
-        layer.convolution.output_norm = LayerWeights::bind(loader,p+".conv_module.conv_block.4.1");
-        layer.convolution.output = LayerWeights::bind(loader,p+".conv_module.conv_block.6",false);
+        layer.ffn1 = {LayerWeights::bind(loader, p + ".ffn1_layer_norm"), LayerWeights::bind(loader, p + ".ffn1.w_1"),
+                      LayerWeights::bind(loader, p + ".ffn1.w_2")};
+        layer.ffn2 = {LayerWeights::bind(loader, p + ".ffn2_layer_norm"), LayerWeights::bind(loader, p + ".ffn2.w_1"),
+                      LayerWeights::bind(loader, p + ".ffn2.w_2")};
+        layer.attention_norm = LayerWeights::bind(loader, p + ".attn_layer_norm");
+        layer.final_norm = LayerWeights::bind(loader, p + ".final_layer_norm");
+        layer.attention = {
+            LayerWeights::bind(loader, p + ".attn.query_proj"), LayerWeights::bind(loader, p + ".attn.key_proj"),
+            LayerWeights::bind(loader, p + ".attn.value_proj"), LayerWeights::bind(loader, p + ".attn.out_proj")};
+        layer.convolution.norm = LayerWeights::bind(loader, p + ".conv_module.layer_norm");
+        layer.convolution.input = LayerWeights::bind(loader, p + ".conv_module.conv_block.1", false);
+        layer.convolution.depthwise = LayerWeights::bind(loader, p + ".conv_module.conv_block.3", false);
+        layer.convolution.output_norm = LayerWeights::bind(loader, p + ".conv_module.conv_block.4.1");
+        layer.convolution.output = LayerWeights::bind(loader, p + ".conv_module.conv_block.6", false);
         layers.push_back(layer);
     }
 }
-
 
 TextParameters Mert2Model::text_parameters() const { return {0, 0, 0}; }
 int Mert2Model::projection_dimension() const { return h.hidden; }
@@ -153,7 +173,6 @@ bool Mert2Model::is_waveform_encoder() const { return true; }
 std::vector<float> Mert2Model::text(const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MERT2 has no text encoder");
 }
-
 
 HostMatrix Mert2Model::frontend(const std::vector<float> &pcm) const {
     const int fft_size = h.fft, hop = h.hop;
@@ -167,8 +186,10 @@ HostMatrix Mert2Model::frontend(const std::vector<float> &pcm) const {
     for (int frame = 0; frame < frames; ++frame) {
         for (int index = 0; index < fft_size; ++index) {
             int source = frame * hop + index - fft_size / 2;
-            if (source < 0) source = -source;
-            if (source >= static_cast<int>(pcm.size())) source = 2 * static_cast<int>(pcm.size()) - 2 - source;
+            if (source < 0)
+                source = -source;
+            if (source >= static_cast<int>(pcm.size()))
+                source = 2 * static_cast<int>(pcm.size()) - 2 - source;
             spectrum[index] = pcm[source] * scalar(window, index);
         }
         clap::fft(spectrum);
@@ -180,8 +201,7 @@ HostMatrix Mert2Model::frontend(const std::vector<float> &pcm) const {
             for (int frequency = 0; frequency < frequencies; ++frequency)
                 value += power[frequency] * scalar(filters, static_cast<size_t>(frequency) * bins + bin);
             value = 10.0f * std::log10(std::max(value, 1e-10f));
-            mel[frame][bin] = (value - scalar(mean, bin)) /
-                              std::max(scalar(stddev, bin), 1e-5f);
+            mel[frame][bin] = (value - scalar(mean, bin)) / std::max(scalar(stddev, bin), 1e-5f);
         }
     }
     return mel;
@@ -202,7 +222,8 @@ ggml_tensor *Mert2Model::subsample(Graph &g, ggml_tensor *hidden) const {
             value = g.norm(value, block.norm, epsilon);
             value = ggml_gelu_erf(ctx, g.linear(value, block.input));
             auto *time_major = ggml_cont(ctx, ggml_transpose(ctx, value));
-            auto *magnitude = ggml_cont(ctx, ggml_transpose(ctx, ggml_sqrt(ctx, ggml_sum_rows(ctx, ggml_sqr(ctx, time_major)))));
+            auto *magnitude =
+                ggml_cont(ctx, ggml_transpose(ctx, ggml_sqrt(ctx, ggml_sum_rows(ctx, ggml_sqr(ctx, time_major)))));
             auto *average = ggml_add(ctx, ggml_mean(ctx, magnitude), g.input({1e-6f}, 1, 1));
             auto *normalized = ggml_div(ctx, magnitude, average);
             auto *scaled = ggml_mul(ctx, ggml_mul(ctx, value, g.weight(block.response.weight)), normalized);

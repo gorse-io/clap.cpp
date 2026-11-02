@@ -21,7 +21,7 @@ namespace clap::detail {
 // no-replace hard-link operation, never an exists/rename pair. Filesystems that
 // cannot create hard links fail safely instead of falling back to clobbering.
 class QuantizeOutput {
-public:
+  public:
     explicit QuantizeOutput(const std::filesystem::path &destination) : destination_(destination) {
         std::random_device random;
         for (int attempt = 0; attempt < 100; ++attempt) {
@@ -29,14 +29,15 @@ public:
             temporary_ += ".tmp-" + std::to_string(random()) + "-" + std::to_string(random());
             int fd = -1;
 #ifdef _WIN32
-            const int error = _wsopen_s(&fd, temporary_.c_str(),
-                _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _SH_DENYRW, _S_IREAD | _S_IWRITE);
+            const int error = _wsopen_s(&fd, temporary_.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _SH_DENYRW,
+                                        _S_IREAD | _S_IWRITE);
 #else
             fd = ::open(temporary_.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
             const int error = fd < 0 ? errno : 0;
 #endif
             if (fd < 0) {
-                if (error == EEXIST) continue;
+                if (error == EEXIST)
+                    continue;
                 throw std::system_error(error, std::generic_category(), "cannot create temporary output");
             }
 #ifdef _WIN32
@@ -62,7 +63,8 @@ public:
     QuantizeOutput(const QuantizeOutput &) = delete;
     QuantizeOutput &operator=(const QuantizeOutput &) = delete;
     ~QuantizeOutput() {
-        if (stream_) std::fclose(stream_);
+        if (stream_)
+            std::fclose(stream_);
         std::error_code ignored;
         std::filesystem::remove(temporary_, ignored);
     }
@@ -71,18 +73,22 @@ public:
             throw std::runtime_error("cannot write output");
     }
     void close() {
-        if (!stream_) throw std::runtime_error("output already closed");
+        if (!stream_)
+            throw std::runtime_error("output already closed");
         auto *stream = stream_;
         stream_ = nullptr;
-        if (std::fclose(stream) != 0) throw std::runtime_error("cannot finish output");
+        if (std::fclose(stream) != 0)
+            throw std::runtime_error("cannot finish output");
     }
     void publish() {
-        if (stream_) throw std::runtime_error("output must be closed before publication");
+        if (stream_)
+            throw std::runtime_error("output must be closed before publication");
         std::filesystem::create_hard_link(temporary_, destination_);
         std::filesystem::remove(temporary_);
         temporary_.clear();
     }
-private:
+
+  private:
     std::filesystem::path destination_, temporary_;
     std::FILE *stream_ = nullptr;
 };

@@ -15,4 +15,4 @@ struct HostMatrix {
 };
 float scalar(const ggml_tensor *tensor, size_t index);
 void tensor_row(const ggml_tensor *tensor, int64_t row, float *output);
-}
+} // namespace clap::detail

@@ -12,11 +12,12 @@
 #include <vector>
 
 static void require(bool value, const std::string &message) {
-    if (!value) throw std::runtime_error(message);
+    if (!value)
+        throw std::runtime_error(message);
 }
 
-static void compare(const std::vector<float> &actual, const std::vector<float> &expected,
-                    float tolerance, const std::string &name) {
+static void compare(const std::vector<float> &actual, const std::vector<float> &expected, float tolerance,
+                    const std::string &name) {
     require(actual.size() == expected.size(), name + " shape mismatch");
     float error = 0;
     for (size_t i = 0; i < actual.size(); ++i) {
@@ -43,8 +44,7 @@ int main(int argc, char **argv) {
             const auto output = model.audio_frames(waveform, fixture.at("sample_rate"));
             require(output.frames == test.at("frames"), test.at("name").get<std::string>() + " frame count");
             require(output.dimension == fixture.at("hidden_size"), "MERT2 frame width");
-            compare(output.values, test.at("expected_frames").get<std::vector<float>>(), tolerance,
-                    test.at("name"));
+            compare(output.values, test.at("expected_frames").get<std::vector<float>>(), tolerance, test.at("name"));
             compare(model.encode_audio(waveform, fixture.at("sample_rate")),
                     test.at("expected_pooled").get<std::vector<float>>(), tolerance,
                     test.at("name").get<std::string>() + " pooled");
@@ -57,19 +57,28 @@ int main(int argc, char **argv) {
         }
 
         bool rejected = false;
-        try { model.audio_frames(std::vector<float>(fixture.at("minimum_input_samples").get<size_t>() - 1),
-                                 fixture.at("sample_rate")); }
-        catch (const std::exception &) { rejected = true; }
+        try {
+            model.audio_frames(std::vector<float>(fixture.at("minimum_input_samples").get<size_t>() - 1),
+                               fixture.at("sample_rate"));
+        } catch (const std::exception &) {
+            rejected = true;
+        }
         require(rejected, "too-short MERT2 waveform must be rejected");
         rejected = false;
         auto invalid = fixture.at("waveform_cases").at(0).at("waveform").get<std::vector<float>>();
         invalid[0] = std::numeric_limits<float>::quiet_NaN();
-        try { model.audio_frames(invalid, fixture.at("sample_rate")); }
-        catch (const std::exception &) { rejected = true; }
+        try {
+            model.audio_frames(invalid, fixture.at("sample_rate"));
+        } catch (const std::exception &) {
+            rejected = true;
+        }
         require(rejected, "non-finite MERT2 waveform must be rejected");
         rejected = false;
-        try { model.encode_text("MERT2 has no text tower"); }
-        catch (const std::exception &) { rejected = true; }
+        try {
+            model.encode_text("MERT2 has no text tower");
+        } catch (const std::exception &) {
+            rejected = true;
+        }
         require(rejected, "MERT2 text input must be rejected");
         std::cout << "Native MERT-v2-FullSong parity passed\n";
         return 0;

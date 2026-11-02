@@ -7,14 +7,15 @@
 #include <stdexcept>
 
 static void require(bool value, const std::string &message) {
-    if (!value) throw std::runtime_error(message);
+    if (!value)
+        throw std::runtime_error(message);
 }
 int main(int argc, char **argv) {
     try {
         require(argc == 2, "usage: clap-audio-test FIXTURE_DIR");
         const std::filesystem::path dir(argv[1]);
-        for (const auto &name : {"mono.wav", "mono.flac", "mono.mp3", "stereo.wav",
-                                 "stereo.flac", "stereo.mp3", "unknown-length.flac", "pcm24.wav", "float.wav"}) {
+        for (const auto &name : {"mono.wav", "mono.flac", "mono.mp3", "stereo.wav", "stereo.flac", "stereo.mp3",
+                                 "unknown-length.flac", "pcm24.wav", "float.wav"}) {
             const auto audio = clap::decode_audio((dir / name).string());
             std::ifstream file(dir / name, std::ios::binary);
             const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
@@ -50,21 +51,31 @@ int main(int argc, char **argv) {
         for (const auto &path : {dir / "truncated.wav", dir / "truncated.flac", dir / "nonfinite.wav",
                                  dir / "missing.wav", dir / "invalid.bin", dir / "empty.wav"}) {
             bool rejected = false;
-            try { clap::decode_audio(path.string()); } catch (const std::exception &) { rejected = true; }
+            try {
+                clap::decode_audio(path.string());
+            } catch (const std::exception &) {
+                rejected = true;
+            }
             require(rejected, "must reject " + path.string());
             if (std::filesystem::exists(path)) {
                 std::ifstream file(path, std::ios::binary);
                 const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
                 rejected = false;
-                try { clap::decode_audio(bytes.data(), bytes.size()); }
-                catch (const std::exception &) { rejected = true; }
+                try {
+                    clap::decode_audio(bytes.data(), bytes.size());
+                } catch (const std::exception &) {
+                    rejected = true;
+                }
                 require(rejected, "must reject memory audio " + path.string());
             }
         }
         for (size_t size : {size_t{0}, size_t{4}}) {
             bool rejected = false;
-            try { clap::decode_audio(nullptr, size); }
-            catch (const std::exception &) { rejected = true; }
+            try {
+                clap::decode_audio(nullptr, size);
+            } catch (const std::exception &) {
+                rejected = true;
+            }
             require(rejected, "must reject null audio buffer");
         }
         return 0;

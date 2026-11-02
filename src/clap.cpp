@@ -20,40 +20,43 @@ int main(int argc, char **argv) {
     std::string server_device;
     auto *devices = app.add_subcommand("devices", "List available GGML devices");
     auto *serve = app.add_subcommand("serve", "Start the embeddings HTTP server");
-    serve->add_option("-m,--model", server_model, "Converted model GGUF")
-        ->required()->check(CLI::ExistingFile);
+    serve->add_option("-m,--model", server_model, "Converted model GGUF")->required()->check(CLI::ExistingFile);
     serve->add_option("-t,--threads", server_threads, "ggml CPU threads (0: automatic)")
-        ->check(CLI::NonNegativeNumber)->capture_default_str();
+        ->check(CLI::NonNegativeNumber)
+        ->capture_default_str();
     serve->add_option("--device", server_device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
     serve->add_option("--host", host, "Listen address")->capture_default_str();
-    serve->add_option("--port", port, "Listen port")
-        ->check(CLI::Range(1, 65535))->capture_default_str();
+    serve->add_option("--port", port, "Listen port")->check(CLI::Range(1, 65535))->capture_default_str();
 
     EmbeddingOptions options;
     std::string file;
     auto *embedding = app.add_subcommand("embedding", "Generate native text or audio embeddings");
     embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
-        ->required()->check(CLI::ExistingFile);
+        ->required()
+        ->check(CLI::ExistingFile);
     embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: automatic)")
-        ->check(CLI::NonNegativeNumber)->capture_default_str();
+        ->check(CLI::NonNegativeNumber)
+        ->capture_default_str();
     embedding->add_option("--device", options.device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
     auto *input = embedding->add_option_group("Input", "Choose one text prompt, text file, or audio file");
     input->require_option(1, 1);
     input->add_option("-p,--prompt", options.text, "Separator-delimited text (default output: raw)");
     auto *text_option = input->add_option("--text", options.text, "One UTF-8 text (default output: flat JSON vector)");
-    auto *file_option = input->add_option("-f,--file", file, "Read input text from a file")
-        ->check(CLI::ExistingFile);
-    auto *audio_option = input->add_option("-a,--audio", options.audio_path,
-                                         "WAV, MP3 or FLAC (default output: flat JSON vector)")
-        ->check(CLI::ExistingFile);
+    auto *file_option = input->add_option("-f,--file", file, "Read input text from a file")->check(CLI::ExistingFile);
+    auto *audio_option =
+        input->add_option("-a,--audio", options.audio_path, "WAV, MP3 or FLAC (default output: flat JSON vector)")
+            ->check(CLI::ExistingFile);
     embedding->add_option("--embd-separator", options.separator, "Prompt/file separator (default: newline)");
-    embedding->add_option("--embd-output-format", options.format,
-                          "Explicit output: raw rows, array of vectors, JSON list, or JSON list with cosine similarities")
+    embedding
+        ->add_option("--embd-output-format", options.format,
+                     "Explicit output: raw rows, array of vectors, JSON list, or JSON list with cosine similarities")
         ->check(CLI::IsMember({"raw", "array", "json", "json+"}));
-    auto *crop_option = embedding->add_option("--crop-offset", options.crop_offset,
-                                            "Sample offset at 48 kHz into CLAP audio longer than ten seconds")
-        ->check(CLI::NonNegativeNumber);
-    embedding->add_flag("--frames", options.frames, "Return final-layer waveform-encoder frames instead of mean pooling");
+    auto *crop_option = embedding
+                            ->add_option("--crop-offset", options.crop_offset,
+                                         "Sample offset at 48 kHz into CLAP audio longer than ten seconds")
+                            ->check(CLI::NonNegativeNumber);
+    embedding->add_flag("--frames", options.frames,
+                        "Return final-layer waveform-encoder frames instead of mean pooling");
     embedding->add_flag("--clamp3-features", options.clamp3_features,
                         "Return MERT-v1 mean-layer/time features (one vector per 5 s window)");
 
@@ -82,7 +85,8 @@ int main(int argc, char **argv) {
         if (*embedding) {
             options.single_text = text_option->count() != 0;
             options.crop_requested = crop_option->count() != 0;
-            if (options.separator.empty()) throw std::runtime_error("Input separator must not be empty");
+            if (options.separator.empty())
+                throw std::runtime_error("Input separator must not be empty");
             if (options.crop_requested && !*audio_option)
                 throw std::runtime_error("--crop-offset requires --audio");
             if (options.frames && (!*audio_option || options.crop_requested))
@@ -91,7 +95,8 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("--clamp3-features requires --audio and excludes --frames/--crop-offset");
             if (*file_option) {
                 std::ifstream stream(file, std::ios::binary);
-                if (!stream) throw std::runtime_error("Failed to open input file: " + file);
+                if (!stream)
+                    throw std::runtime_error("Failed to open input file: " + file);
                 std::string contents;
                 char buffer[4096];
                 while (stream.read(buffer, sizeof(buffer))) {

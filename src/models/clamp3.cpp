@@ -7,8 +7,7 @@
 namespace clap::detail {
 using json = nlohmann::json;
 
-Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
-    : loader(source), runtime(source, threads) {
+Clamp3Model::Clamp3Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
     bind_tensors();
@@ -24,14 +23,17 @@ Clamp3Model::Clamp3Model(const ModelLoader &source, int threads)
             throw std::runtime_error("CLAP: CLaMP3/MERT feature dimension mismatch");
         frontend = std::make_unique<MertModel>(loader, threads, "mert.", "clamp3.");
     } else {
-        throw std::runtime_error("CLAP: CLaMP3 requires bundled MERT-v1-95M audio frontend metadata; reconvert the checkpoint");
+        throw std::runtime_error(
+            "CLAP: CLaMP3 requires bundled MERT-v1-95M audio frontend metadata; reconvert the checkpoint");
     }
 }
 Clamp3Model::~Clamp3Model() = default;
 bool Clamp3Model::has_waveform_embeddings() const { return frontend != nullptr; }
 std::vector<float> Clamp3Model::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
-    if (crop_offset != 0) throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
-    if (!frontend) throw std::runtime_error("CLAP: CLaMP3 requires MERT-v1-95M features");
+    if (crop_offset != 0)
+        throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
+    if (!frontend)
+        throw std::runtime_error("CLAP: CLaMP3 requires MERT-v1-95M features");
     const auto features = frontend->clamp3_features(pcm);
     return encode_features(features.values, features.frames);
 }
@@ -44,8 +46,8 @@ void Clamp3Model::load_arch_hparams() {
         throw std::runtime_error("CLAP: CLaMP3 chunk length must be 128");
     audio_config = config.at("audio_config");
     text_config = config.at("text_config");
-    for (const auto *key : {"hidden_size", "num_hidden_layers", "num_attention_heads",
-                            "intermediate_size", "max_position_embeddings", "type_vocab_size"}) {
+    for (const auto *key : {"hidden_size", "num_hidden_layers", "num_attention_heads", "intermediate_size",
+                            "max_position_embeddings", "type_vocab_size"}) {
         if (!(audio_config.at(key).get<int>() > 0))
             throw std::runtime_error(std::string("CLAP: invalid audio ") + key);
         if (!(text_config.at(key).get<int>() > 0))
@@ -113,9 +115,12 @@ void Clamp3Model::load_arch_tensors() const {
 void Clamp3Model::bind_tensors() {
     projection_dim = config.at("projection_dim");
     auto bind = [&](Branch &branch, const json &c, const std::string &prefix, bool text) {
-        branch.hidden = c.at("hidden_size"); branch.heads = c.at("num_attention_heads");
-        branch.epsilon = c.at("layer_norm_eps"); branch.positions = c.at("max_position_embeddings");
-        branch.pad = c.value("pad_token_id", 0); branch.vocab = c.value("vocab_size", 0);
+        branch.hidden = c.at("hidden_size");
+        branch.heads = c.at("num_attention_heads");
+        branch.epsilon = c.at("layer_norm_eps");
+        branch.positions = c.at("max_position_embeddings");
+        branch.pad = c.value("pad_token_id", 0);
+        branch.vocab = c.value("vocab_size", 0);
         branch.bos = text ? c.at("bos_token_id").get<int>() : 0;
         branch.eos = text ? c.at("eos_token_id").get<int>() : 0;
         branch.embeddings = bind_embeddings(loader, prefix + ".embeddings", text);
@@ -127,10 +132,8 @@ void Clamp3Model::bind_tensors() {
     bind(text_branch, text_config, "text", true);
 }
 
-
 TextParameters Clamp3Model::text_parameters() const {
-    return {text_branch.bos, text_branch.eos,
-            std::numeric_limits<size_t>::max()};
+    return {text_branch.bos, text_branch.eos, std::numeric_limits<size_t>::max()};
 }
 int Clamp3Model::projection_dimension() const { return projection_dim; }
 int Clamp3Model::mel_bins() const { return 0; }
@@ -143,9 +146,10 @@ AudioFrames Clamp3Model::audio_frames(const std::vector<float> &) const {
 ggml_tensor *Clamp3Model::attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask,
                                     const AttentionWeights &weights, int heads) const {
     std::vector<float> scores(mask.size());
-    for (size_t i = 0; i < mask.size(); ++i) scores[i] = mask[i] ? 0.0f : -1e30f;
-    return g.attention(g.linear(x, weights.query), g.linear(x, weights.key),
-                       g.linear(x, weights.value), heads, g.input(scores, scores.size(), 1));
+    for (size_t i = 0; i < mask.size(); ++i)
+        scores[i] = mask[i] ? 0.0f : -1e30f;
+    return g.attention(g.linear(x, weights.query), g.linear(x, weights.key), g.linear(x, weights.value), heads,
+                       g.input(scores, scores.size(), 1));
 }
 
 ggml_tensor *Clamp3Model::encode(Graph &g, ggml_tensor *embeddings, const std::vector<int> &mask,
@@ -176,8 +180,8 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
     const size_t remainder = ids.size() % chunk;
     double total_weight = 0;
     for (size_t part = 0; part < segments; ++part) {
-        const size_t start = part + 1 == segments && ids.size() > static_cast<size_t>(chunk)
-                           ? ids.size() - chunk : part * chunk;
+        const size_t start =
+            part + 1 == segments && ids.size() > static_cast<size_t>(chunk) ? ids.size() - chunk : part * chunk;
         const size_t length = std::min(static_cast<size_t>(chunk), ids.size() - start);
         std::vector<int> mask(chunk), tokens(chunk), positions(chunk);
         int position = pad;
@@ -192,18 +196,23 @@ std::vector<float> Clamp3Model::chunked_text(const std::vector<int> &ids) const 
             tokens[row] = id;
             positions[row] = pos;
         }
-        const auto output = runtime.run_cached("text:" + std::to_string(length), {GraphInput(tokens), GraphInput(positions)}, [&](Graph &g) {
-            auto *embeddings = ggml_add(g.ctx(), g.embedding(text_branch.embeddings.word, g.dynamic_input(0)),
-                                       g.embedding(text_branch.embeddings.position, g.dynamic_input(1)));
-            embeddings = ggml_add(g.ctx(), embeddings, g.embedding(text_branch.embeddings.type, std::vector<int>{0}));
-            return std::vector<ggml_tensor *>{pool_project(g, encode(g, embeddings, mask, text_branch), mask, text_branch.projection)};
-        });
+        const auto output = runtime.run_cached(
+            "text:" + std::to_string(length), {GraphInput(tokens), GraphInput(positions)}, [&](Graph &g) {
+                auto *embeddings = ggml_add(g.ctx(), g.embedding(text_branch.embeddings.word, g.dynamic_input(0)),
+                                            g.embedding(text_branch.embeddings.position, g.dynamic_input(1)));
+                embeddings =
+                    ggml_add(g.ctx(), embeddings, g.embedding(text_branch.embeddings.type, std::vector<int>{0}));
+                return std::vector<ggml_tensor *>{
+                    pool_project(g, encode(g, embeddings, mask, text_branch), mask, text_branch.projection)};
+            });
         const auto &projected = output.front().values;
         const size_t weight = part + 1 == segments && remainder ? remainder : chunk;
         total_weight += weight;
-        for (size_t i = 0; i < result.size(); ++i) result[i] += projected[i] * weight;
+        for (size_t i = 0; i < result.size(); ++i)
+            result[i] += projected[i] * weight;
     }
-    for (float &value : result) value = static_cast<float>(value / total_weight);
+    for (float &value : result)
+        value = static_cast<float>(value / total_weight);
     return result;
 }
 
@@ -215,8 +224,8 @@ std::vector<float> Clamp3Model::chunked_audio(const HostMatrix &features) const 
     const size_t remainder = frames % chunk;
     double total_weight = 0;
     for (size_t part = 0; part < segments; ++part) {
-        const size_t start = part + 1 == segments && frames > static_cast<size_t>(chunk)
-                           ? frames - chunk : part * chunk;
+        const size_t start =
+            part + 1 == segments && frames > static_cast<size_t>(chunk) ? frames - chunk : part * chunk;
         const size_t length = std::min(static_cast<size_t>(chunk), frames - start);
         HostMatrix input_values(chunk, dim);
         std::vector<int> mask(chunk), positions(chunk);
@@ -228,17 +237,23 @@ std::vector<float> Clamp3Model::chunked_audio(const HostMatrix &features) const 
                 input_values[row][c] = input;
             }
         }
-        const auto output = runtime.run_cached("audio:" + std::to_string(length), {GraphInput(input_values)}, [&](Graph &g) {
-            auto *embeddings = ggml_add(g.ctx(), g.dynamic_input(0), g.embedding(audio_branch.embeddings.position, positions));
-            embeddings = ggml_add(g.ctx(), embeddings, g.embedding(audio_branch.embeddings.type, std::vector<int>{0}));
-            return std::vector<ggml_tensor *>{pool_project(g, encode(g, embeddings, mask, audio_branch), mask, audio_branch.projection)};
-        });
+        const auto output =
+            runtime.run_cached("audio:" + std::to_string(length), {GraphInput(input_values)}, [&](Graph &g) {
+                auto *embeddings =
+                    ggml_add(g.ctx(), g.dynamic_input(0), g.embedding(audio_branch.embeddings.position, positions));
+                embeddings =
+                    ggml_add(g.ctx(), embeddings, g.embedding(audio_branch.embeddings.type, std::vector<int>{0}));
+                return std::vector<ggml_tensor *>{
+                    pool_project(g, encode(g, embeddings, mask, audio_branch), mask, audio_branch.projection)};
+            });
         const auto &projected = output.front().values;
         const size_t weight = part + 1 == segments && remainder ? remainder : chunk;
         total_weight += weight;
-        for (size_t i = 0; i < result.size(); ++i) result[i] += projected[i] * weight;
+        for (size_t i = 0; i < result.size(); ++i)
+            result[i] += projected[i] * weight;
     }
-    for (float &value : result) value = static_cast<float>(value / total_weight);
+    for (float &value : result)
+        value = static_cast<float>(value / total_weight);
     return result;
 }
 

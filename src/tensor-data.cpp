@@ -9,8 +9,10 @@ HostMatrix::HostMatrix(int r, int c) : rows(r), cols(c), data() {
     data.resize(static_cast<size_t>(r) * c);
 }
 float scalar(const ggml_tensor *t, size_t i) {
-    if (t->type == GGML_TYPE_F32) return static_cast<const float *>(t->data)[i];
-    if (t->type == GGML_TYPE_F16) return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
+    if (t->type == GGML_TYPE_F32)
+        return static_cast<const float *>(t->data)[i];
+    if (t->type == GGML_TYPE_F16)
+        return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
     if (!(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q6_K))
         throw std::runtime_error("CLAP: unsupported scalar tensor type");
     // Decode only the containing block (embeddings, relative biases, or norms),
@@ -25,7 +27,8 @@ void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
     if (!(row >= 0 && row < ggml_nrows(t)))
         throw std::runtime_error("CLAP: embedding row out of range");
     const auto *data = static_cast<const uint8_t *>(t->data) + row * t->nb[1];
-    if (t->type == GGML_TYPE_F32) std::copy_n(reinterpret_cast<const float *>(data), t->ne[0], output);
+    if (t->type == GGML_TYPE_F32)
+        std::copy_n(reinterpret_cast<const float *>(data), t->ne[0], output);
     else if (t->type == GGML_TYPE_F16)
         ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data), output, t->ne[0]);
     else {
@@ -35,4 +38,4 @@ void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
         traits->to_float(data, output, t->ne[0]);
     }
 }
-}
+} // namespace clap::detail
