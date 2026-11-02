@@ -20,8 +20,8 @@ void Mert2Model::load_arch_hparams() {
     config = json::parse(loader.metadata("mert2.config"));
     if (config.at("model_type") != "mert2")
         throw std::runtime_error("CLAP: not a MERT2 model");
-    if (config.at("variant") != "fs")
-        throw std::runtime_error("CLAP: only MERT-v2-FullSong variant 'fs' is supported");
+    if (config.at("variant") != "fs" && config.at("variant") != "30s")
+        throw std::runtime_error("CLAP: MERT2 variant must be 'fs' or '30s'");
     const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
     const int layers = config.at("num_hidden_layers"), heads = config.at("num_attention_heads");
     if (!(hidden > 0 && intermediate > 0 && layers > 0 && heads > 0 && hidden % heads == 0 &&
@@ -54,7 +54,7 @@ void Mert2Model::load_arch_hparams() {
         throw std::runtime_error("CLAP: invalid MERT2 rotary embedding base");
     const float context = config.at("context_seconds");
     if (!(std::isfinite(context) && context >= 30.0f))
-        throw std::runtime_error("CLAP: MERT-v2-FullSong context metadata must cover at least 30 seconds");
+        throw std::runtime_error("CLAP: MERT2 context metadata must cover at least 30 seconds");
 }
 
 void Mert2Model::load_arch_tensors() const {
@@ -151,7 +151,7 @@ int Mert2Model::sample_rate() const { return h.sample_rate; }
 bool Mert2Model::is_waveform_encoder() const { return true; }
 
 std::vector<float> Mert2Model::text(const std::vector<int> &) const {
-    throw std::runtime_error("CLAP: MERT-v2-FullSong has no text encoder");
+    throw std::runtime_error("CLAP: MERT2 has no text encoder");
 }
 
 
