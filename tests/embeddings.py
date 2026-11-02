@@ -137,6 +137,14 @@ class EmbeddingsTest(unittest.TestCase):
         # Rejections must not poison the model/server.
         self.assertEqual(request(self.url, {"input": "hello"})[0], 200)
 
+
+class EmbeddingsFailureTest(unittest.TestCase):
+    # Run startup/error cases without the healthy class-scoped server alive:
+    # concurrent Metal library initialization can stall on paravirtual macOS GPUs.
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="clap-http-failure-")
+        self.addCleanup(self.directory.cleanup)
+
     def test_inference_failure_is_json_and_server_survives(self):
         model = Path(self.directory.name) / "broken-projection.gguf"
         write_model(model, broken_projection=True)
