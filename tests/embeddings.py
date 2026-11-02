@@ -39,7 +39,8 @@ def running_server(binary, model):
                 except OSError:
                     time.sleep(0.05)
             else:
-                raise AssertionError("Server did not become ready")
+                output.seek(0)
+                raise AssertionError("Server did not become ready: " + output.read())
             yield f"http://127.0.0.1:{port}/v1/embeddings"
         finally:
             if process.poll() is None:
@@ -135,6 +136,14 @@ class EmbeddingsTest(unittest.TestCase):
                 self.assertTrue(result["error"]["message"])
         # Rejections must not poison the model/server.
         self.assertEqual(request(self.url, {"input": "hello"})[0], 200)
+
+
+class EmbeddingsFailureTest(unittest.TestCase):
+    # Run startup/error cases without the healthy class-scoped server alive:
+    # concurrent Metal library initialization can stall on paravirtual macOS GPUs.
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="clap-http-failure-")
+        self.addCleanup(self.directory.cleanup)
 
     def test_inference_failure_is_json_and_server_survives(self):
         model = Path(self.directory.name) / "broken-projection.gguf"

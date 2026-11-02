@@ -165,7 +165,23 @@ static void precision(const std::string &path) {
     GraphRuntime runtime(loader, 2);
     const auto weights = LayerWeights::bind(loader, "dense");
     HostMatrix input(11, 64);
-    auto build = [&](Graph &g) { return std::vector<ggml_tensor *>{g.linear(g.dynamic_input(0), weights)}; };
+    const auto device_name = runtime.stats().device;
+    auto device = ggml_backend_dev_by_name(device_name.c_str());
+    bool supports_matmul = false;
+    auto build = [&](Graph &g) {
+        auto *output = g.linear(g.dynamic_input(0), weights);
+        // A device can initialize without supporting this graph's F32 matmul
+        // (for example, Metal on Apple's paravirtual CI GPU). Keep checking
+        // numerical correctness on CPU, but require offload on capable GPUs.
+        auto *graph = ggml_new_graph(g.ctx());
+        ggml_build_forward_expand(graph, output);
+        for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+            auto *node = ggml_graph_node(graph, i);
+            if (node->op == GGML_OP_MUL_MAT && device_name != "CPU" && ggml_backend_dev_supports_op(device, node))
+                supports_matmul = true;
+        }
+        return std::vector<ggml_tensor *>{output};
+    };
     size_t uploads = 0;
     for (int pass = 0; pass < 2; ++pass) {
         for (size_t i = 0; i < input.data.size(); ++i)
@@ -184,8 +200,7 @@ static void precision(const std::string &path) {
         else
             require(stats.builds == 1 && stats.hits == 1 && stats.weight_uploads == uploads,
                     "dense graph/weights not reused");
-        if (stats.device != "CPU")
-            require(stats.device_matmul, "selected device did not execute F32 matmul");
+        require(stats.device_matmul == supports_matmul, "F32 matmul placement differs from device capability");
     }
 }
 static void devices(const std::string &path) {
