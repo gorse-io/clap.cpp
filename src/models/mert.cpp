@@ -22,9 +22,9 @@ void MertModel::load_arch_hparams() {
             (std::string(key) == "conv_bias" && !config.contains(key)))
             throw std::runtime_error(std::string("invalid MERT boolean ") + key);
     if (config.value("feature_extractor_cqt", false) || config.value("deepnorm", false) ||
-        config.value("do_stable_layer_norm", false) || config.at("feat_extract_norm") != "group" ||
-        !config.value("feat_proj_layer_norm", true) || config.value("conv_pos_batch_norm", false) ||
-        config.at("hidden_act") != "gelu" || config.at("feat_extract_activation") != "gelu")
+        config.at("feat_extract_norm") != "group" || !config.value("feat_proj_layer_norm", true) ||
+        config.value("conv_pos_batch_norm", false) || config.at("hidden_act") != "gelu" ||
+        config.at("feat_extract_activation") != "gelu")
         throw std::runtime_error("unsupported MERT-v1 frontend/encoder variant");
     auto positive_int = [](const nlohmann::json &value) {
         return value.is_number_integer() && value > 0 && value <= std::numeric_limits<int>::max();
@@ -176,15 +176,31 @@ HostMatrix MertModel::forward(const std::vector<float> &pcm, std::vector<float> 
             const int kernel = h.position_kernel;
             auto *position = g.conv1d(hidden, this->position, kernel, 1, kernel / 2, h.position_groups);
             position = ggml_view_2d(ctx, position, hidden->ne[0], hidden->ne[1], position->nb[1], 0);
-            hidden = g.norm(ggml_add(ctx, hidden, ggml_gelu_erf(ctx, position)), encoder_norm, epsilon);
+            const bool stable = config.value("do_stable_layer_norm", false);
+            hidden = ggml_add(ctx, hidden, ggml_gelu_erf(ctx, position));
+            if (!stable)
+                hidden = g.norm(hidden, encoder_norm, epsilon);
             const int layer_count = int(layers.size());
             ggml_tensor *mean = layer_mean ? g.mean_pool(hidden) : nullptr;
-            for (const auto &layer : layers) {
-                auto *value = attention(g, hidden, layer.attention);
-                hidden = g.norm(ggml_add(ctx, value, hidden), layer.attention_norm, epsilon);
-                value = ggml_gelu_erf(ctx, g.linear(hidden, layer.intermediate));
-                value = g.linear(value, layer.output);
-                hidden = g.norm(ggml_add(ctx, value, hidden), layer.output_norm, epsilon);
+            for (int i = 0; i < layer_count; ++i) {
+                const auto &layer = layers[i];
+                if (stable) {
+                    auto *value = attention(g, g.norm(hidden, layer.attention_norm, epsilon), layer.attention);
+                    hidden = ggml_add(ctx, value, hidden);
+                    value = g.norm(hidden, layer.output_norm, epsilon);
+                    value = ggml_gelu_erf(ctx, g.linear(value, layer.intermediate));
+                    hidden = ggml_add(ctx, g.linear(value, layer.output), hidden);
+                    // Official stable encoder exposes the unnormalized input of each
+                    // layer, but replaces the final state with encoder.layer_norm.
+                    if (i == layer_count - 1)
+                        hidden = g.norm(hidden, encoder_norm, epsilon);
+                } else {
+                    auto *value = attention(g, hidden, layer.attention);
+                    hidden = g.norm(ggml_add(ctx, value, hidden), layer.attention_norm, epsilon);
+                    value = ggml_gelu_erf(ctx, g.linear(hidden, layer.intermediate));
+                    value = g.linear(value, layer.output);
+                    hidden = g.norm(ggml_add(ctx, value, hidden), layer.output_norm, epsilon);
+                }
                 if (mean)
                     mean = ggml_add(ctx, mean, g.mean_pool(hidden));
             }

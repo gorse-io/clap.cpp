@@ -1,4 +1,4 @@
-"""MERT-v1-95M configuration validation and GGUF conversion."""
+"""MERT-v1 configuration validation and GGUF conversion."""
 import json
 import struct
 
@@ -20,7 +20,7 @@ def resolve_mert_source(revision=None):
 
 
 def mert_inputs(source, revision, torch):
-    """MERT-v1-95M/HuBERT post-norm inference; never execute checkpoint code."""
+    """MERT-v1/HuBERT pre/post-norm inference; never execute checkpoint code."""
     if not revision or len(revision) != 40 or any(c not in '0123456789abcdef' for c in revision.lower()):
         raise ValueError('MERT conversion requires --mert-revision with a full 40-character commit SHA')
     raw = json.loads((source / 'config.json').read_text())
@@ -43,10 +43,10 @@ def mert_inputs(source, revision, torch):
         raise ValueError('invalid MERT boolean conv_bias')
     if (raw.get('model_type') != 'mert_model' or raw.get('sample_rate') != 24000 or
         raw.get('feature_extractor_cqt', False) or raw.get('deepnorm', False) or
-        raw.get('do_stable_layer_norm', False) or raw.get('feat_extract_norm') != 'group' or
+        raw.get('feat_extract_norm') != 'group' or
         not raw.get('feat_proj_layer_norm', True) or raw.get('hidden_act') != 'gelu' or
         raw.get('feat_extract_activation') != 'gelu' or raw.get('conv_pos_batch_norm', False)):
-        raise ValueError('unsupported MERT-v1 architecture (expected 95M post-norm group frontend)')
+        raise ValueError('unsupported MERT-v1 architecture (expected group frontend with pre/post-norm encoder)')
     def positive_int(value):
         return type(value) is int and 0 < value <= 2**31 - 1
 
@@ -107,7 +107,10 @@ def mert_inputs(source, revision, torch):
                          .replace('encoder.layers.', 'layers.')
                          .replace('.feed_forward.intermediate_dense.', '.ffn.in.')
                          .replace('.feed_forward.output_dense.', '.ffn.out.'),value))
-    return selected, {'general.architecture':'mert', 'general.name':'m-a-p/MERT-v1-95M',
+    identity = raw.get('_name_or_path')
+    if not isinstance(identity, str) or not identity.strip():
+        identity = 'MERT-v1'
+    return selected, {'general.architecture':'mert', 'general.name':identity,
                       'mert.config':json.dumps(raw,separators=(',',':')),
                       'mert.source_revision':revision.lower()}
 
