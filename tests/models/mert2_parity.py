@@ -16,7 +16,7 @@ from safetensors.torch import save_file
 
 build, out, reference = map(Path, sys.argv[1:])
 root = Path(__file__).resolve().parents[2]
-revision = "7001f7657276238629e61c7746ce70735e0604c0"
+revision = "0c0c8c6f6e04dcc39d96f94e0be9978a74848906"
 
 if out.exists():
     shutil.rmtree(out)
@@ -97,8 +97,6 @@ save_file(model.state_dict(), out / "model.safetensors")
 
 converter = root / "convert_hf_to_gguf.py"
 common = ["--mert2-revision", revision]
-subprocess.run([sys.executable, str(converter), str(out), str(out / "model.gguf"), *common], check=True)
-subprocess.run([str(build / "mert2-model-test"), str(out / "model.gguf"), str(out / "fixture.json")], check=True)
 
 # Match converter storage rounding. The official frontend deliberately remains
 # float32 under model.half(), so its spectrogram/mel tensors remain exact.
@@ -110,16 +108,47 @@ rounded.load_state_dict(state, strict=True)
 # F16 weights retain F32 activations; expose unintended F16 input packing.
 f16 = fixture_for(rounded, 2e-5)
 (out / "fixture-f16.json").write_text(json.dumps(f16))
-subprocess.run([sys.executable, str(converter), str(out), str(out / "model-f16.gguf"),
-                "--dtype", "f16", *common], check=True)
-subprocess.run([str(build / "mert2-model-test"), str(out / "model-f16.gguf"),
-                str(out / "fixture-f16.json")], check=True)
 
-# A 30-second checkpoint must not be accepted under the FullSong architecture.
+# The official model code is shared: variant/context describe the checkpoint,
+# not a cropping policy. Exercise the same >30-second waveform for both variants.
+sys.path.insert(0, str(root))
+from conversion.mert2 import mert2_inputs, write_safetensors_gguf
+import numpy as np
+
+for variant, context, model_name in (("fs", 360, "m-a-p/MERT-v2-FullSong"),
+                                     ("30s", 30, "m-a-p/MERT-v2-30s")):
+    current = out / "30s" if variant == "30s" else out
+    current.mkdir(exist_ok=True)
+    config.variant, config.context_seconds = variant, context
+    config.to_json_file(current / "config.json")
+    if current != out:
+        for name in ("model.safetensors", "preprocessor_config.json", "fixture.json", "fixture-f16.json"):
+            shutil.copy2(out / name, current / name)
+    for dtype, suffix in (("f32", ""), ("f16", "-f16")):
+        target = current / f"model{suffix}.gguf"
+        subprocess.run([sys.executable, str(converter), str(current), str(target),
+                        "--dtype", dtype, *common], check=True)
+        checkpoint, metadata = mert2_inputs(current, revision)
+        assert metadata["general.name"] == model_name, metadata
+        assert json.loads(metadata["mert2.config"]) == json.loads((current / "config.json").read_text())
+        assert metadata["mert2.source_revision"] == revision
+        subprocess.run([str(build / "mert2-model-test"), str(target),
+                        str(current / f"fixture{suffix}.json")], check=True)
+    print(f"Synthetic official MERT2 {variant} F32/F16 and >30-second parity passed", flush=True)
+
+# Retain unsupported-variant rejection, including the native loader. Bypass
+# converter validation only to serialize an otherwise valid negative fixture.
 raw = json.loads((out / "config.json").read_text())
-raw["variant"] = "30s"
+raw["variant"] = "unsupported"
 (out / "config.json").write_text(json.dumps(raw))
 failed = subprocess.run([sys.executable, str(converter), str(out), str(out / "must-not-exist.gguf"), *common],
                         text=True, capture_output=True)
-assert failed.returncode and "FullSong" in failed.stderr, failed.stderr
-print("Synthetic official MERT2 FullSong F32/F16 and >30-second parity passed")
+assert failed.returncode and "variant" in failed.stderr, failed.stderr
+assert not (out / "must-not-exist.gguf").exists()
+metadata["mert2.config"] = json.dumps(raw, separators=(",", ":"))
+invalid = out / "invalid-variant.gguf"
+write_safetensors_gguf(invalid, checkpoint, metadata, "f32", np, torch)
+failed = subprocess.run([str(build / "mert2-model-test"), str(invalid), str(out / "fixture.json")],
+                        text=True, capture_output=True)
+assert failed.returncode and "variant" in failed.stderr, failed.stderr
+print("Unsupported MERT2 variant rejected by converter and runtime")

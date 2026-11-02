@@ -15,8 +15,8 @@ def mert2_inputs(source, revision):
     raw = json.loads((source / 'config.json').read_text())
     if raw.get('model_type') != 'mert2':
         raise ValueError('expected model_type mert2')
-    if raw.get('variant') != 'fs':
-        raise ValueError("only MERT-v2-FullSong variant 'fs' is supported")
+    if raw.get('variant') not in ('fs', '30s'):
+        raise ValueError("MERT2 variant must be 'fs' or '30s'")
     positive = ('hidden_size', 'intermediate_size', 'num_hidden_layers', 'num_attention_heads',
                 'num_mel_bins', 'sampling_rate', 'n_fft', 'win_length', 'hop_length',
                 'conv_depthwise_kernel_size', 'rotary_embedding_base')
@@ -35,7 +35,7 @@ def mert2_inputs(source, revision):
             len(raw.get('subsampling_channels', [])) != 3 or len(raw.get('subsampling_depths', [])) != 3:
         raise ValueError('invalid MERT2 subsampling configuration')
     if raw.get('context_seconds', 0) < 30:
-        raise ValueError('MERT-v2-FullSong context metadata must cover at least 30 seconds')
+        raise ValueError('MERT2 context metadata must cover at least 30 seconds')
     preprocessing = json.loads((source / 'preprocessor_config.json').read_text())
     required = {'feature_extractor_type': 'Wav2Vec2FeatureExtractor', 'feature_size': 1,
                 'sampling_rate': raw['sampling_rate'], 'padding_value': 0.0,
@@ -46,7 +46,8 @@ def mert2_inputs(source, revision):
     checkpoint = source / 'model.safetensors'
     if not checkpoint.is_file():
         raise ValueError('MERT2 source is missing model.safetensors')
-    metadata = {'general.architecture': 'mert2', 'general.name': 'm-a-p/MERT-v2-FullSong',
+    model_name = 'm-a-p/MERT-v2-FullSong' if raw['variant'] == 'fs' else 'm-a-p/MERT-v2-30s'
+    metadata = {'general.architecture': 'mert2', 'general.name': model_name,
                 'mert2.config': json.dumps(raw, separators=(',', ':')),
                 'mert2.source_revision': revision.lower()}
     return checkpoint, metadata
