@@ -39,7 +39,8 @@ def running_server(binary, model):
                 except OSError:
                     time.sleep(0.05)
             else:
-                raise AssertionError("Server did not become ready")
+                output.seek(0)
+                raise AssertionError("Server did not become ready: " + output.read())
             yield f"http://127.0.0.1:{port}/v1/embeddings"
         finally:
             if process.poll() is None:
