@@ -35,11 +35,17 @@ struct BatchNormWeights {
     LayerWeights affine;
     ggml_tensor *mean = nullptr, *variance = nullptr;
     static BatchNormWeights bind(const ModelLoader &loader, const std::string &prefix) {
-        return {LayerWeights::bind(loader, prefix), loader.weight(prefix + ".running_mean"), loader.weight(prefix + ".running_var")};
+        return {LayerWeights::bind(loader, prefix), loader.weight(prefix + ".running_mean"),
+                loader.weight(prefix + ".running_var")};
     }
 };
-struct FeedForwardWeights { LayerWeights norm, input, output; };
-struct ConvolutionWeights { LayerWeights norm, input, depthwise, output_norm, output; BatchNormWeights batch_norm; };
+struct FeedForwardWeights {
+    LayerWeights norm, input, output;
+};
+struct ConvolutionWeights {
+    LayerWeights norm, input, depthwise, output_norm, output;
+    BatchNormWeights batch_norm;
+};
 struct ConformerWeights {
     FeedForwardWeights ffn1, ffn2;
     LayerWeights attention_norm, final_norm;

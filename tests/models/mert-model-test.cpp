@@ -12,10 +12,15 @@
 
 namespace {
 void require(bool value, const char *message) {
-    if (!value) throw std::runtime_error(message);
+    if (!value)
+        throw std::runtime_error(message);
 }
-template<class F> void rejects(F function) {
-    try { function(); } catch (const std::exception &) { return; }
+template <class F> void rejects(F function) {
+    try {
+        function();
+    } catch (const std::exception &) {
+        return;
+    }
     throw std::runtime_error("invalid MERT API input was accepted");
 }
 void near(const std::vector<float> &a, const std::vector<float> &b, float tolerance) {
@@ -25,17 +30,28 @@ void near(const std::vector<float> &a, const std::vector<float> &b, float tolera
                 "MERT API output mismatch");
 }
 void u32(std::ofstream &stream, uint32_t value, int bytes = 4) {
-    for (int i = 0; i < bytes; ++i) stream.put(static_cast<char>((value >> (8*i)) & 255));
+    for (int i = 0; i < bytes; ++i)
+        stream.put(static_cast<char>((value >> (8 * i)) & 255));
 }
 void wav(const std::string &path, const clap::Audio &audio) {
     std::ofstream stream(path, std::ios::binary);
     const auto bytes = static_cast<uint32_t>(audio.samples.size() * sizeof(float));
-    stream.write("RIFF", 4); u32(stream, 36 + bytes); stream.write("WAVEfmt ", 8);
-    u32(stream, 16); u32(stream, 3, 2); u32(stream, 1, 2); u32(stream, audio.sample_rate);
-    u32(stream, audio.sample_rate * 4); u32(stream, 4, 2); u32(stream, 32, 2);
-    stream.write("data", 4); u32(stream, bytes);
+    stream.write("RIFF", 4);
+    u32(stream, 36 + bytes);
+    stream.write("WAVEfmt ", 8);
+    u32(stream, 16);
+    u32(stream, 3, 2);
+    u32(stream, 1, 2);
+    u32(stream, audio.sample_rate);
+    u32(stream, audio.sample_rate * 4);
+    u32(stream, 4, 2);
+    u32(stream, 32, 2);
+    stream.write("data", 4);
+    u32(stream, bytes);
     for (float value : audio.samples) {
-        uint32_t bits; std::memcpy(&bits, &value, sizeof(bits)); u32(stream, bits);
+        uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        u32(stream, bits);
     }
     require(static_cast<bool>(stream), "cannot write MERT resampling fixture");
 }
@@ -59,7 +75,9 @@ int main(int argc, char **argv) {
         rejects([&] { model.audio_frames(nonfinite, 24000); });
         rejects([&] { model.clamp3_features(nonfinite, 24000); });
 
-        clap::Audio input; input.sample_rate = 48000; input.samples.resize(48000);
+        clap::Audio input;
+        input.sample_rate = 48000;
+        input.samples.resize(48000);
         for (size_t i = 0; i < input.samples.size(); ++i)
             input.samples[i] = 0.2f + 0.1f * std::sin(static_cast<float>(i) * 0.057f) +
                                0.03f * std::cos(static_cast<float>(i) * 0.141f);
@@ -75,12 +93,13 @@ int main(int argc, char **argv) {
         std::vector<float> mean(frames.dimension);
         for (int row = 0; row < frames.frames; ++row)
             for (int col = 0; col < frames.dimension; ++col)
-                mean[col] += frames.values[static_cast<size_t>(row)*frames.dimension+col] / frames.frames;
+                mean[col] += frames.values[static_cast<size_t>(row) * frames.dimension + col] / frames.frames;
         near(mean, model.encode_audio(control.samples, 24000), 0);
         wav(std::string(argv[2]) + "/resampled-input.wav", input);
         wav(std::string(argv[2]) + "/resampled-control.wav", control);
         std::cout << "MERT public API: pooling, invalid inputs, native/resampled inference passed\n";
     } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n'; return 1;
+        std::cerr << error.what() << '\n';
+        return 1;
     }
 }

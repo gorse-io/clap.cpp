@@ -19,11 +19,15 @@ using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 // unrelated MOSTLY_Q4_K value (12).
 constexpr uint32_t q4_k_m_file_type = 15;
 ggml_type target_type(const ggml_tensor *w, bool k, const std::string &architecture) {
-    if (architecture == "clamp3" && std::string(w->name).rfind("mert.", 0) == 0) return w->type;
-    if (clap::detail::encoder_architecture(architecture) && !clap::detail::encoder_quantizable(w, architecture)) return w->type;
+    if (architecture == "clamp3" && std::string(w->name).rfind("mert.", 0) == 0)
+        return w->type;
+    if (clap::detail::encoder_architecture(architecture) && !clap::detail::encoder_quantizable(w, architecture))
+        return w->type;
     const auto base = k ? GGML_TYPE_Q4_K : GGML_TYPE_Q8_0;
-    if (ggml_n_dims(w) <= 1 || w->ne[0] % ggml_blck_size(base) != 0) return w->type;
-    if (!k) return base;
+    if (ggml_n_dims(w) <= 1 || w->ne[0] % ggml_blck_size(base) != 0)
+        return w->type;
+    if (!k)
+        return base;
     const std::string name(w->name);
     if (clap::detail::encoder_architecture(architecture))
         return clap::detail::encoder_sensitive(name, architecture) ? GGML_TYPE_Q6_K : base;
@@ -34,10 +38,10 @@ ggml_type target_type(const ggml_tensor *w, bool k, const std::string &architect
     // ALL such layers rather than its decoder-specific layer-index schedule.
     const bool value = ends(".attention.self.value.weight");
     const bool down = ends(".output.dense.weight") && !ends(".attention.output.dense.weight");
-    const bool projection = architecture == "clap" ?
-        (name.rfind("text_proj.", 0) == 0 || name.rfind("audio_proj.", 0) == 0) &&
-            (ends(".linear1.weight") || ends(".linear2.weight")) :
-        (name == "text_proj.weight" || name == "audio_proj.weight");
+    const bool projection = architecture == "clap"
+                                ? (name.rfind("text_proj.", 0) == 0 || name.rfind("audio_proj.", 0) == 0) &&
+                                      (ends(".linear1.weight") || ends(".linear2.weight"))
+                                : (name == "text_proj.weight" || name == "audio_proj.weight");
     return value || down || projection ? GGML_TYPE_Q6_K : base;
 }
 void quantize(const std::filesystem::path &source, const std::filesystem::path &destination, bool k) {
@@ -56,9 +60,13 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     // gguf_set_kv copies metadata, not the writer's internal alignment.
     // Normalize the advertised value to the actual tensor/metadata layout.
     gguf_set_val_u32(output.get(), "general.alignment", gguf_get_alignment(output.get()));
-    gguf_set_val_u32(output.get(), "general.file_type", k ? q4_k_m_file_type : static_cast<uint32_t>(GGML_FTYPE_MOSTLY_Q8_0));
-    if (k) gguf_set_val_str(output.get(), "clap.quantization_policy", clap::detail::encoder_architecture(architecture) ?
-        "q4_k_m-v2-encoder-dense-v-ffn-down-projection-q6_k" : "q4_k_m-v1-all-v-ffn-down-projection-q6_k");
+    gguf_set_val_u32(output.get(), "general.file_type",
+                     k ? q4_k_m_file_type : static_cast<uint32_t>(GGML_FTYPE_MOSTLY_Q8_0));
+    if (k)
+        gguf_set_val_str(output.get(), "clap.quantization_policy",
+                         clap::detail::encoder_architecture(architecture)
+                             ? "q4_k_m-v2-encoder-dense-v-ffn-down-projection-q6_k"
+                             : "q4_k_m-v1-all-v-ffn-down-projection-q6_k");
     gguf_set_val_u32(output.get(), "general.quantization_version", GGML_QNT_VERSION);
     size_t count = 0;
     for (int64_t i = 0; i < gguf_get_n_tensors(input.get()); ++i) {
@@ -73,7 +81,8 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
         }
     }
     if (!(count > 0))
-        throw std::runtime_error(std::string("CLAP: ") + (k ? "no Q4_K-compatible tensors" : "no Q8_0-compatible tensors"));
+        throw std::runtime_error(std::string("CLAP: ") +
+                                 (k ? "no Q4_K-compatible tensors" : "no Q8_0-compatible tensors"));
     clap::detail::QuantizeOutput stream(destination);
     {
         std::vector<char> metadata(gguf_get_meta_size(output.get()));
@@ -97,8 +106,10 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
                     const auto *data = static_cast<const uint8_t *>(w->data) + row * w->nb[1];
                     if (w->type == GGML_TYPE_F16)
                         ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data), values.data(), elements);
-                    else std::copy_n(reinterpret_cast<const float *>(data), elements, values.data());
-                    const auto bytes = ggml_quantize_chunk(target, values.data(), packed.data(), 0, rows, w->ne[0], nullptr);
+                    else
+                        std::copy_n(reinterpret_cast<const float *>(data), elements, values.data());
+                    const auto bytes =
+                        ggml_quantize_chunk(target, values.data(), packed.data(), 0, rows, w->ne[0], nullptr);
                     if (bytes != ggml_row_size(target, elements))
                         throw std::runtime_error("CLAP: quantized byte count mismatch");
                     stream.write(reinterpret_cast<const char *>(packed.data()), static_cast<std::streamsize>(bytes));
@@ -114,16 +125,21 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
         stream.close();
         stream.publish();
     }
-    std::cout << "Quantized " << count << " tensors to " << (k ? "Q4_K_M" : "Q8_0") << "; ineligible tensors kept unchanged\n";
+    std::cout << "Quantized " << count << " tensors to " << (k ? "Q4_K_M" : "Q8_0")
+              << "; ineligible tensors kept unchanged\n";
 }
 } // namespace
 int run_quantize(const std::string &input, const std::string &output, const std::string &type) {
     try {
         std::string preset(type);
-        std::transform(preset.begin(), preset.end(), preset.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        std::transform(preset.begin(), preset.end(), preset.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
         if (!(preset == "Q8_0" || preset == "Q4_K_M"))
             throw std::runtime_error("CLAP: unsupported quantization preset");
-        quantize(input, output, preset == "Q4_K_M"); return 0;
+        quantize(input, output, preset == "Q4_K_M");
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << '\n';
+        return 1;
     }
-    catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

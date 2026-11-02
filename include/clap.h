@@ -41,8 +41,7 @@ Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 // HF repeatpad: repeat whole short clips, then zero-pad the remainder.
 // Long clips use an explicit crop offset (default: first 10 s), making inference
 // reproducible rather than depending on NumPy's random state.
-std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000,
-                           std::size_t crop_offset = 0);
+std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000, std::size_t crop_offset = 0);
 
 // Device names come from available_devices(); "auto" prefers a GPU, "cpu" forces CPU.
 // An empty device uses CLAP_DEVICE, falling back to "auto". Storage precision is
@@ -53,7 +52,10 @@ struct RuntimeOptions {
     std::string device;
     ActivationPrecision activation_precision = ActivationPrecision::ModelDefault;
 };
-struct DeviceInfo { std::string name, description; bool gpu; };
+struct DeviceInfo {
+    std::string name, description;
+    bool gpu;
+};
 std::vector<DeviceInfo> available_devices();
 
 // Native CLAP, CLaMP3, MERT-v1, MERT2, MuQ or MuQ-MuLan, selected from GGUF metadata. Weights are
@@ -72,7 +74,7 @@ std::vector<DeviceInfo> available_devices();
 // MuLan supports neither frame/features APIs nor crop offsets; published width
 // is 512. Its text string API rejects over-context input without truncation.
 class CLAP {
-public:
+  public:
     explicit CLAP(const std::string &gguf_path, int threads = 0);
     CLAP(const std::string &gguf_path, const RuntimeOptions &options);
     ~CLAP();
@@ -87,7 +89,7 @@ public:
     // Mono waveform input; automatically resampled for the model.
     // CLaMP3 GGUFs must contain the bundled MERT-v1-95M frontend.
     std::vector<float> encode_audio(const std::vector<float> &pcm, int sample_rate = 48000,
-                              std::size_t crop_offset = 0);
+                                    std::size_t crop_offset = 0);
     AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);
     // MERT-v1 CLaMP3 --mean_features preprocessing: normalize the entire mono
     // recording, split into non-overlapping 5 s windows, discard a final window
@@ -97,7 +99,8 @@ public:
     AudioFrames clamp3_features(const std::vector<float> &pcm, int sample_rate = 24000);
     int audio_sample_rate() const;
     int projection_dimension() const;
-private:
+
+  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

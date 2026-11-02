@@ -16,7 +16,7 @@ namespace clap::detail {
 // Architecture-independent GGUF ownership, mapping, metadata and tensor checks.
 // Keep this alive longer than all model architectures and tensor operations.
 class ModelLoader {
-public:
+  public:
     explicit ModelLoader(RuntimeOptions options = {}) : options(std::move(options)) {}
     const RuntimeOptions &runtime_options() const { return source ? source->runtime_options() : options; }
     size_t tensor_count() const { return source ? source->tensor_count() : tensor_index.size(); }
@@ -38,7 +38,8 @@ public:
     void norm_shape(const std::string &name, int dim) const;
     bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
     void validate_tensor_coverage() const;
-private:
+
+  private:
     RuntimeOptions options;
     std::unordered_map<std::string, ggml_tensor *> tensor_index;
     const ModelLoader *source = nullptr;

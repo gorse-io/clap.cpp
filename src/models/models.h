@@ -12,7 +12,7 @@ namespace clap::detail {
 // GGUF I/O, tokenizer ownership, generic tensor operations and the public CLAP
 // facade are implemented in the core src/ files, not in this specialization.
 class ClapModel final : public ModelArchitecture {
-public:
+  public:
     ClapModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
@@ -23,14 +23,15 @@ public:
     bool is_waveform_encoder() const override;
     std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
     bool has_waveform_embeddings() const override { return true; }
-private:
+
+  private:
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
     void bind_tensors();
     void load_arch_tensors() const override;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights, int heads, int tokens,
-                     ggml_tensor *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
+                           ggml_tensor *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
     struct Projection;
     ggml_tensor *project(Graph &g, ggml_tensor *pooled, const Projection &weights) const;
 
@@ -50,14 +51,16 @@ private:
     EmbeddingWeights embeddings;
     std::vector<TransformerWeights> text_layers;
     LayerWeights patch, patch_norm, audio_norm, pooler;
-    struct Projection { LayerWeights input, output; } audio_projection, text_projection;
+    struct Projection {
+        LayerWeights input, output;
+    } audio_projection, text_projection;
     BatchNormWeights batch_norm;
 };
 
 // CLaMP3 text (XLM-R) and audio (BERT), optionally with a bundled MERT frontend.
 class MertModel;
 class Clamp3Model final : public ModelArchitecture {
-public:
+  public:
     Clamp3Model(const ModelLoader &loader, int threads);
     ~Clamp3Model() override;
     bool has_waveform_embeddings() const override;
@@ -69,7 +72,8 @@ public:
     int mel_bins() const override;
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
-private:
+
+  private:
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
@@ -77,11 +81,12 @@ private:
     void load_arch_tensors() const override;
     struct Branch;
     ggml_tensor *encode(Graph &g, ggml_tensor *embeddings, const std::vector<int> &mask, const Branch &branch) const;
-    ggml_tensor *attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask, const AttentionWeights &weights, int heads) const;
+    ggml_tensor *attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask, const AttentionWeights &weights,
+                           int heads) const;
     std::vector<float> chunked_text(const std::vector<int> &ids) const;
     std::vector<float> chunked_audio(const HostMatrix &features) const;
     ggml_tensor *pool_project(Graph &g, ggml_tensor *hidden, const std::vector<int> &mask,
-                                    const LayerWeights &projection) const;
+                              const LayerWeights &projection) const;
 
     const ModelLoader &loader;
     GraphRuntime runtime;
@@ -101,7 +106,7 @@ private:
 // Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,
 // ConvNeXt subsampler and bidirectional rotary Conformer stack.
 class Mert2Model final : public ModelArchitecture {
-public:
+  public:
     Mert2Model(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
@@ -110,7 +115,8 @@ public:
     int mel_bins() const override;
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
-private:
+
+  private:
     void load_arch_hparams() override;
     void bind_tensors();
     void load_arch_tensors() const override;
@@ -128,26 +134,33 @@ private:
         float epsilon, subsampling_epsilon, rotary_base;
     } h;
     ggml_tensor *window = nullptr, *filters = nullptr, *mean = nullptr, *stddev = nullptr;
-    struct ConvNext { LayerWeights depthwise, norm, input, response, output; };
-    struct Stage { int width; LayerWeights norm, resample; std::vector<ConvNext> blocks; };
+    struct ConvNext {
+        LayerWeights depthwise, norm, input, response, output;
+    };
+    struct Stage {
+        int width;
+        LayerWeights norm, resample;
+        std::vector<ConvNext> blocks;
+    };
     std::vector<Stage> stages;
     std::vector<ConformerWeights> layers;
 };
 // MERT-v1-95M: normalized waveform, HuBERT convolutional frontend and
 // post-layer-normalized transformer. CLaMP3 pooling is a separate contract.
 class MertModel final : public ModelArchitecture {
-public:
-    MertModel(const ModelLoader &loader, int threads,
-              const std::string &tensor_prefix = "", const std::string &metadata_prefix = "");
+  public:
+    MertModel(const ModelLoader &loader, int threads, const std::string &tensor_prefix = "",
+              const std::string &metadata_prefix = "");
     std::vector<float> text(const std::vector<int> &) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
     AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
-    TextParameters text_parameters() const override { return {0,0,0}; }
+    TextParameters text_parameters() const override { return {0, 0, 0}; }
     int projection_dimension() const override { return h.hidden; }
     int mel_bins() const override { return 0; }
     int sample_rate() const override { return 24000; }
     bool is_waveform_encoder() const override { return true; }
-private:
+
+  private:
     void load_arch_hparams() override;
     void bind_tensors();
     void load_arch_tensors() const override;
@@ -172,7 +185,7 @@ private:
 // OpenMuQ/MuQ-large-msd-iter: native log-mel, residual 2D subsampling and
 // Wav2Vec2-Conformer (rotary BEFORE Q/K projections, SiLU and eval BatchNorm).
 class MuqModel final : public ModelArchitecture {
-public:
+  public:
     MuqModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
@@ -181,8 +194,13 @@ public:
     int mel_bins() const override;
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
-private:
-    struct Image { int frequencies; int frames; ggml_tensor *values; };
+
+  private:
+    struct Image {
+        int frequencies;
+        int frames;
+        ggml_tensor *values;
+    };
     void load_arch_hparams() override;
     void bind_tensors();
     void load_arch_tensors() const override;
@@ -195,9 +213,15 @@ private:
     const ModelLoader &loader;
     GraphRuntime runtime;
     nlohmann::json config, encoder;
-    struct Parameters { int hidden, heads, kernel; float epsilon, rotary_base, mean, stddev; } h;
+    struct Parameters {
+        int hidden, heads, kernel;
+        float epsilon, rotary_base, mean, stddev;
+    } h;
     ggml_tensor *window = nullptr, *filters = nullptr;
-    struct Stage { LayerWeights conv1, conv2, conv3; BatchNormWeights bn1, bn2, bn3; };
+    struct Stage {
+        LayerWeights conv1, conv2, conv3;
+        BatchNormWeights bn1, bn2, bn3;
+    };
     std::vector<Stage> stages;
     std::vector<ConformerWeights> layers;
     LayerWeights projection, final_norm;
@@ -205,7 +229,7 @@ private:
 
 // Joint MuQ-MuLan embeddings: the audio backbone remains the exact MuqModel.
 class MuqMulanModel final : public ModelArchitecture {
-public:
+  public:
     MuqMulanModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &) const override;
@@ -216,7 +240,8 @@ public:
     int sample_rate() const override { return 24000; }
     bool is_waveform_encoder() const override { return false; }
     bool has_waveform_embeddings() const override { return true; }
-private:
+
+  private:
     void load_arch_hparams() override;
     void bind_tensors();
     void load_arch_tensors() const override;
@@ -228,7 +253,11 @@ private:
     GraphRuntime runtime;
     MuqModel audio_backbone;
     nlohmann::json config, text_config;
-    struct Parameters { int projection, positions, vocab, heads, adapter_heads, head_dim; size_t clip_seconds; float epsilon; } h;
+    struct Parameters {
+        int projection, positions, vocab, heads, adapter_heads, head_dim;
+        size_t clip_seconds;
+        float epsilon;
+    } h;
     EmbeddingWeights embeddings;
     std::vector<TransformerWeights> text_layers;
     struct AdapterLayer {

@@ -13,7 +13,7 @@
 namespace clap::detail {
 
 class Vocabulary {
-public:
+  public:
     virtual ~Vocabulary() = default;
     virtual std::vector<int> tokenize(const std::string &text, size_t max_length) const = 0;
 };
@@ -21,10 +21,11 @@ public:
 // Shared RoBERTa/GPT-2 byte-level BPE implementation, independent of weight I/O
 // and encoder execution. ICU owns Unicode pre-tokenization only.
 class ByteBpeVocabulary final : public Vocabulary {
-public:
+  public:
     ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
-private:
+
+  private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos;
     size_t context_length;
@@ -39,12 +40,15 @@ private:
 // Hugging Face fast-tokenizer format.  Inference stays self-contained: GGUF
 // carries that JSON and ICU supplies the Unicode normalization/whitespace pass.
 class UnigramVocabulary final : public Vocabulary {
-public:
-    UnigramVocabulary(const nlohmann::json &tokenizer, int bos, int eos, int unk,
-                      size_t context_length);
+  public:
+    UnigramVocabulary(const nlohmann::json &tokenizer, int bos, int eos, int unk, size_t context_length);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
-private:
-    struct Piece { int id; double score; };
+
+  private:
+    struct Piece {
+        int id;
+        double score;
+    };
     void encode_word(const std::string &text, std::vector<int> &ids) const;
     std::string normalize(const std::string &text) const;
     bool transform(const std::string &text, std::string &result) const;

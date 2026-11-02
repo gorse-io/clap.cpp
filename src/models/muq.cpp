@@ -40,8 +40,9 @@ void MuqModel::load_arch_hparams() {
     // int64_t; the signed-int ceiling bounds tensor products and schema cost.
     // Keep these limits in sync with conversion/muq.py. Unused HF/RVQ fields
     // (notably HF num_hidden_layers) do not define this inference backbone.
-    const int64_t layer = 4*hidden*intermediate + 7*hidden*hidden + hidden*kernel + 64*hidden + 4*intermediate;
-    const int64_t budget = 54*channels*channels + 32*channels*hidden + depth*layer;
+    const int64_t layer =
+        4 * hidden * intermediate + 7 * hidden * hidden + hidden * kernel + 64 * hidden + 4 * intermediate;
+    const int64_t budget = 54 * channels * channels + 32 * channels * hidden + depth * layer;
     if (budget > std::numeric_limits<int>::max())
         throw std::runtime_error("CLAP: invalid MuQ derived tensor products");
     if (!(encoder.at("position_embeddings_type") == "rotary" &&
@@ -62,18 +63,21 @@ void MuqModel::load_arch_hparams() {
     scalar(config.at("stat"), "melspec_2048_mean", false);
 }
 void MuqModel::load_arch_tensors() const {
-    loader.shape("frontend.window", {2048}); loader.shape("frontend.filters", {128, 1025});
+    loader.shape("frontend.window", {2048});
+    loader.shape("frontend.filters", {128, 1025});
     const int channels = config.at("conv_dim"), hidden = config.at("encoder_dim");
     auto batch = [&](const std::string &name, int width) {
         loader.norm_shape(name, width);
-        loader.shape(name + ".running_mean", {width}); loader.shape(name + ".running_var", {width});
+        loader.shape(name + ".running_mean", {width});
+        loader.shape(name + ".running_var", {width});
     };
     for (int stage = 0; stage < 2; ++stage) {
         const std::string root = "conv.conv." + std::to_string(stage);
         for (int layer = 1; layer <= 3; ++layer) {
             const int input = stage == 0 && layer != 2 ? 1 : channels;
             const auto conv = root + ".conv" + std::to_string(layer);
-            loader.shape(conv + ".weight", {3, 3, input, channels}); loader.shape(conv + ".bias", {channels});
+            loader.shape(conv + ".weight", {3, 3, input, channels});
+            loader.shape(conv + ".bias", {channels});
             batch(root + ".bn" + std::to_string(layer), channels);
         }
     }
@@ -91,34 +95,51 @@ void MuqModel::load_arch_tensors() const {
             loader.linear_shape(root + ".self_attn." + projection, hidden, hidden);
         loader.norm_shape(root + ".conv_module.layer_norm", hidden);
         loader.shape(root + ".conv_module.pointwise_conv1.weight", {1, hidden, hidden * 2});
-        loader.shape(root + ".conv_module.depthwise_conv.weight", {encoder.at("conv_depthwise_kernel_size").get<int>(), 1, hidden});
+        loader.shape(root + ".conv_module.depthwise_conv.weight",
+                     {encoder.at("conv_depthwise_kernel_size").get<int>(), 1, hidden});
         batch(root + ".conv_module.batch_norm", hidden);
         loader.shape(root + ".conv_module.pointwise_conv2.weight", {1, hidden, hidden});
     }
 }
 
 void MuqModel::bind_tensors() {
-    h = {config.at("encoder_dim"), encoder.at("num_attention_heads"), encoder.at("conv_depthwise_kernel_size"),
-         encoder.at("layer_norm_eps"), encoder.at("rotary_embedding_base"), config.at("stat").at("melspec_2048_mean"), config.at("stat").at("melspec_2048_std")};
-    window = loader.weight("frontend.window"); filters = loader.weight("frontend.filters");
+    h = {config.at("encoder_dim"),
+         encoder.at("num_attention_heads"),
+         encoder.at("conv_depthwise_kernel_size"),
+         encoder.at("layer_norm_eps"),
+         encoder.at("rotary_embedding_base"),
+         config.at("stat").at("melspec_2048_mean"),
+         config.at("stat").at("melspec_2048_std")};
+    window = loader.weight("frontend.window");
+    filters = loader.weight("frontend.filters");
     for (int i = 0; i < 2; ++i) {
         const auto p = "conv.conv." + std::to_string(i);
-        stages.push_back({LayerWeights::bind(loader,p+".conv1"), LayerWeights::bind(loader,p+".conv2"), LayerWeights::bind(loader,p+".conv3"),
-                          BatchNormWeights::bind(loader,p+".bn1"), BatchNormWeights::bind(loader,p+".bn2"), BatchNormWeights::bind(loader,p+".bn3")});
+        stages.push_back({LayerWeights::bind(loader, p + ".conv1"), LayerWeights::bind(loader, p + ".conv2"),
+                          LayerWeights::bind(loader, p + ".conv3"), BatchNormWeights::bind(loader, p + ".bn1"),
+                          BatchNormWeights::bind(loader, p + ".bn2"), BatchNormWeights::bind(loader, p + ".bn3")});
     }
-    projection = LayerWeights::bind(loader,"conv.linear"); final_norm = LayerWeights::bind(loader,"conformer.layer_norm");
+    projection = LayerWeights::bind(loader, "conv.linear");
+    final_norm = LayerWeights::bind(loader, "conformer.layer_norm");
     for (int i = 0; i < config.at("encoder_depth").get<int>(); ++i) {
         const auto p = "conformer.layers." + std::to_string(i);
         ConformerWeights layer;
-        layer.ffn1 = {LayerWeights::bind(loader,p+".ffn1_layer_norm"), LayerWeights::bind(loader,p+".ffn1.intermediate_dense"), LayerWeights::bind(loader,p+".ffn1.output_dense")};
-        layer.ffn2 = {LayerWeights::bind(loader,p+".ffn2_layer_norm"), LayerWeights::bind(loader,p+".ffn2.intermediate_dense"), LayerWeights::bind(loader,p+".ffn2.output_dense")};
-        layer.attention_norm = LayerWeights::bind(loader,p+".self_attn_layer_norm"); layer.final_norm = LayerWeights::bind(loader,p+".final_layer_norm");
-        layer.attention = {LayerWeights::bind(loader,p+".self_attn.linear_q"), LayerWeights::bind(loader,p+".self_attn.linear_k"), LayerWeights::bind(loader,p+".self_attn.linear_v"), LayerWeights::bind(loader,p+".self_attn.linear_out")};
-        layer.convolution.norm = LayerWeights::bind(loader,p+".conv_module.layer_norm");
-        layer.convolution.input = LayerWeights::bind(loader,p+".conv_module.pointwise_conv1",false);
-        layer.convolution.depthwise = LayerWeights::bind(loader,p+".conv_module.depthwise_conv",false);
-        layer.convolution.batch_norm = BatchNormWeights::bind(loader,p+".conv_module.batch_norm");
-        layer.convolution.output = LayerWeights::bind(loader,p+".conv_module.pointwise_conv2",false);
+        layer.ffn1 = {LayerWeights::bind(loader, p + ".ffn1_layer_norm"),
+                      LayerWeights::bind(loader, p + ".ffn1.intermediate_dense"),
+                      LayerWeights::bind(loader, p + ".ffn1.output_dense")};
+        layer.ffn2 = {LayerWeights::bind(loader, p + ".ffn2_layer_norm"),
+                      LayerWeights::bind(loader, p + ".ffn2.intermediate_dense"),
+                      LayerWeights::bind(loader, p + ".ffn2.output_dense")};
+        layer.attention_norm = LayerWeights::bind(loader, p + ".self_attn_layer_norm");
+        layer.final_norm = LayerWeights::bind(loader, p + ".final_layer_norm");
+        layer.attention = {LayerWeights::bind(loader, p + ".self_attn.linear_q"),
+                           LayerWeights::bind(loader, p + ".self_attn.linear_k"),
+                           LayerWeights::bind(loader, p + ".self_attn.linear_v"),
+                           LayerWeights::bind(loader, p + ".self_attn.linear_out")};
+        layer.convolution.norm = LayerWeights::bind(loader, p + ".conv_module.layer_norm");
+        layer.convolution.input = LayerWeights::bind(loader, p + ".conv_module.pointwise_conv1", false);
+        layer.convolution.depthwise = LayerWeights::bind(loader, p + ".conv_module.depthwise_conv", false);
+        layer.convolution.batch_norm = BatchNormWeights::bind(loader, p + ".conv_module.batch_norm");
+        layer.convolution.output = LayerWeights::bind(loader, p + ".conv_module.pointwise_conv2", false);
         layers.push_back(layer);
     }
 }
@@ -140,12 +161,15 @@ HostMatrix MuqModel::frontend(const std::vector<float> &pcm) const {
     for (int frame = 0; frame < frames; ++frame) {
         for (int i = 0; i < 2048; ++i) {
             int source = frame * 240 + i - 1024;
-            if (source < 0) source = -source;
-            if (source >= static_cast<int>(pcm.size())) source = 2 * static_cast<int>(pcm.size()) - 2 - source;
+            if (source < 0)
+                source = -source;
+            if (source >= static_cast<int>(pcm.size()))
+                source = 2 * static_cast<int>(pcm.size()) - 2 - source;
             spectrum[i] = pcm[source] * scalar(window, i);
         }
         clap::fft(spectrum);
-        for (int i = 0; i < 1025; ++i) power[i] = std::norm(spectrum[i]);
+        for (int i = 0; i < 1025; ++i)
+            power[i] = std::norm(spectrum[i]);
         for (int bin = 0; bin < 128; ++bin) {
             float value = 0;
             for (int frequency = 0; frequency < 1025; ++frequency)
@@ -174,7 +198,8 @@ MuqModel::Image MuqModel::conv2d(Graph &g, const Image &input, const LayerWeight
     // Bound im2col scratch for long songs; concatenate time tiles in a balanced tree.
     for (int start = 0; start < frames; start += 32) {
         const int count = std::min(32, frames - start), span = (count - 1) * stride + 3;
-        auto *tile = ggml_view_3d(ctx, data, span, input.frequencies, channels, data->nb[1], data->nb[2], size_t(start * stride) * data->nb[0]);
+        auto *tile = ggml_view_3d(ctx, data, span, input.frequencies, channels, data->nb[1], data->nb[2],
+                                  size_t(start * stride) * data->nb[0]);
         auto *patches = ggml_im2col(ctx, weight, ggml_cont(ctx, tile), stride, stride, 0, 1, 1, 1, true, GGML_TYPE_F32);
         patches = ggml_reshape_2d(ctx, patches, channels * 9, count * frequencies);
         auto *output = g.matmul(flat, patches);
@@ -233,26 +258,31 @@ AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
     if (!(std::all_of(pcm.begin(), pcm.end(), [](float v) { return std::isfinite(v); })))
         throw std::runtime_error("CLAP: MuQ waveform contains non-finite samples");
     const auto mel = frontend(pcm);
-    auto outputs = runtime.run_cached("frames", {GraphInput(mel)}, [&](Graph &g) {
-        auto *ctx = g.ctx();
-        auto *hidden = subsample(g, g.dynamic_input(0));
-        for (const auto &layer : layers) {
-            for (int ffn = 1; ffn <= 2; ++ffn) {
-                const auto &branch = ffn == 1 ? layer.ffn1 : layer.ffn2;
-                auto value = g.linear(g.norm(hidden, branch.norm, 1e-5f), branch.input);
-                value = ggml_silu(ctx, value); value = g.linear(value, branch.output);
-                hidden = ggml_add(ctx, hidden, ggml_scale(ctx, value, 0.5f));
-                if (ffn == 1) {
-                    value = attention(g, g.norm(hidden, layer.attention_norm, 1e-5f), layer.attention);
-                    hidden = ggml_add(ctx, hidden, value);
-                    value = conformer_convolution(g, hidden, layer.convolution); hidden = ggml_add(ctx, hidden, value);
+    auto outputs = runtime.run_cached(
+        "frames", {GraphInput(mel)},
+        [&](Graph &g) {
+            auto *ctx = g.ctx();
+            auto *hidden = subsample(g, g.dynamic_input(0));
+            for (const auto &layer : layers) {
+                for (int ffn = 1; ffn <= 2; ++ffn) {
+                    const auto &branch = ffn == 1 ? layer.ffn1 : layer.ffn2;
+                    auto value = g.linear(g.norm(hidden, branch.norm, 1e-5f), branch.input);
+                    value = ggml_silu(ctx, value);
+                    value = g.linear(value, branch.output);
+                    hidden = ggml_add(ctx, hidden, ggml_scale(ctx, value, 0.5f));
+                    if (ffn == 1) {
+                        value = attention(g, g.norm(hidden, layer.attention_norm, 1e-5f), layer.attention);
+                        hidden = ggml_add(ctx, hidden, value);
+                        value = conformer_convolution(g, hidden, layer.convolution);
+                        hidden = ggml_add(ctx, hidden, value);
+                    }
                 }
+                hidden = g.norm(hidden, layer.final_norm, 1e-5f);
             }
-            hidden = g.norm(hidden, layer.final_norm, 1e-5f);
-        }
-        hidden = g.norm(hidden, final_norm, h.epsilon);
-        return std::vector<ggml_tensor *>{hidden};
-    }, size_t(mel.rows) * 8);
+            hidden = g.norm(hidden, final_norm, h.epsilon);
+            return std::vector<ggml_tensor *>{hidden};
+        },
+        size_t(mel.rows) * 8);
     auto &output = outputs.front();
     return {std::move(output.values), int(output.rows), int(output.columns)};
 }

@@ -9,7 +9,8 @@
 namespace {
 constexpr double pi = 3.14159265358979323846;
 void require(bool condition, const char *message) {
-    if (!condition) throw std::runtime_error(message);
+    if (!condition)
+        throw std::runtime_error(message);
 }
 clap::Audio tone(int rate, double frequency) {
     clap::Audio audio;
@@ -21,16 +22,25 @@ clap::Audio tone(int rate, double frequency) {
 }
 void rejected(const clap::Audio &audio, int rate) {
     bool failed = false;
-    try { clap::resample_audio(audio, rate); } catch (const std::exception &) { failed = true; }
+    try {
+        clap::resample_audio(audio, rate);
+    } catch (const std::exception &) {
+        failed = true;
+    }
     require(failed, "invalid resampling input must be rejected");
 }
 } // namespace
 
 int main() {
     try {
-        for (const auto rates : {std::pair<int, int>{8000, 48000}, {16000, 48000},
-                                {22050, 48000}, {44100, 48000}, {96000, 48000},
-                                {48000, 24000}, {44100, 24000}, {16000, 24000}}) {
+        for (const auto rates : {std::pair<int, int>{8000, 48000},
+                                 {16000, 48000},
+                                 {22050, 48000},
+                                 {44100, 48000},
+                                 {96000, 48000},
+                                 {48000, 24000},
+                                 {44100, 24000},
+                                 {16000, 24000}}) {
             const int source = rates.first, target = rates.second;
             const auto output = clap::resample_audio(tone(source, 1000), target);
             require(output.sample_rate == target, "target sample rate");
@@ -55,7 +65,8 @@ int main() {
                 error += std::pow(output.samples[i] - sine * std::sin(angle) - cosine * std::cos(angle), 2);
             }
             const double rmse = std::sqrt(error / (end - begin));
-            std::cout << source << " -> " << target << " gain=" << gain << " phase=" << phase << " residual=" << rmse << '\n';
+            std::cout << source << " -> " << target << " gain=" << gain << " phase=" << phase << " residual=" << rmse
+                      << '\n';
             require(gain > 0.94 && gain < 1.01, "resampled tone amplitude mismatch");
             require(phase <= 0.01 && phase > -pi, "resampled tone delay out of bounds");
             require(rmse < 0.002, "resampled tone frequency/distortion mismatch");
@@ -75,17 +86,19 @@ int main() {
         for (int source : {8000, 44100, 96000}) {
             const clap::Audio constant{std::vector<float>(source / 10 + 1, 0.25f), source};
             const auto output = clap::resample_audio(constant);
-            const auto expected = (static_cast<unsigned long long>(constant.samples.size()) * 48000 + source - 1) / source;
+            const auto expected =
+                (static_cast<unsigned long long>(constant.samples.size()) * 48000 + source - 1) / source;
             require(output.samples.size() == expected, "fractional duration rounds up");
             require(std::abs(output.samples.front()) < 1e-6f, "causal DC startup");
-            require(std::all_of(output.samples.begin() + 480, output.samples.end(), [](float x) {
-                return std::abs(x - 0.25f) < 1e-6f;
-            }), "settled DC gain must remain unity through end of clip");
+            require(std::all_of(output.samples.begin() + 480, output.samples.end(),
+                                [](float x) { return std::abs(x - 0.25f) < 1e-6f; }),
+                    "settled DC gain must remain unity through end of clip");
         }
         for (int source : {8000, 44100, 96000}) {
             const auto short_clip = clap::resample_audio({{0.5f}, source});
             require(short_clip.samples.size() == (48000ULL + source - 1) / source, "single-sample duration");
-            for (float x : short_clip.samples) require(std::isfinite(x), "finite single-sample output");
+            for (float x : short_clip.samples)
+                require(std::isfinite(x), "finite single-sample output");
         }
         clap::Audio impulse{std::vector<float>(4800, 0), 16000};
         impulse.samples[100] = 1;
@@ -99,7 +112,8 @@ int main() {
                 const auto out = clap::resample_audio({std::vector<float>(count, 0), rates.first}, rates.second);
                 require(out.samples.size() == (count * rates.second + rates.first - 1) / rates.first,
                         "short/fractional duration");
-                for (float x : out.samples) require(x == 0, "silence stays silent");
+                for (float x : out.samples)
+                    require(x == 0, "silence stays silent");
             }
         }
         rejected({{}, 48000}, 48000);

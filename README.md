@@ -81,6 +81,22 @@ receives a JSON HTTP 400 error; model inference failures receive JSON HTTP 500.
 Responses containing audio omit `usage` rather than inventing token counts; text-only
 requests retain their existing token-usage behavior. Output encoding is `float`.
 
+## Development
+
+C/C++ formatting uses clang-format 18.1.8 and the repository's `.clang-format`.
+Install it and format all tracked project sources (submodules are excluded):
+
+```sh
+python -m pip install clang-format==18.1.8
+git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format -i
+```
+
+To run the same formatting check as GitHub Actions:
+
+```sh
+git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format --dry-run --Werror
+```
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).

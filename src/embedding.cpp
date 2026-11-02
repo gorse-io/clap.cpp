@@ -25,7 +25,8 @@ double cosine(const Vector &left, const Vector &right) {
         left_norm += static_cast<double>(left[i]) * left[i];
         right_norm += static_cast<double>(right[i]) * right[i];
     }
-    if (left_norm == 0 || right_norm == 0) return 0;
+    if (left_norm == 0 || right_norm == 0)
+        return 0;
     return std::clamp(dot / (std::sqrt(left_norm) * std::sqrt(right_norm)), -1.0, 1.0);
 }
 
@@ -37,7 +38,8 @@ void write_embeddings(const std::vector<Vector> &vectors, const std::string &for
         std::cout << std::fixed << std::setprecision(7);
         for (const auto &vector : vectors) {
             for (std::size_t i = 0; i < vector.size(); ++i) {
-                if (i) std::cout << ' ';
+                if (i)
+                    std::cout << ' ';
                 std::cout << vector[i];
             }
             std::cout << '\n';
@@ -54,7 +56,8 @@ void write_embeddings(const std::vector<Vector> &vectors, const std::string &for
             auto similarities = json::array();
             for (const auto &left : vectors) {
                 auto row = json::array();
-                for (const auto &right : vectors) row.push_back(cosine(left, right));
+                for (const auto &right : vectors)
+                    row.push_back(cosine(left, right));
                 similarities.push_back(row);
             }
             result["cosineSimilarity"] = similarities;
@@ -68,7 +71,8 @@ int run_embedding(const EmbeddingOptions &options) {
     try {
         // Preserve native CLI error precedence: decode audio before loading weights.
         clap::Audio decoded;
-        if (!options.audio_path.empty()) decoded = clap::decode_audio(options.audio_path);
+        if (!options.audio_path.empty())
+            decoded = clap::decode_audio(options.audio_path);
         clap::CLAP model(options.model_path, clap::RuntimeOptions{options.threads, options.device});
         std::vector<Vector> vectors;
         if (!options.audio_path.empty()) {
@@ -77,10 +81,13 @@ int run_embedding(const EmbeddingOptions &options) {
             }
             if (options.frames || options.clamp3_features) {
                 const auto sequence = options.clamp3_features
-                    ? model.clamp3_features(decoded.samples, decoded.sample_rate)
-                    : model.audio_frames(decoded.samples, decoded.sample_rate);
-                std::cout << json{{"frames", sequence.frames}, {"dimension", sequence.dimension},
-                                  {"values", sequence.values}}.dump() << '\n';
+                                          ? model.clamp3_features(decoded.samples, decoded.sample_rate)
+                                          : model.audio_frames(decoded.samples, decoded.sample_rate);
+                std::cout << json{{"frames", sequence.frames},
+                                  {"dimension", sequence.dimension},
+                                  {"values", sequence.values}}
+                                 .dump()
+                          << '\n';
             } else {
                 vectors.push_back(model.encode_audio(decoded.samples, decoded.sample_rate, options.crop_offset));
             }
@@ -91,19 +98,21 @@ int run_embedding(const EmbeddingOptions &options) {
             std::size_t start = 0;
             while (true) {
                 const auto end = options.text.find(options.separator, start);
-                vectors.push_back(model.encode_text(options.text.substr(start, end == std::string::npos
-                                                                        ? end : end - start)));
-                if (end == std::string::npos) break;
+                vectors.push_back(
+                    model.encode_text(options.text.substr(start, end == std::string::npos ? end : end - start)));
+                if (end == std::string::npos)
+                    break;
                 start = end + options.separator.size();
             }
         }
         if (!vectors.empty()) {
-            const std::string format = options.format.empty() && !options.single_text && options.audio_path.empty()
-                ? "raw" : options.format;
+            const std::string format =
+                options.format.empty() && !options.single_text && options.audio_path.empty() ? "raw" : options.format;
             write_embeddings(vectors, format);
         }
         std::cout.flush();
-        if (!std::cout) throw std::runtime_error("Failed to write embedding output");
+        if (!std::cout)
+            throw std::runtime_error("Failed to write embedding output");
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

@@ -5,10 +5,13 @@
 
 int main(int argc, char **argv) {
     try {
-        if (argc != 3) throw std::runtime_error("usage: clap-unigram-test TOKENIZER.json CASES.json");
+        if (argc != 3)
+            throw std::runtime_error("usage: clap-unigram-test TOKENIZER.json CASES.json");
         nlohmann::json tokenizer, cases;
-        std::ifstream input(argv[1]); input >> tokenizer;
-        std::ifstream reference(argv[2]); reference >> cases;
+        std::ifstream input(argv[1]);
+        input >> tokenizer;
+        std::ifstream reference(argv[2]);
+        reference >> cases;
         clap::detail::UnigramVocabulary vocab(tokenizer, 0, 2, 3, 4096);
         for (const auto &test : cases) {
             auto actual = vocab.tokenize(test.at("text").get<std::string>(), test.value("max_length", 4096));
@@ -21,22 +24,32 @@ int main(int argc, char **argv) {
         }
         auto reject = [&](const nlohmann::json &invalid) {
             bool rejected = false;
-            try { clap::detail::UnigramVocabulary unsupported(invalid, 0, 2, 3, 4096); }
-            catch (const std::exception &) { rejected = true; }
-            if (!rejected) throw std::runtime_error("unsupported tokenizer metadata was accepted");
+            try {
+                clap::detail::UnigramVocabulary unsupported(invalid, 0, 2, 3, 4096);
+            } catch (const std::exception &) {
+                rejected = true;
+            }
+            if (!rejected)
+                throw std::runtime_error("unsupported tokenizer metadata was accepted");
         };
         auto invalid = tokenizer;
-        invalid["pre_tokenizer"] = nullptr; reject(invalid);
+        invalid["pre_tokenizer"] = nullptr;
+        reject(invalid);
         invalid = tokenizer;
-        invalid["pre_tokenizer"]["pretokenizers"][1]["prepend_scheme"] = "never"; reject(invalid);
+        invalid["pre_tokenizer"]["pretokenizers"][1]["prepend_scheme"] = "never";
+        reject(invalid);
         invalid = tokenizer;
-        invalid["post_processor"] = nullptr; reject(invalid);
+        invalid["post_processor"] = nullptr;
+        reject(invalid);
         invalid = tokenizer;
-        invalid["post_processor"]["single"] = nlohmann::json::array(); reject(invalid);
+        invalid["post_processor"]["single"] = nlohmann::json::array();
+        reject(invalid);
         invalid = tokenizer;
-        invalid["model"]["unk_id"] = 4; reject(invalid);
+        invalid["model"]["unk_id"] = 4;
+        reject(invalid);
         invalid = tokenizer;
-        invalid["model"]["byte_fallback"] = true; reject(invalid);
+        invalid["model"]["byte_fallback"] = true;
+        reject(invalid);
         std::cout << "Unigram tokenizer parity passed: " << cases.size() << " cases; invalid metadata rejected\n";
         return 0;
     } catch (const std::exception &e) {
