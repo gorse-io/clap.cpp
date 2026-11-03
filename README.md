@@ -97,6 +97,22 @@ To run the same formatting check as GitHub Actions:
 git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format --dry-run --Werror
 ```
 
+The CI `lint` job checks formatting first, then runs clang-tidy 18 using
+`.clang-tidy`. On Ubuntu 24.04, run the same static analysis locally with:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y clang-tidy-18 ffmpeg
+git submodule update --init --recursive
+cmake -S . -B build/lint -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+run-clang-tidy-18 -p build/lint "^$PWD/(src|tests)/"
+```
+
+Static analysis covers the core library, CLI, and tests in the default CMake
+compilation database, including their project headers. Third-party translation
+units and separately configured language bindings are excluded. Analyzer warnings
+are treated as errors.
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
