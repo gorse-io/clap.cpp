@@ -1,5 +1,5 @@
 // Private ABI for the Rust crate, not a public clap.cpp C API.
-#include "clap.h"
+#include "clap-internal.h"
 #include <cstdio>
 #include <exception>
 #include <memory>

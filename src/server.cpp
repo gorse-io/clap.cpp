@@ -1,5 +1,5 @@
 #include "server.h"
-#include "clap.h"
+#include "clap-internal.h"
 #include "audio.h"
 
 #include <httplib.h>

@@ -1,5 +1,5 @@
 #include "embedding.h"
-#include "clap.h"
+#include "clap-internal.h"
 #include "quantize.h"
 #include "server.h"
 

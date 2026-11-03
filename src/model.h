@@ -1,6 +1,6 @@
 #pragma once
 
-#include "clap.h"
+#include "clap-internal.h"
 #include <cstddef>
 #include <vector>
 #include <stdexcept>

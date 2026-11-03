@@ -1,5 +1,5 @@
 #include "models.h"
-#include "clap.h"
+#include "clap-internal.h"
 #include "audio.h"
 
 #include <stdexcept>

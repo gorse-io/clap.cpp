@@ -1,4 +1,4 @@
-#include "clap.h"
+#include "clap-internal.h"
 #include "audio.h"
 #include "feature-test.h"
 #include <nlohmann/json.hpp>

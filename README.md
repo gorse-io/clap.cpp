@@ -29,6 +29,51 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 | [Rust](rust) | ✅ | ❌ | ❌ | `cargo install clap-cpp` |
 | [Node.js](node) | ✅ | ❌ | ❌ | `npm install clap-cpp` |
 
+## C API
+
+`include/clap.h` is a standalone C99 header with an opaque `CLAP` handle and
+`clap_*` functions (also callable from C++ via `extern "C"`). The former public
+C++ class is now private; C++ applications use the same C API. The implementation
+still requires a C++20 compiler. Python, Node.js and Rust APIs are unchanged.
+
+```c
+#include <clap.h>
+#include <stdio.h>
+
+int main(void) {
+    CLAP *model = NULL;
+    float *embedding = NULL;
+    size_t count = 0;
+    clap_runtime_options options = clap_default_options();
+    options.device = "cpu";
+    if (clap_create("model.gguf", &options, &model) != CLAP_OK) {
+        fprintf(stderr, "%s\n", clap_last_error());
+        return 1;
+    }
+    clap_status status = clap_encode_text(model, "A jazz quartet.", &embedding, &count);
+    if (status != CLAP_OK)
+        fprintf(stderr, "%s\n", clap_last_error());
+    /* Use count floats on success. */
+    clap_free(embedding);
+    clap_destroy(model);
+    return status == CLAP_OK ? 0 : 1;
+}
+```
+
+Link the CMake `clap` target; CMake supplies the native runtime dependencies for
+both static and shared builds. C callers do not need C++ headers. Manual static
+linking needs the C++ runtime plus ggml and ICU dependencies. Windows DLL callers
+define `CLAP_SHARED` (the CMake target propagates it automatically).
+
+The header documents ownership and error handling: each embedding/token buffer
+uses `clap_free`, device lists use `clap_free_devices`, and frame outputs use
+`clap_free_audio_frames`. Outputs are cleared on failure; do not overwrite an
+unfreed output. `clap_last_error` is a thread-local diagnostic, valid until the
+next fallible call on that thread. Serialize calls on the same handle. Device
+selection, activation precision, tokenization, text/token encoding, mono PCM and
+WAV/MP3/FLAC path encoding, frame representations, and model dimensions/rates are
+all available without STL types or exceptions crossing the API.
+
 ## Usage
 
 ## Embeddings command

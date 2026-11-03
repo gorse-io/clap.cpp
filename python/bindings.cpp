@@ -1,4 +1,4 @@
-#include "clap.h"
+#include "clap-internal.h"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
