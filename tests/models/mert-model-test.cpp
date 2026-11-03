@@ -1,4 +1,6 @@
 #include "clap.h"
+#include "audio.h"
+#include "feature-test.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -66,14 +68,14 @@ int main(int argc, char **argv) {
         rejects([&] { model.encode_text(std::vector<int>{0}); });
         rejects([&] { model.audio_frames({}); });
         rejects([&] { model.audio_frames(std::vector<float>(399), 24000); });
-        rejects([&] { model.clamp3_features(std::vector<float>(23999), 24000); });
-        rejects([&] { model.clamp3_features(std::vector<float>(24000), 0); });
+        rejects([&] { clap::detail::FeatureTestAccess::extract(argv[1], std::vector<float>(23999), 24000); });
+        rejects([&] { clap::detail::FeatureTestAccess::extract(argv[1], std::vector<float>(24000), 0); });
         rejects([&] { model.audio_frames(std::vector<float>(24000), -1); });
         rejects([&] { model.encode_audio(std::vector<float>(24000), 24000, 1); });
         auto nonfinite = std::vector<float>(24000);
         nonfinite[0] = std::numeric_limits<float>::quiet_NaN();
         rejects([&] { model.audio_frames(nonfinite, 24000); });
-        rejects([&] { model.clamp3_features(nonfinite, 24000); });
+        rejects([&] { clap::detail::FeatureTestAccess::extract(argv[1], nonfinite, 24000); });
 
         clap::Audio input;
         input.sample_rate = 48000;
@@ -83,10 +85,10 @@ int main(int argc, char **argv) {
                                0.03f * std::cos(static_cast<float>(i) * 0.141f);
         const auto control = clap::resample_audio(input, 24000);
         require(control.samples.size() == 24000, "unexpected resampled MERT duration");
-        const auto features = model.clamp3_features(control.samples, 24000);
+        const auto features = clap::detail::FeatureTestAccess::extract(argv[1], control.samples, 24000);
         require(features.frames == 1 && features.dimension == model.projection_dimension(),
                 "wrong MERT feature dimensions");
-        near(features.values, model.clamp3_features(input.samples, 48000).values, 0);
+        near(features.values, clap::detail::FeatureTestAccess::extract(argv[1], input.samples, 48000).values, 0);
         const auto frames = model.audio_frames(control.samples, 24000);
         require(frames.frames == 74 && frames.dimension == model.projection_dimension(), "wrong MERT frame geometry");
         near(frames.values, model.audio_frames(input.samples, 48000).values, 0);
@@ -97,7 +99,8 @@ int main(int argc, char **argv) {
         near(mean, model.encode_audio(control.samples, 24000), 0);
         wav(std::string(argv[2]) + "/resampled-input.wav", input);
         wav(std::string(argv[2]) + "/resampled-control.wav", control);
-        std::cout << "MERT public API: pooling, invalid inputs, native/resampled inference passed\n";
+        std::cout
+            << "MERT public API and private features: pooling, invalid inputs, native/resampled inference passed\n";
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;

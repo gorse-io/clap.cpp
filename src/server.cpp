@@ -1,5 +1,6 @@
 #include "server.h"
 #include "clap.h"
+#include "audio.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>

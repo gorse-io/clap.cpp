@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "audio.h"
 #include "model.h"
 #include "model-loader.h"
 #include "models/models.h"
@@ -88,6 +89,11 @@ std::vector<float> CLAP::encode_audio(const std::vector<float> &pcm, int sample_
     throw std::runtime_error("CLAP: this model has no waveform audio encoder");
 }
 
+std::vector<float> CLAP::encode_audio(const std::string &path, size_t crop_offset) {
+    const auto audio = decode_audio(path);
+    return encode_audio(audio.samples, audio.sample_rate, crop_offset);
+}
+
 AudioFrames CLAP::audio_frames(const std::vector<float> &pcm, int sample_rate) {
     if (!(impl_->architecture->is_waveform_encoder()))
         throw std::runtime_error("CLAP: this model does not expose frame representations");
@@ -100,11 +106,4 @@ AudioFrames CLAP::audio_frames(const std::vector<float> &pcm, int sample_rate) {
 }
 
 int CLAP::audio_sample_rate() const { return impl_->architecture->sample_rate(); }
-AudioFrames CLAP::clamp3_features(const std::vector<float> &pcm, int sample_rate) {
-    if (sample_rate <= 0)
-        throw std::runtime_error("CLAP: audio sample rate must be positive");
-    if (sample_rate == 24000)
-        return impl_->architecture->clamp3_features(pcm);
-    return impl_->architecture->clamp3_features(resample_audio({pcm, sample_rate}, 24000).samples);
-}
 } // namespace clap

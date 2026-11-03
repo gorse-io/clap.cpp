@@ -139,8 +139,7 @@ class CLAP : public Napi::ObjectWrap<CLAP> {
                                                 std::min(9007199254740991.0,
                                                          static_cast<double>(std::numeric_limits<std::size_t>::max())));
                 auto &m = get();
-                auto decoded = clap::decode_audio(filename);
-                return array(info.Env(), m.encode_audio(decoded.samples, decoded.sample_rate, crop));
+                return array(info.Env(), m.encode_audio(filename, crop));
             }
             auto pcm = samples(info[0]);
             int sr = optional_rate(info[1], 48000);

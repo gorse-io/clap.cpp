@@ -12,6 +12,7 @@ import wave
 import numpy as np
 import torch
 from transformers import Wav2Vec2FeatureExtractor
+from feature_input import extract
 
 REVISION = '12af15fef9d0ac838c3f475bfbbf26d2060dd4f5'
 
@@ -106,20 +107,17 @@ def run(args):
                     with torch.no_grad():
                         states=network(chunk,output_hidden_states=True).hidden_states
                     chunks.append(torch.stack(states).mean(-2).mean(0)[0].numpy())
-                actual = json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding','-m',str(target),
-                                     '-a',str(audio),'--clamp3-features','-t','2'], text=True))
+                actual = extract(args.build, target, audio)
                 error(np.asarray(actual['values']).reshape(actual['frames'],actual['dimension']),
                       np.stack(chunks), f'{dtype}/{name}/clamp3', 0.00002)
                 if name == 'resampled':
-                    resampled = json.loads(subprocess.check_output([str(args.build/'clap'), 'embedding',
-                        '-m',str(target),'-a',str(args.out/'resampled-input.wav'),
-                        '--clamp3-features','-t','2'], text=True))
+                    resampled = extract(args.build, target, args.out/'resampled-input.wav')
                     np.testing.assert_array_equal(resampled['values'], actual['values'])
-                    print(f'{dtype}/48kHz CLI -> 24kHz MERT matches native-rate control', flush=True)
+                    print(f'{dtype}/48kHz private helper -> 24kHz MERT matches native-rate control', flush=True)
     for n in [0,399,23999]:
         path=args.out/f'short-{n}.wav';wav(path,np.zeros(n,dtype='float32'))
-        result=subprocess.run([str(args.build/'clap'), 'embedding','-m',str(target),'-a',str(path),
-                               '--clamp3-features'],capture_output=True,text=True)
+        result=subprocess.run([str(args.build/'feature-extract-test'), str(target), str(path)],
+                              capture_output=True,text=True)
         assert result.returncode != 0, (n,result.stdout)
     print('MERT-v1 numerical parity passed',flush=True)
 

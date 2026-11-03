@@ -1,5 +1,6 @@
 #include "embedding.h"
 #include "clap.h"
+#include "audio.h"
 
 #include <nlohmann/json.hpp>
 
@@ -79,10 +80,8 @@ int run_embedding(const EmbeddingOptions &options) {
             if (options.crop_requested && model.audio_sample_rate() != 48000) {
                 throw std::runtime_error("--crop-offset requires a CLAP model");
             }
-            if (options.frames || options.clamp3_features) {
-                const auto sequence = options.clamp3_features
-                                          ? model.clamp3_features(decoded.samples, decoded.sample_rate)
-                                          : model.audio_frames(decoded.samples, decoded.sample_rate);
+            if (options.frames) {
+                const auto sequence = model.audio_frames(decoded.samples, decoded.sample_rate);
                 std::cout << json{{"frames", sequence.frames},
                                   {"dimension", sequence.dimension},
                                   {"values", sequence.values}}

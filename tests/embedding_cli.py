@@ -59,9 +59,10 @@ class EmbeddingCLITest(unittest.TestCase):
     def test_help(self):
         output = self.success("--help")
         for option in ("--model", "--threads", "--prompt", "--text", "--audio", "--file",
-                       "--crop-offset", "--frames", "--clamp3-features",
+                       "--crop-offset", "--frames",
                        "--embd-separator", "--embd-output-format"):
             self.assertIn(option, output)
+        self.assertNotIn("--clamp3-features", output)
         self.assertNotIn("dummy", output.lower())
         result = self.run_cli("--help", command="serve")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -178,10 +179,8 @@ class EmbeddingCLITest(unittest.TestCase):
                           ["-p", "x", "-f", str(text)], ["-f", str(empty)],
                           ["--text", "x", "--audio", str(audio)],
                           ["--text", "x", "--crop-offset", "0"],
-                          ["--text", "x", "--frames"], ["--text", "x", "--clamp3-features"],
+                          ["--text", "x", "--frames"],
                           ["-a", str(audio), "--frames", "--crop-offset", "0"],
-                          ["-a", str(audio), "--frames", "--clamp3-features"],
-                          ["-a", str(audio), "--clamp3-features", "--crop-offset", "0"],
                           ["-p", "x", "--embd-separator", ""],
                           ["-p", "x", "--embd-output-format", "invalid"],
                           ["-p", "x", "--threads", "-1"]):

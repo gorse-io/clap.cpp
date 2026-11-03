@@ -16,7 +16,7 @@ from conversion.base import write_gguf
 from conversion.clamp3 import clamp3_inputs
 from conversion.mert import mert_inputs
 from mert_cache import install
-from feature_input import encode
+from feature_input import encode, extract
 
 fixture = out / 'pipeline'
 source = out / 'source'
@@ -45,7 +45,7 @@ for dtype in ['f32', 'f16']:
                     str(out/f'model-{dtype}.gguf')], check=True)
     for case in ['broadband', 'silence', 'tone', 'two_chunks', 'discard_tail', 'resampled-input']:
         wave = out / f'{case}.wav'
-        features = run(out/f'model-{dtype}.gguf', '-a', wave, '--clamp3-features')
+        features = extract(build, out/f'model-{dtype}.gguf', wave)
         expected = encode(build,standalone,features['values'],features['frames'],fixture)
         actual = run(bundled, '-a', wave)
         np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-6)
@@ -65,7 +65,7 @@ for dtype in ['f32', 'f16']:
             assert typ==rounded[name][0]
             np.testing.assert_array_equal(values,rounded[name][1])
         assert len(run(quantized, '-a', out/'broadband.wav'))==6
-    for flags in [['--frames'], ['--clamp3-features'], ['--crop-offset', '0'],
+    for flags in [['--frames'], ['--crop-offset', '0'],
                   ['--mert-model', out/f'model-{dtype}.gguf']]:
         run(bundled, '-a', out/'broadband.wav', *flags, ok=False)
 

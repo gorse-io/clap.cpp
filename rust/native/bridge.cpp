@@ -33,8 +33,7 @@ Result *cr_call(int op, clap::CLAP *model, const char *s, int threads, size_t cr
             result->floats = model->encode_text(s);
             break;
         case 2: {
-            const auto audio = clap::decode_audio(s);
-            result->floats = model->encode_audio(audio.samples, audio.sample_rate, crop_offset);
+            result->floats = model->encode_audio(s, crop_offset);
             break;
         }
         default:

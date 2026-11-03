@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from transformers import BertConfig, BertModel, Wav2Vec2FeatureExtractor
 from mert_parity import reference, wav, error
-from feature_input import encode
+from feature_input import encode, extract
 
 
 def run(args):
@@ -75,8 +75,7 @@ def run(args):
         # For the resampled case the oracle consumes the exact native-resampler control;
         # the actual CLI consumes 48 kHz input, not the pre-resampled waveform.
         actual_path = args.output/'resampled-input.wav' if name == 'resampled' else path
-        raw = json.loads(subprocess.check_output([cli, 'embedding','-m',str(args.mert_gguf),'-a',str(actual_path),
-                                                 '--clamp3-features','-t','2']))
+        raw = extract(args.build, args.mert_gguf, actual_path)
         native_features = np.asarray(raw['values'],dtype='float32').reshape(raw['frames'],raw['dimension'])
         error(native_features,features.numpy(),name+'/MERT',0.00002)
         file_embedding = encode(args.build,args.clamp3_gguf,native_features.ravel(),raw['frames'],args.output)

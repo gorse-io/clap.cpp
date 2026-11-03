@@ -19,7 +19,6 @@ assert_type(model.encode_audio(path=Path("audio.wav"), crop_offset=3), list[floa
 assert_type(model.encode_audio((0.0, 0.5)), list[float])
 assert_type(model.encode_audio(pcm=[0.0, 0.5], sample_rate=24000, crop_offset=1), list[float])
 assert_type(model.audio_frames([0.0], sample_rate=48000), list[list[float]])
-assert_type(model.clamp3_features((0.0, 0.5)), list[list[float]])
 assert_type(model.close(), None)
 with CLAP("model.gguf") as opened:
     assert_type(opened, CLAP)

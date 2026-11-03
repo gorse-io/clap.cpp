@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "audio.h"
 #include "feature-test.h"
 #include <algorithm>
 #include <cmath>
@@ -25,7 +26,7 @@ int main(int argc, char **argv) {
     try {
         if (argc != 4)
             throw std::runtime_error("bundled, feature-only, MERT models required");
-        clap::CLAP bundled(argv[1], 2), target(argv[2], 2), mert(argv[3], 2);
+        clap::CLAP bundled(argv[1], 2), target(argv[2], 2);
         if (bundled.audio_sample_rate() != 24000)
             throw std::runtime_error("bundled sample rate");
         if (target.audio_sample_rate() != 24000)
@@ -34,18 +35,17 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < pcm.size(); ++i)
             pcm[i] = 0.2f * std::sin(i * 0.071f) + 0.1f;
         const auto resampled = clap::resample_audio({pcm, 48000}, 24000).samples;
-        const auto features = mert.clamp3_features(resampled, 24000);
+        const auto features = clap::detail::FeatureTestAccess::extract(argv[3], resampled, 24000);
         const auto expected = clap::detail::FeatureTestAccess::encode(argv[2], features.values, features.frames);
         equal(bundled.encode_audio(pcm, 48000), expected);
         equal(bundled.encode_audio(resampled, 24000), expected);
         equal(clap::detail::FeatureTestAccess::encode(argv[1], features.values, features.frames), expected);
         equal(bundled.encode_text("ab c"), target.encode_text("ab c"));
-        rejects([&] { bundled.encode_audio({}, 24000); });
+        rejects([&] { bundled.encode_audio(std::vector<float>{}, 24000); });
         rejects([&] { bundled.encode_audio(std::vector<float>(23999), 24000); });
         rejects([&] { bundled.encode_audio(pcm, 0); });
         rejects([&] { bundled.encode_audio(pcm, 24000, 1); });
         rejects([&] { bundled.audio_frames(pcm, 24000); });
-        rejects([&] { bundled.clamp3_features(pcm, 24000); });
         pcm[0] = std::numeric_limits<float>::quiet_NaN();
         rejects([&] { bundled.encode_audio(pcm, 24000); });
         std::cout << "Bundled CLaMP3 native waveform/resampling/features/text/invalid-input passed\n";

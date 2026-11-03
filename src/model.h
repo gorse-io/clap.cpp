@@ -20,9 +20,6 @@ class ModelArchitecture {
     virtual ~ModelArchitecture() = default;
     virtual std::vector<float> text(const std::vector<int> &ids) const = 0;
     virtual AudioFrames audio_frames(const std::vector<float> &pcm) const = 0;
-    virtual AudioFrames clamp3_features(const std::vector<float> &) const {
-        throw std::runtime_error("CLaMP3 feature extraction requires a MERT-v1 model");
-    }
     virtual TextParameters text_parameters() const = 0;
     virtual int projection_dimension() const = 0;
     virtual int mel_bins() const = 0;
