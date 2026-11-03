@@ -15,28 +15,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-      - name: Configure clang-tidy
-        id: configure
-        run: |
-          cmake -S . -B build/lint -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          root = Path.cwd()
-          database = json.loads(Path('build/lint/compile_commands.json').read_text())
-          sources = sorted({Path(entry['file']).relative_to(root).as_posix()
-                            for entry in database
-                            if Path(entry['file']).is_relative_to(root / 'src')
-                            or Path(entry['file']).is_relative_to(root / 'tests')})
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('ignore-tidy=*|' + '|'.join('!' + source for source in sources) + '\n')
-          PY
       - uses: cpp-linter/cpp-linter-action@v2
         id: lint
         env:
@@ -46,9 +24,7 @@ jobs:
           style: file
           tidy-checks: ''
           files-changed-only: false
-          database: build/lint
           ignore: build
-          ignore-tidy: ${{ steps.configure.outputs.ignore-tidy }}
       - name: Fail on lint errors
         if: steps.lint.outputs.checks-failed > 0
         run: exit 1

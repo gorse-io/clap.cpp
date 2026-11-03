@@ -100,20 +100,10 @@ git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | x
 The CI `lint` job uses a single `cpp-linter/cpp-linter-action@v2` step with
 `id: lint` to check both formatting and clang-tidy 18 using the repository's
 configuration files. Its `checks-failed` output fails the job on lint errors.
-On Ubuntu 24.04, run the same static analysis locally with:
-
-```sh
-sudo apt-get update
-sudo apt-get install -y clang-tidy-18 ffmpeg
-git submodule update --init --recursive
-cmake -S . -B build/lint -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-run-clang-tidy-18 -p build/lint "^$PWD/(src|tests)/"
-```
-
-Static analysis covers the core library, CLI, and tests in the default CMake
-compilation database, including their project headers. Third-party translation
-units and separately configured language bindings are excluded. Analyzer warnings
-are treated as errors.
+The lint job does not configure CMake, generate a compilation database, or install
+FFmpeg. It checks project C/C++ files with the action's default compilation flags;
+submodules and the build directory are excluded. Analyzer warnings are treated as
+errors.
 
 ## License
 
