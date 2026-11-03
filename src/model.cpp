@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "audio.h"
 #include "model.h"
 #include "model-loader.h"
 #include "models/models.h"
@@ -86,6 +87,11 @@ std::vector<float> CLAP::encode_audio(const std::vector<float> &pcm, int sample_
         return pooled;
     }
     throw std::runtime_error("CLAP: this model has no waveform audio encoder");
+}
+
+std::vector<float> CLAP::encode_audio(const std::string &path, size_t crop_offset) {
+    const auto audio = decode_audio(path);
+    return encode_audio(audio.samples, audio.sample_rate, crop_offset);
 }
 
 AudioFrames CLAP::audio_frames(const std::vector<float> &pcm, int sample_rate) {

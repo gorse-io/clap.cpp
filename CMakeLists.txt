@@ -80,6 +80,13 @@ if(BUILD_TESTING)
     target_link_libraries(clap-audio-test PRIVATE clap)
     add_dependencies(clap-audio-test clap-audio-fixtures)
     add_test(NAME clap_audio COMMAND clap-audio-test "${CLAP_AUDIO_FIXTURE_DIR}")
+    add_executable(clap-audio-path-test tests/audio-path-test.cpp)
+    target_link_libraries(clap-audio-path-test PRIVATE clap)
+    add_dependencies(clap-audio-path-test clap-audio-fixtures)
+    add_test(NAME clap_audio_path
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_path.py"
+                "$<TARGET_FILE:clap-audio-path-test>" "${CLAP_AUDIO_FIXTURE_DIR}")
+    set_tests_properties(clap_audio_path PROPERTIES TIMEOUT 120)
     add_executable(clap-quantize-output-test tests/quantize-output-test.cpp)
     target_compile_features(clap-quantize-output-test PRIVATE cxx_std_20)
     target_include_directories(clap-quantize-output-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -319,6 +326,13 @@ if(BUILD_TESTING)
     add_test(NAME clap_embedding_cli
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
     set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
+    # Audio preprocessing helpers are private to the core and its tests.
+    foreach(target IN ITEMS clap-resample-test clap-audio-test clap-audio-path-test
+            mert2-fft-test mert-model-test clamp3-bundled-test muq-model-test muq-mulan-model-test)
+        if(TARGET ${target})
+            target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        endif()
+    endforeach()
 endif()
 
 install(TARGETS clap-cli RUNTIME DESTINATION bin)

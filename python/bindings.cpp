@@ -125,10 +125,7 @@ PYBIND11_MODULE(_clap_cpp, module) {
                 if (crop_offset < 0)
                     throw std::invalid_argument("crop_offset must be nonnegative");
                 const auto filename = utf8_path(path);
-                return self.call([&](clap::CLAP &model) {
-                    const auto decoded = clap::decode_audio(filename);
-                    return model.encode_audio(decoded.samples, decoded.sample_rate, crop_offset);
-                });
+                return self.call([&](clap::CLAP &model) { return model.encode_audio(filename, crop_offset); });
             },
             py::arg("path"), py::arg("crop_offset") = 0)
         .def(

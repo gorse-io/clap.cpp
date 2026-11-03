@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "audio.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>

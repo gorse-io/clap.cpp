@@ -1,4 +1,5 @@
 #include "models.h"
+#include "audio.h"
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>

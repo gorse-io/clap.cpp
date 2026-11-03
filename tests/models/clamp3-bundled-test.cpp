@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "audio.h"
 #include "feature-test.h"
 #include <algorithm>
 #include <cmath>
@@ -40,7 +41,7 @@ int main(int argc, char **argv) {
         equal(bundled.encode_audio(resampled, 24000), expected);
         equal(clap::detail::FeatureTestAccess::encode(argv[1], features.values, features.frames), expected);
         equal(bundled.encode_text("ab c"), target.encode_text("ab c"));
-        rejects([&] { bundled.encode_audio({}, 24000); });
+        rejects([&] { bundled.encode_audio(std::vector<float>{}, 24000); });
         rejects([&] { bundled.encode_audio(std::vector<float>(23999), 24000); });
         rejects([&] { bundled.encode_audio(pcm, 0); });
         rejects([&] { bundled.encode_audio(pcm, 24000, 1); });

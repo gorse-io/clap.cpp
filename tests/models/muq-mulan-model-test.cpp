@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "audio.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -68,7 +69,7 @@ int main(int argc, char **argv) {
         reject([&] { m.clamp3_features(wave, 24000); }, "clamp3");
         reject([&] { m.encode_audio(wave, 24000, 1); }, "crop");
         reject([&] { m.encode_audio(wave, 0); }, "rate");
-        reject([&] { m.encode_audio({}, 24000); }, "empty");
+        reject([&] { m.encode_audio(std::vector<float>{}, 24000); }, "empty");
         reject([&] { m.encode_audio(std::vector<float>(512), 24000); }, "short");
         auto bad = wave;
         bad[0] = std::numeric_limits<float>::quiet_NaN();
