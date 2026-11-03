@@ -97,8 +97,10 @@ To run the same formatting check as GitHub Actions:
 git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format --dry-run --Werror
 ```
 
-The CI `lint` job checks formatting first, then runs clang-tidy 18 using
-`.clang-tidy`. On Ubuntu 24.04, run the same static analysis locally with:
+The CI `lint` job uses a single `cpp-linter/cpp-linter-action@v2` step with
+`id: lint` to check both formatting and clang-tidy 18 using the repository's
+configuration files. Its `checks-failed` output fails the job on lint errors.
+On Ubuntu 24.04, run the same static analysis locally with:
 
 ```sh
 sudo apt-get update

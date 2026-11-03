@@ -13,23 +13,45 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Install clang-format
-        run: python -m pip install clang-format==18.1.8
-      - name: Check C/C++ formatting
-        run: git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 -r clang-format --dry-run --Werror
-      - name: Install clang-tidy and test dependencies
+          submodules: recursive
+      - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-tidy-18 ffmpeg
-      - name: Initialize submodules
-        run: git submodule update --init --recursive
+          sudo apt-get install -y ffmpeg
       - name: Configure clang-tidy
-        run: cmake -S . -B build/lint -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-      - name: Check C/C++ with clang-tidy
-        run: run-clang-tidy-18 -p build/lint "^$PWD/(src|tests)/"
+        id: configure
+        run: |
+          cmake -S . -B build/lint -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path.cwd()
+          database = json.loads(Path('build/lint/compile_commands.json').read_text())
+          sources = sorted({Path(entry['file']).relative_to(root).as_posix()
+                            for entry in database
+                            if Path(entry['file']).is_relative_to(root / 'src')
+                            or Path(entry['file']).is_relative_to(root / 'tests')})
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('ignore-tidy=*|' + '|'.join('!' + source for source in sources) + '\n')
+          PY
+      - uses: cpp-linter/cpp-linter-action@v2
+        id: lint
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          version: '18'
+          style: file
+          tidy-checks: ''
+          files-changed-only: false
+          database: build/lint
+          ignore: build
+          ignore-tidy: ${{ steps.configure.outputs.ignore-tidy }}
+      - name: Fail on lint errors
+        if: steps.lint.outputs.checks-failed > 0
+        run: exit 1
 
   release-metadata:
     runs-on: ubuntu-24.04
