@@ -49,8 +49,10 @@ into a local directory and use, for example,
 
 The package includes type stubs and a `py.typed` marker for IDE completion and
 static checking with mypy or Pyright. `encode_text` and `encode_audio` return
-`list[float]`; `audio_frames` and `clamp3_features` return time-major
-`list[list[float]]`. PCM input accepts mono numeric sequences such as lists or
+`list[float]`; `audio_frames` returns time-major `list[list[float]]`.
+CLaMP3 extracts MERT features internally through `encode_audio`; intermediate
+feature extraction is not part of the public API.
+PCM input accepts mono numeric sequences such as lists or
 tuples. The runtime has no NumPy dependency. Text, token-sequence, audio-file and
 PCM input overloads are declared separately.
 

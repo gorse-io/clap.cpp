@@ -66,7 +66,6 @@ int main(int argc, char **argv) {
         compare(m.encode_audio(wave, 48000), m.encode_audio(clap::resample_audio({wave, 48000}, 24000).samples, 24000),
                 0, "automatic native resampling");
         reject([&] { m.audio_frames(wave, 24000); }, "frames");
-        reject([&] { m.clamp3_features(wave, 24000); }, "clamp3");
         reject([&] { m.encode_audio(wave, 24000, 1); }, "crop");
         reject([&] { m.encode_audio(wave, 0); }, "rate");
         reject([&] { m.encode_audio(std::vector<float>{}, 24000); }, "empty");

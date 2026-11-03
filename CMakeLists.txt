@@ -236,7 +236,12 @@ if(BUILD_TESTING)
             message(FATAL_ERROR "MERT_REFERENCE_SOURCE must contain reviewed pinned official source")
         endif()
         add_executable(mert-model-test tests/models/mert-model-test.cpp)
-        target_link_libraries(mert-model-test PRIVATE clap)
+        target_link_libraries(mert-model-test PRIVATE clap nlohmann_json::nlohmann_json)
+        target_include_directories(mert-model-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        # Private MERT feature bridge for tiny and published-checkpoint Python oracles.
+        add_executable(feature-extract-test tests/models/feature-extract-test.cpp)
+        target_link_libraries(feature-extract-test PRIVATE clap nlohmann_json::nlohmann_json)
+        target_include_directories(feature-extract-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
         add_test(NAME mert_model_parity
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_parity.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mert-fixture" "${MERT_REFERENCE_SOURCE}")

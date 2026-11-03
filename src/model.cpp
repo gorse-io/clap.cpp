@@ -106,11 +106,4 @@ AudioFrames CLAP::audio_frames(const std::vector<float> &pcm, int sample_rate) {
 }
 
 int CLAP::audio_sample_rate() const { return impl_->architecture->sample_rate(); }
-AudioFrames CLAP::clamp3_features(const std::vector<float> &pcm, int sample_rate) {
-    if (sample_rate <= 0)
-        throw std::runtime_error("CLAP: audio sample rate must be positive");
-    if (sample_rate == 24000)
-        return impl_->architecture->clamp3_features(pcm);
-    return impl_->architecture->clamp3_features(resample_audio({pcm, sample_rate}, 24000).samples);
-}
 } // namespace clap

@@ -37,7 +37,7 @@ std::vector<DeviceInfo> available_devices();
 // pooled projections. Its mandatory bundled MERT-v1-95M frontend handles
 // waveform preprocessing internally; no separate feature-input API is exposed.
 // MERT-v1 audio_frames() exposes final-layer frames; encode_audio() mean-pools them.
-// Neither is the all-layer CLaMP3 representation: use clamp3_features() for that.
+// CLaMP3's all-layer MERT feature extraction is handled internally.
 // MERT-v2-FullSong and MuQ encode_audio() mean-pool the complete input's final frames;
 // audio_frames() returns the unpooled sequence (approximately 25 Hz for published weights).
 // MuQ-MuLan encode_text() returns a single L2-normalized joint embedding. encode_audio() uses
@@ -67,12 +67,6 @@ class CLAP {
     // Throws on unreadable, unsupported, empty or invalid audio.
     std::vector<float> encode_audio(const std::string &path, std::size_t crop_offset = 0);
     AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);
-    // MERT-v1 CLaMP3 --mean_features preprocessing: normalize the entire mono
-    // recording, split into non-overlapping 5 s windows, discard a final window
-    // shorter than 1 s, and average time then all hidden states (embedding +
-    // transformer layers). Returns one feature vector per retained window.
-    // At least one second is required. Resampling uses the native audio helper.
-    AudioFrames clamp3_features(const std::vector<float> &pcm, int sample_rate = 24000);
     int audio_sample_rate() const;
     int projection_dimension() const;
 

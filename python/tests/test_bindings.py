@@ -37,7 +37,7 @@ def mert(model_paths):
 
 @pytest.fixture
 def pcm():
-    # One full second meets the MERT CLaMP3-feature minimum duration.
+    # One second of mono PCM for waveform inference and frame pooling.
     return list(array("f", (0.2 * math.sin(2 * math.pi * 440 * i / 24000)
                             for i in range(24000))))
 
@@ -67,7 +67,7 @@ def test_module_exports():
     assert callable(clap_cpp.CLAP)
     for name in ("Model", "decode_audio", "resample_audio"):
         assert not hasattr(clap_cpp, name)
-    for name in ("text", "audio"):
+    for name in ("text", "audio", "clamp3_features"):
         assert not hasattr(clap_cpp.CLAP, name)
 
 
@@ -143,15 +143,6 @@ def test_mert_frames_and_mean_pooling(mert, pcm):
     assert mert.audio_frames(pcm, sample_rate=24000) == frames
 
 
-def test_mert_clamp3_features(mert, pcm):
-    features = mert.clamp3_features(pcm)
-    assert_list(features, (1, 4))
-    assert mert.clamp3_features(pcm) == features
-    # Two retained 5-second windows; discard the final half-second tail.
-    extended = (pcm * 11)[:252000]
-    assert_list(mert.clamp3_features(extended), (2, 4))
-
-
 @pytest.mark.parametrize("as_string", [False, True])
 @pytest.mark.parametrize("crop_offset", [0, 100])
 def test_encode_audio_file_matches_pcm(model, pcm, tmp_path, as_string, crop_offset):
@@ -185,21 +176,21 @@ def test_encode_audio_file_errors(model, tmp_path):
 
 
 @pytest.mark.parametrize("bad", [[], [float("nan")], [float("inf")], [1e100]])
-@pytest.mark.parametrize("method", ["encode_audio", "audio_frames", "clamp3_features"])
+@pytest.mark.parametrize("method", ["encode_audio", "audio_frames"])
 def test_reject_invalid_pcm(mert, bad, method):
     with pytest.raises(ValueError):
         getattr(mert, method)(bad)
 
 
 @pytest.mark.parametrize("bad", [[[0.0] * 3] * 2, ["invalid"], None, 1.0])
-@pytest.mark.parametrize("method", ["encode_audio", "audio_frames", "clamp3_features"])
+@pytest.mark.parametrize("method", ["encode_audio", "audio_frames"])
 def test_reject_wrong_pcm_types(mert, bad, method):
     with pytest.raises(TypeError):
         getattr(mert, method)(bad)
 
 
 @pytest.mark.parametrize("rate", [0, -1])
-@pytest.mark.parametrize("method", ["encode_audio", "audio_frames", "clamp3_features"])
+@pytest.mark.parametrize("method", ["encode_audio", "audio_frames"])
 def test_model_rejects_nonpositive_rates(mert, pcm, rate, method):
     with pytest.raises(ValueError):
         getattr(mert, method)(pcm, sample_rate=rate)
@@ -232,11 +223,7 @@ def test_native_failures_are_runtime_errors(model, mert, pcm, tmp_path):
     with pytest.raises(RuntimeError):
         model.audio_frames(pcm)
     with pytest.raises(RuntimeError):
-        model.clamp3_features(pcm)
-    with pytest.raises(RuntimeError):
         mert.encode_text("audio-only model")
-    with pytest.raises(RuntimeError):
-        mert.clamp3_features(pcm[:100])
 
 
 @pytest.mark.parametrize("operation", [
@@ -247,7 +234,6 @@ def test_native_failures_are_runtime_errors(model, mert, pcm, tmp_path):
     lambda m: m.encode_text([0, 2]),
     lambda m: m.encode_audio([0.1, 0.2]),
     lambda m: m.audio_frames([0.1, 0.2]),
-    lambda m: m.clamp3_features([0.1, 0.2]),
 ])
 def test_closed_model_rejects_every_operation(model_paths, operation):
     model = clap_cpp.CLAP(model_paths[0], threads=1)
@@ -278,15 +264,11 @@ def test_output_lists_own_their_lifetime(model_paths, pcm):
     with clap_cpp.CLAP(model_paths[1], threads=1) as mert:
         frames = mert.audio_frames(pcm, sample_rate=24000)
         saved_frames = deepcopy(frames)
-        features = mert.clamp3_features(pcm)
-        saved_features = deepcopy(features)
     del mert
     gc.collect()
     assert frames == saved_frames
-    assert features == saved_features
     frames[0][0] = 123.0
     assert frames[1] == saved_frames[1]
-    assert features == saved_features
 
 
 def test_same_handle_is_safe_under_concurrent_inference(model):

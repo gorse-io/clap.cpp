@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from transformers import BertConfig, BertModel
 from mert_cache import install
-from feature_input import encode
+from feature_input import encode, extract
 
 build,out=map(Path,sys.argv[1:3]); root=Path(__file__).resolve().parents[2]
 source=out/'source'; config=json.loads((source/'config.json').read_text()); hidden=config['hidden_size']
@@ -38,7 +38,7 @@ for dtype in ['f32']:
     mert=str(out/f'model-{dtype}.gguf')
     for case in ['broadband','two_chunks','discard_tail','resampled-input']:
         wave=out/f'{case}.wav'
-        data=json.loads(subprocess.check_output([cli, 'embedding','-m',mert,'-a',str(wave),'--clamp3-features','-t','2']))
+        data=extract(build, mert, wave)
         features=np.asarray(data['values'],dtype='float32').reshape(data['frames'],hidden)
         expected=encode(build,fixture/'model.gguf',features.ravel(),data['frames'],fixture)
         actual=json.loads(subprocess.check_output([cli, 'embedding','-m',str(fixture/'model.gguf'),
@@ -58,9 +58,7 @@ wave = str(out/'broadband.wav')
 mert = str(out/'model-f32.gguf')
 clamp = str(fixture/'model.gguf')
 for arguments in [
-    ['-m',mert,'-a',wave,'--clamp3-features','--frames'],
     ['-m',mert,'-a',wave,'--frames','--crop-offset','0'],
-    ['-m',mert,'-a',wave,'--clamp3-features','--crop-offset','0'],
     ['-m',clamp,'-a',wave,'--crop-offset','0'],
     ['-m',clamp,'-a',wave,'--audio-features','obsolete.npy'],
     ['-m',clamp,'-a',wave,'--mert-model',mert],

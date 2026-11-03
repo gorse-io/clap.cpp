@@ -16,7 +16,6 @@ struct EmbeddingOptions {
     std::size_t crop_offset = 0;
     bool crop_requested = false;
     bool frames = false;
-    bool clamp3_features = false;
 };
 
 int run_embedding(const EmbeddingOptions &options);

@@ -153,7 +153,9 @@ class MertModel final : public ModelArchitecture {
               const std::string &metadata_prefix = "");
     std::vector<float> text(const std::vector<int> &) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
-    AudioFrames clamp3_features(const std::vector<float> &pcm) const override;
+    // Internal CLaMP3 frontend: normalize the whole recording, split into 5 s
+    // windows, discard a tail shorter than 1 s, and mean-pool time/all layers.
+    AudioFrames clamp3_features(const std::vector<float> &pcm) const;
     TextParameters text_parameters() const override { return {0, 0, 0}; }
     int projection_dimension() const override { return h.hidden; }
     int mel_bins() const override { return 0; }

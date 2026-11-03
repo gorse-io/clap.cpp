@@ -136,14 +136,6 @@ PYBIND11_MODULE(_clap_cpp, module) {
                 return matrix(self.call([&](clap::CLAP &model) { return model.audio_frames(pcm, sample_rate); }));
             },
             py::arg("pcm"), py::arg("sample_rate") = 48000)
-        .def(
-            "clamp3_features",
-            [](CLAP &self, const std::vector<float> &pcm, int sample_rate) {
-                validate_rate(sample_rate);
-                validate_samples(pcm);
-                return matrix(self.call([&](clap::CLAP &model) { return model.clamp3_features(pcm, sample_rate); }));
-            },
-            py::arg("pcm"), py::arg("sample_rate") = 24000)
         .def("close", &CLAP::close)
         .def(
             "__enter__",

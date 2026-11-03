@@ -57,8 +57,6 @@ int main(int argc, char **argv) {
                             ->check(CLI::NonNegativeNumber);
     embedding->add_flag("--frames", options.frames,
                         "Return final-layer waveform-encoder frames instead of mean pooling");
-    embedding->add_flag("--clamp3-features", options.clamp3_features,
-                        "Return MERT-v1 mean-layer/time features (one vector per 5 s window)");
 
     std::string quantize_input;
     std::string quantize_output;
@@ -91,8 +89,6 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("--crop-offset requires --audio");
             if (options.frames && (!*audio_option || options.crop_requested))
                 throw std::runtime_error("--frames requires --audio and excludes --crop-offset");
-            if (options.clamp3_features && (!*audio_option || options.frames || options.crop_requested))
-                throw std::runtime_error("--clamp3-features requires --audio and excludes --frames/--crop-offset");
             if (*file_option) {
                 std::ifstream stream(file, std::ios::binary);
                 if (!stream)
