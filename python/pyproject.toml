@@ -22,13 +22,15 @@ minimum-version = "build-system.requires"
 wheel.packages = ["clap_cpp"]
 # ctypes uses the C ABI, not a CPython extension ABI; retain the native platform.
 wheel.py-api = "py3"
-install.components = ["python"]
-build.targets = ["clap"]
+install.components = ["runtime"]
+cmake.source-dir = ".."
+cmake.version = ">=3.20"
 sdist.exclude = ["**/.git", "**/__pycache__/**", "dist/**", "build/**"]
 
 # The sdist carries the pinned native sources, so it builds without a Git
 # checkout, submodule initialization or network fetches during CMake configure.
 [tool.scikit-build.sdist.force-include]
+"../CMakeLists.txt" = "native/CMakeLists.txt"
 "../LICENSE" = "LICENSE"
 "../include" = "native/include"
 "../src" = "native/src"
@@ -40,6 +42,61 @@ sdist.exclude = ["**/.git", "**/__pycache__/**", "dist/**", "build/**"]
 "../thirdparty/icu/icu4c/source/common" = "native/thirdparty/icu/icu4c/source/common"
 "../thirdparty/icu/icu4c/source/i18n" = "native/thirdparty/icu/icu4c/source/i18n"
 "../thirdparty/icu/icu4c/source/stubdata" = "native/thirdparty/icu/icu4c/source/stubdata"
+
+# Scikit-build-core's supported PKG-INFO predicate distinguishes extracted
+# sdists from checkout builds; no generated checkout native/ tree or CMake shim.
+[[tool.scikit-build.overrides]]
+if.from-sdist = true
+cmake.source-dir = "native"
+
+[tool.scikit-build.cmake.define]
+CLAP_BUILD_CLI = "OFF"
+BUILD_TESTING = "OFF"
+BUILD_SHARED_LIBS = "ON"
+CLAP_STATIC_DEPENDENCIES = "ON"
+CLAP_USE_SYSTEM_ICU = "OFF"
+CMAKE_POSITION_INDEPENDENT_CODE = "ON"
+CMAKE_INSTALL_LIBDIR = "clap_cpp"
+CMAKE_INSTALL_BINDIR = "clap_cpp"
+GGML_NATIVE = "OFF"
+GGML_CPU = "ON"
+GGML_METAL = "OFF"
+GGML_CUDA = "OFF"
+GGML_HIP = "OFF"
+GGML_VULKAN = "OFF"
+GGML_SYCL = "OFF"
+GGML_OPENCL = "OFF"
+GGML_OPENVINO = "OFF"
+GGML_RPC = "OFF"
+GGML_MUSA = "OFF"
+GGML_WEBGPU = "OFF"
+GGML_ZDNN = "OFF"
+GGML_VIRTGPU = "OFF"
+GGML_VIRTGPU_BACKEND = "OFF"
+GGML_ET = "OFF"
+GGML_HEXAGON = "OFF"
+GGML_ZENDNN = "OFF"
+GGML_BLAS = "OFF"
+GGML_ACCELERATE = "OFF"
+GGML_BACKEND_DL = "OFF"
+GGML_OPENMP = "OFF"
+GGML_BUILD_TESTS = "OFF"
+GGML_BUILD_EXAMPLES = "OFF"
+# Portable redistributable CPU code, rather than the build host ISA.
+GGML_SSE42 = "OFF"
+GGML_AVX = "OFF"
+GGML_AVX2 = "OFF"
+GGML_AVX_VNNI = "OFF"
+GGML_BMI2 = "OFF"
+GGML_FMA = "OFF"
+GGML_F16C = "OFF"
+GGML_AVX512 = "OFF"
+GGML_AVX512_VBMI = "OFF"
+GGML_AVX512_VNNI = "OFF"
+GGML_AVX512_BF16 = "OFF"
+GGML_AMX_TILE = "OFF"
+GGML_AMX_INT8 = "OFF"
+GGML_AMX_BF16 = "OFF"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -162,7 +162,7 @@ jobs:
       run: |
         set -euo pipefail
         python -m build --wheel "$RUNNER_TEMP/clap-cuda" --outdir raw \
-          -Ccmake.define.CLAP_PYTHON_BACKEND=CUDA \
+          -Ccmake.define.GGML_CUDA=ON \
           -Ccmake.define.GGML_STATIC=ON \
           '-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real'
     - name: Repair CUDA wheel
@@ -234,7 +234,7 @@ jobs:
       run: |
         set -euo pipefail
         python -m build --wheel "$RUNNER_TEMP/clap-vulkan" --outdir raw \
-          -Ccmake.define.CLAP_PYTHON_BACKEND=VULKAN
+          -Ccmake.define.GGML_VULKAN=ON
     - name: Repair Vulkan wheel (Ubuntu 24.04 glibc floor)
       run: |
         set -euo pipefail
@@ -318,7 +318,7 @@ jobs:
       run: |
         set -euo pipefail
         python -m build --wheel "$RUNNER_TEMP/clap-rocm" --outdir raw \
-          -Ccmake.define.CLAP_PYTHON_BACKEND=HIP \
+          -Ccmake.define.GGML_HIP=ON \
           -Ccmake.define.CMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
           '-Ccmake.define.CMAKE_HIP_ARCHITECTURES=gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201' \
           -Ccmake.define.CMAKE_INSTALL_RPATH=/opt/rocm/lib \
@@ -427,7 +427,7 @@ jobs:
             with zipfile.ZipFile(wheel) as archive:
                 package = name.replace('-', '_')
                 entries = set(archive.namelist())
-                if f'{package}/_clap_cpp.py' not in entries:
+                if f'{package}/clap.py' not in entries:
                     raise SystemExit(f'Missing Python ctypes wrapper: {wheel.name}')
                 native = ('clap.dll' if platform == 'win-amd64' else
                           'libclap.dylib' if platform == 'macosx-arm64' else 'libclap.so')

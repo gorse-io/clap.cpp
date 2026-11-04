@@ -65,7 +65,7 @@ def assert_close(actual, expected, rtol=1e-5, atol=1e-6):
 @pytest.mark.parametrize("copier", [copy, deepcopy])
 @pytest.mark.parametrize("explicit_close", [False, True])
 def test_model_rejects_copy_without_transferring_ownership(model_paths, monkeypatch, copier, explicit_close):
-    from clap_cpp import _clap_cpp as wrapper
+    from clap_cpp import clap as wrapper
 
     destroy = wrapper._lib.clap_destroy
     destroyed = []

@@ -81,8 +81,11 @@ python -m pip install ./python
 ```
 
 Requires Python 3.9+, a C++20 compiler and CMake 3.20+. The build backend installs
-CMake/Ninja if necessary. The CPU package has no runtime Python dependencies;
-PyTorch, FFmpeg, a separate `clap` executable and GPU drivers are not required.
+CMake/Ninja if necessary. Python packaging invokes the repository-root CMake
+entrypoint in core-only mode; there is no separate `python/CMakeLists.txt`.
+That mode skips CLI/HTTP dependencies and test-fixture discovery. The CPU package
+has no runtime Python dependencies; PyTorch, FFmpeg, a separate `clap` executable
+and GPU drivers are not required.
 The package-local shared library statically links ggml and bundled ICU.
 Building it does not require Python development headers or pybind11. The base package
 disables GPU backends and OpenMP. x86 wheels use baseline instructions rather

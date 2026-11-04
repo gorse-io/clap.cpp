@@ -7,7 +7,7 @@ import shutil
 import pytest
 
 
-SOURCE = Path(__file__).parents[1] / "clap_cpp" / "_clap_cpp.py"
+SOURCE = Path(__file__).parents[1] / "clap_cpp" / "clap.py"
 
 
 def test_wrapper_is_python_source():
@@ -16,7 +16,7 @@ def test_wrapper_is_python_source():
 
 def test_missing_native_is_package_local(tmp_path):
     # Loading by filename also exercises the generated backend-package contract.
-    target = tmp_path / "_clap_cpp.py"
+    target = tmp_path / "clap.py"
     target.write_bytes(SOURCE.read_bytes())
     spec = importlib.util.spec_from_file_location("isolated_clap", target)
     module = importlib.util.module_from_spec(spec)
@@ -25,7 +25,7 @@ def test_missing_native_is_package_local(tmp_path):
 
 
 def test_ctypes_abi_and_lock():
-    from clap_cpp import _clap_cpp as wrapper
+    from clap_cpp import clap as wrapper
     assert isinstance(wrapper._lib, ctypes.CDLL)
     assert wrapper._Device._fields_[-1] == ("gpu", ctypes.c_bool)
     assert wrapper._lib.clap_default_options.restype is wrapper._Options
@@ -44,7 +44,7 @@ def test_ctypes_abi_and_lock():
 
 
 def test_status_mapping_copies_diagnostic(monkeypatch):
-    from clap_cpp import _clap_cpp as wrapper
+    from clap_cpp import clap as wrapper
     monkeypatch.setattr(wrapper._lib, "clap_last_error", lambda: b"specific diagnostic")
     for status, exception in ((1, ValueError), (2, MemoryError), (3, RuntimeError), (99, RuntimeError)):
         with pytest.raises(exception, match="specific diagnostic"):
@@ -52,7 +52,7 @@ def test_status_mapping_copies_diagnostic(monkeypatch):
 
 
 def test_native_device_struct_layout():
-    from clap_cpp import _clap_cpp as wrapper
+    from clap_cpp import clap as wrapper
     devices = ctypes.POINTER(wrapper._Device)()
     count = ctypes.c_size_t()
     try:
@@ -68,8 +68,8 @@ def test_native_device_struct_layout():
 
 
 def test_backend_copy_is_standalone(tmp_path):
-    import clap_cpp._clap_cpp as wrapper
-    target = tmp_path / "_clap_cpp.py"
+    import clap_cpp.clap as wrapper
+    target = tmp_path / "clap.py"
     target.write_bytes(SOURCE.read_bytes())
     native = Path(wrapper._lib._name)
     # Copy rather than symlink: Windows test users may lack symlink privilege.

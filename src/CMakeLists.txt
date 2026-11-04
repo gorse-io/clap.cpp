@@ -33,3 +33,8 @@ set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
 if(NOT MSVC)
     target_compile_options(clap PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+install(TARGETS clap
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT runtime
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT development)

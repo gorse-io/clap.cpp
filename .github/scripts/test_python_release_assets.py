@@ -32,9 +32,9 @@ def unit_wheel(root, distribution="clap_cpp", platform=PLATFORMS[0], interpreter
     native = "clap.dll" if platform == "win_amd64" else "libclap.dylib" if platform.startswith("macosx_") else "libclap.so"
     with zipfile.ZipFile(path, "w") as archive:
         if payload != "missing-wrapper":
-            archive.writestr(f"{distribution}/_clap_cpp.py", "# UNIT FIXTURE ctypes wrapper, not runnable\n")
+            archive.writestr(f"{distribution}/clap.py", "# UNIT FIXTURE ctypes wrapper, not runnable\n")
         if payload == "extension":
-            archive.writestr(f"{distribution}/_clap_cpp.cpython-311-x86_64-linux-gnu.so", b"UNIT FIXTURE, NOT NATIVE CODE")
+            archive.writestr(f"{distribution}/clap.cpython-311-x86_64-linux-gnu.so", b"UNIT FIXTURE, NOT NATIVE CODE")
         else:
             directory = "wrong_package" if payload == "wrong-package" else distribution
             archive.writestr(f"{directory}/{native}", b"UNIT FIXTURE, NOT NATIVE CODE")
@@ -134,10 +134,10 @@ class PythonReleaseAssetsTest(unittest.TestCase):
         self.assertTrue(all(tag.interpreter == "py3" and tag.abi == "none" and tag.platform.startswith("linux_") for tag in tags))
         with zipfile.ZipFile(wheel) as archive:
             members = archive.namelist()
-            wrapper = archive.read("clap_cpp/_clap_cpp.py")
+            wrapper = archive.read("clap_cpp/clap.py")
             self.assertIn(b"C.CDLL", wrapper)
             self.assertTrue(archive.read("clap_cpp/libclap.so").startswith(b"\x7fELF"))
-            self.assertFalse(any("_clap_cpp" in entry and entry.endswith((".so", ".pyd")) for entry in members))
+            self.assertFalse(any(Path(entry).name.startswith("clap.") and entry.endswith((".so", ".pyd")) for entry in members))
             metadata = archive.read(next(entry for entry in members if entry.endswith(".dist-info/WHEEL")))
             self.assertIn(b"Root-Is-Purelib: false", metadata)
         # Real bytes and original filename: never relabel a raw Linux build as manylinux.

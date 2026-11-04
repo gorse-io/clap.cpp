@@ -21,14 +21,14 @@ def _load_backend():
             )
         requested = installed[0] if installed else "cpu"
     if requested == "cpu":
-        return requested, import_module("._clap_cpp", __name__)
+        return requested, import_module(".clap", __name__)
     package = f"clap_cpp_{requested}"
     if find_spec(package) is None:
         raise ImportError(f'Install the backend with pip install "clap-cpp[{requested}]"')
     if version(f"clap-cpp-{requested}") != version("clap-cpp"):
         raise ImportError(f"clap-cpp and clap-cpp-{requested} must have the same version")
     try:
-        return requested, import_module(f"{package}._clap_cpp")
+        return requested, import_module(f"{package}.clap")
     except (ImportError, OSError) as error:
         raise ImportError(
             f"Cannot load clap-cpp {requested} backend. Install its GPU runtime/driver "
@@ -38,7 +38,7 @@ def _load_backend():
 
 backend, _native = _load_backend()
 if TYPE_CHECKING:
-    from ._clap_cpp import CLAP as CLAP
+    from .clap import CLAP as CLAP
 else:
     CLAP = _native.CLAP
 
