@@ -216,7 +216,7 @@ void embeddings(const httplib::Request &request, httplib::Response &response, CL
 
 } // namespace
 
-int run_server(const std::string &host, int port, const std::string &model_path, int threads,
+int cmd_server(const std::string &host, int port, const std::string &model_path, int threads,
                const std::string &device) {
     try {
         // Load once, before opening the listening socket. A bad model must fail
@@ -228,8 +228,7 @@ int run_server(const std::string &host, int port, const std::string &model_path,
         check(clap_create(c_string(model_path), &options, &handle));
         const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
         const auto identifier = std::filesystem::path(model_path).filename().string();
-        int dimensions = 0;
-        check(clap_projection_dimension(model.get(), &dimensions));
+        const int dimensions = clap_projection_dimension(model.get());
         if (dimensions <= 0)
             throw std::runtime_error("Model projection dimension must be positive");
         std::mutex inference_mutex;

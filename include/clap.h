@@ -81,8 +81,10 @@ CLAP_API clap_status clap_encode_audio_file(CLAP *model, const char *path, size_
                                             size_t *count);
 CLAP_API clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
                                            clap_audio_frames *out);
-CLAP_API clap_status clap_audio_sample_rate(const CLAP *model, int *out);
-CLAP_API clap_status clap_projection_dimension(const CLAP *model, int *out);
+/* Read-only properties; return 0 for a NULL model or an unavailable property.
+ * These queries do not change clap_last_error(). */
+CLAP_API int clap_audio_sample_rate(const CLAP *model);
+CLAP_API int clap_projection_dimension(const CLAP *model);
 
 /* Architecture is selected from GGUF metadata. Unsupported modalities return
  * CLAP_ERROR. CLAP projections are unit-normalized; CLaMP3 uses native unnormalized

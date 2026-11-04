@@ -37,9 +37,8 @@ int main(int argc, char **argv) {
         CLAP *raw = nullptr;
         check(clap_create(argv[1], &options, &raw));
         Model model(raw, clap_destroy);
-        require(take_int([&](int *out) { return clap_audio_sample_rate(model.get(), out); }) == 24000, "MuQ rate");
-        require(take_int([&](int *out) { return clap_projection_dimension(model.get(), out); }) ==
-                    fixture.at("hidden_size"),
+        require(clap_audio_sample_rate(model.get()) == 24000, "MuQ rate");
+        require(clap_projection_dimension(model.get()) == fixture.at("hidden_size"),
                 "MuQ width");
         const float tolerance = fixture.at("tolerance");
         for (const auto &test : fixture.at("waveform_cases")) {

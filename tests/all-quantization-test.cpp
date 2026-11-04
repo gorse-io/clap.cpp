@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
                 for (const std::string preset : {"Q8_0", "Q4_K_M"}) {
                     const auto output = source + "." + preset;
                     std::filesystem::remove(output);
-                    require(run_quantize(source, output, preset) == 0, arch + " quantization refused");
+                    require(cmd_quantize(source, output, preset) == 0, arch + " quantization refused");
                     ModelLoader loader;
                     loader.load(output);
                     bool uncovered = false;

@@ -1,5 +1,8 @@
 # clap.cpp Python bindings
 
+[![PyPI](https://img.shields.io/pypi/v/clap-cpp)](https://pypi.org/project/clap-cpp/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/clap-cpp)](https://pypistats.org/packages/clap-cpp)
+
 ## Install
 
 ```sh

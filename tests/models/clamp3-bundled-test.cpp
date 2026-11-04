@@ -36,9 +36,9 @@ int main(int argc, char **argv) {
         Model bundled(raw, clap_destroy);
         check(clap_create(argv[2], &options, &raw));
         Model target(raw, clap_destroy);
-        if (take_int([&](int *out) { return clap_audio_sample_rate(bundled.get(), out); }) != 24000)
+        if (clap_audio_sample_rate(bundled.get()) != 24000)
             throw std::runtime_error("bundled sample rate");
-        if (take_int([&](int *out) { return clap_audio_sample_rate(target.get(), out); }) != 24000)
+        if (clap_audio_sample_rate(target.get()) != 24000)
             throw std::runtime_error("mandatory frontend sample rate");
         std::vector<float> pcm(48000);
         for (size_t i = 0; i < pcm.size(); ++i)

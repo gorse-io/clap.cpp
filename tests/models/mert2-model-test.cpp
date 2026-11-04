@@ -43,11 +43,9 @@ int main(int argc, char **argv) {
         CLAP *raw = nullptr;
         check(clap_create(argv[1], &options, &raw));
         Model model(raw, clap_destroy);
-        require(take_int([&](int *out) { return clap_audio_sample_rate(model.get(), out); }) ==
-                    fixture.at("sample_rate"),
+        require(clap_audio_sample_rate(model.get()) == fixture.at("sample_rate"),
                 "MERT2 sample rate");
-        require(take_int([&](int *out) { return clap_projection_dimension(model.get(), out); }) ==
-                    fixture.at("hidden_size"),
+        require(clap_projection_dimension(model.get()) == fixture.at("hidden_size"),
                 "MERT2 hidden size");
         const float tolerance = fixture.at("tolerance");
         for (const auto &test : fixture.at("waveform_cases")) {

@@ -70,8 +70,7 @@ int main(int argc, char **argv) {
         CLAP *raw = nullptr;
         check(clap_create(argv[1], &options, &raw));
         Model model(raw, clap_destroy);
-        require(take_int([&](int *out) { return clap_audio_sample_rate(model.get(), out); }) == 24000,
-                "wrong MERT sample rate");
+        require(clap_audio_sample_rate(model.get()) == 24000, "wrong MERT sample rate");
         rejects([&] {
             take_buffer<float>([&](float **out, size_t *count) {
                 const std::string &api_text = "unsupported";
@@ -129,17 +128,14 @@ int main(int argc, char **argv) {
         const auto control = clap::resample_audio(input, 24000);
         require(control.samples.size() == 24000, "unexpected resampled MERT duration");
         const auto features = clap::detail::FeatureTestAccess::extract(argv[1], control.samples, 24000);
-        require(features.frames == 1 && features.dimension == take_int([&](int *out) {
-                                            return clap_projection_dimension(model.get(), out);
-                                        }),
+        require(features.frames == 1 && features.dimension == clap_projection_dimension(model.get()),
                 "wrong MERT feature dimensions");
         near(features.values, clap::detail::FeatureTestAccess::extract(argv[1], input.samples, 48000).values, 0);
         const auto frames = take_frames([&](clap_audio_frames *out) {
             const std::vector<float> &api_pcm = control.samples;
             return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 24000, out);
         });
-        require(frames.frames == 74 &&
-                    frames.dimension == take_int([&](int *out) { return clap_projection_dimension(model.get(), out); }),
+        require(frames.frames == 74 && frames.dimension == clap_projection_dimension(model.get()),
                 "wrong MERT frame geometry");
         near(frames.values, take_frames([&](clap_audio_frames *out) {
                                 const std::vector<float> &api_pcm = input.samples;

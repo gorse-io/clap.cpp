@@ -184,20 +184,10 @@ clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int r
         out->dimension = static_cast<size_t>(frames.dimension);
     });
 }
-clap_status clap_audio_sample_rate(const CLAP *model, int *out) {
-    if (out)
-        *out = 0;
-    return protect([&] {
-        require(model && out, "CLAP: model and sample rate output slot are required");
-        *out = model->architecture->sample_rate();
-    });
+int clap_audio_sample_rate(const CLAP *model) {
+    return model ? model->architecture->sample_rate() : 0;
 }
-clap_status clap_projection_dimension(const CLAP *model, int *out) {
-    if (out)
-        *out = 0;
-    return protect([&] {
-        require(model && out, "CLAP: model and dimension output slot are required");
-        *out = model->architecture->projection_dimension();
-    });
+int clap_projection_dimension(const CLAP *model) {
+    return model ? model->architecture->projection_dimension() : 0;
 }
 } // extern "C"

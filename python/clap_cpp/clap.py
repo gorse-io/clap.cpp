@@ -63,8 +63,8 @@ _bind("clap_encode_tokens", C.c_int, _Handle, _Ints, _Size, C.POINTER(_Floats), 
 _bind("clap_encode_audio", C.c_int, _Handle, _Floats, _Size, C.c_int, _Size, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_encode_audio_file", C.c_int, _Handle, C.c_char_p, _Size, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_get_audio_frames", C.c_int, _Handle, _Floats, _Size, C.c_int, C.POINTER(_Frames))
-_bind("clap_audio_sample_rate", C.c_int, _Handle, C.POINTER(C.c_int))
-_bind("clap_projection_dimension", C.c_int, _Handle, C.POINTER(C.c_int))
+_bind("clap_audio_sample_rate", C.c_int, _Handle)
+_bind("clap_projection_dimension", C.c_int, _Handle)
 
 
 def _check(status):
@@ -177,9 +177,7 @@ class CLAP:
     def _property(self, function):
         with self._lock:
             self._ensure_open()
-            value = C.c_int()
-            _check(function(self._handle, C.byref(value)))
-            return value.value
+            return function(self._handle)
 
     @property
     def projection_dimension(self):

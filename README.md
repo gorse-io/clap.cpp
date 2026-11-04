@@ -3,6 +3,10 @@
 <img width=160 src="assets/clap.png"/>
 
 [![CI](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/gorse-io/clap.cpp)](https://github.com/gorse-io/clap.cpp/releases/latest)
+[![PyPI](https://img.shields.io/pypi/v/clap-cpp)](https://pypi.org/project/clap-cpp/)
+[![npm](https://img.shields.io/npm/v/clap-cpp)](https://www.npmjs.com/package/clap-cpp)
+[![crates.io](https://img.shields.io/crates/v/clap-cpp)](https://crates.io/crates/clap-cpp)
 
 C++20/ggml implementations of audio embedding inference features:
 
@@ -31,52 +35,6 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 | [Python](python) | ✅ | ❌ | ❌ | `pip3 install clap-cpp` |
 | [Rust](rust) | ✅ | ❌ | ❌ | `cargo install clap-cpp` |
 | [Node.js](node) | ✅ | ❌ | ❌ | `npm install clap-cpp` |
-
-## C API
-
-`include/clap.h` is a standalone C11 header with an opaque `CLAP` handle and
-`clap_*` functions (also callable from C++ via `extern "C"`). The CLI, HTTP
-service, and Python, Node.js and Rust bindings all use this C API; there is no
-parallel C++ `CLAP` interface. The implementation still requires a C++20 compiler.
-The language bindings' user-facing APIs are unchanged.
-
-```c
-#include <clap.h>
-#include <stdio.h>
-
-int main(void) {
-    CLAP *model = NULL;
-    float *embedding = NULL;
-    size_t count = 0;
-    clap_runtime_options options = clap_default_options();
-    options.device = "cpu";
-    if (clap_create("model.gguf", &options, &model) != CLAP_OK) {
-        fprintf(stderr, "%s\n", clap_last_error());
-        return 1;
-    }
-    clap_status status = clap_encode_text(model, "A jazz quartet.", &embedding, &count);
-    if (status != CLAP_OK)
-        fprintf(stderr, "%s\n", clap_last_error());
-    /* Use count floats on success. */
-    clap_free(embedding);
-    clap_destroy(model);
-    return status == CLAP_OK ? 0 : 1;
-}
-```
-
-Link the CMake `clap` target; CMake supplies the native runtime dependencies for
-both static and shared builds. C callers do not need C++ headers. Manual static
-linking needs the C++ runtime plus ggml and ICU dependencies. Windows DLL callers
-define `CLAP_SHARED` (the CMake target propagates it automatically).
-
-The header documents ownership and error handling: each embedding/token buffer
-uses `clap_free`, device lists use `clap_free_devices`, and frame outputs use
-`clap_free_audio_frames`. Outputs are cleared on failure; do not overwrite an
-unfreed output. `clap_last_error` is a thread-local diagnostic, valid until the
-next fallible call on that thread. Serialize calls on the same handle. Device
-selection, activation precision, tokenization, text/token encoding, mono PCM and
-WAV/MP3/FLAC path encoding, frame representations, and model dimensions/rates are
-all available without STL types or exceptions crossing the API.
 
 ## Usage
 
@@ -115,35 +73,6 @@ WAV, MP3 or FLAC file as standard base64 (no whitespace or data-URL prefix):
 python3 -c 'import base64,json,sys; print(json.dumps({"input":[{"content":[{"type":"input_audio","input_audio":{"data":base64.b64encode(open(sys.argv[1],"rb").read()).decode()}}]}]}))' music.flac |
   curl http://127.0.0.1:8080/v1/embeddings \
     -H 'Content-Type: application/json' --data-binary @-
-```
-
-`input_audio.format` is optional: the decoder detects the codec from the bytes.
-Text strings and audio objects can share the same `input` array; results retain
-input order. Each audio item must contain **exactly one** audio block; combining
-multiple blocks or pooling text and audio within one item is not supported.
-Audio is decoded in memory and downmixed to mono; native model preprocessing
-handles its sample rate just as `clap embedding --audio` does.
-
-Requests are limited to **32 MiB of JSON**, including base64 overhead, and 1024
-items. Larger bodies receive HTTP 413. Malformed input/base64 or undecodable audio
-receives a JSON HTTP 400 error; model inference failures receive JSON HTTP 500.
-Responses containing audio omit `usage` rather than inventing token counts; text-only
-requests retain their existing token-usage behavior. Output encoding is `float`.
-
-## Development
-
-C/C++ formatting uses clang-format 18.1.8 and the repository's `.clang-format`.
-Install it and format all tracked project sources (submodules are excluded):
-
-```sh
-python -m pip install clang-format==18.1.8
-git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format -i
-```
-
-To run the same formatting check as GitHub Actions:
-
-```sh
-git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format --dry-run --Werror
 ```
 
 ## License

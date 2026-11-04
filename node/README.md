@@ -1,5 +1,8 @@
 # clap.cpp Node.js bindings
 
+[![npm](https://img.shields.io/npm/v/clap-cpp)](https://www.npmjs.com/package/clap-cpp)
+[![npm downloads](https://img.shields.io/npm/dm/clap-cpp)](https://www.npmjs.com/package/clap-cpp)
+
 ## Install
 
 ```sh

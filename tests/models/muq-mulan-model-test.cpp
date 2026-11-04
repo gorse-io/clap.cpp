@@ -49,9 +49,8 @@ int main(int argc, char **argv) {
         CLAP *raw = nullptr;
         check(clap_create(argv[1], &options, &raw));
         Model m(raw, clap_destroy);
-        require(take_int([&](int *out) { return clap_projection_dimension(m.get(), out); }) == f.at("dimension"),
-                "joint width");
-        require(take_int([&](int *out) { return clap_audio_sample_rate(m.get(), out); }) == 24000, "rate");
+        require(clap_projection_dimension(m.get()) == f.at("dimension"), "joint width");
+        require(clap_audio_sample_rate(m.get()) == 24000, "rate");
         const float tol = f.at("tolerance");
         for (const auto &c : f.at("texts")) {
             const auto ids = c.at("ids").get<std::vector<int>>();

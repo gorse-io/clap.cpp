@@ -37,6 +37,11 @@ def test_ctypes_abi_and_lock():
                  "clap_get_audio_frames", "clap_free_audio_frames",
                  "clap_audio_sample_rate", "clap_projection_dimension"):
         assert getattr(wrapper._lib, name).argtypes is not None
+    for name in ("clap_audio_sample_rate", "clap_projection_dimension"):
+        query = getattr(wrapper._lib, name)
+        assert query.argtypes == [ctypes.c_void_p]
+        assert query.restype is ctypes.c_int
+        assert query(None) == 0
     # Partial initialization and repeated finalization must never destroy garbage.
     instance = wrapper.CLAP.__new__(wrapper.CLAP)
     instance.__del__()

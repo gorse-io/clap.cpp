@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
     CLI11_PARSE(app, argc, argv);
 
     if (*quantize) {
-        return run_quantize(quantize_input, quantize_output, quantize_type);
+        return cmd_quantize(quantize_input, quantize_output, quantize_type);
     }
 
     try {
@@ -112,10 +112,10 @@ int main(int argc, char **argv) {
             }
             if (!*audio_option && !options.single_text && options.text.empty())
                 throw std::runtime_error("Input must not be empty");
-            return run_embedding(options);
+            return cmd_embedding(options);
         }
         if (*serve) {
-            return run_server(host, port, server_model, server_threads, server_device);
+            return cmd_server(host, port, server_model, server_threads, server_device);
         }
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

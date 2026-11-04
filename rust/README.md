@@ -1,5 +1,8 @@
 # clap.cpp Rust bindings
 
+[![crates.io](https://img.shields.io/crates/v/clap-cpp)](https://crates.io/crates/clap-cpp)
+[![crates.io downloads](https://img.shields.io/crates/dm/clap-cpp)](https://crates.io/crates/clap-cpp)
+
 ## Install
 
 ```sh

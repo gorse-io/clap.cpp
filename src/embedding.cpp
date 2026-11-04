@@ -93,7 +93,7 @@ void write_embeddings(const std::vector<Vector> &vectors, const std::string &for
 }
 } // namespace
 
-int run_embedding(const EmbeddingOptions &options) {
+int cmd_embedding(const EmbeddingOptions &options) {
     try {
         // Preserve native CLI error precedence: decode audio before loading weights.
         clap::Audio decoded;
@@ -107,8 +107,7 @@ int run_embedding(const EmbeddingOptions &options) {
         const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
         std::vector<Vector> vectors;
         if (!options.audio_path.empty()) {
-            int sample_rate = 0;
-            check(clap_audio_sample_rate(model.get(), &sample_rate));
+            const int sample_rate = clap_audio_sample_rate(model.get());
             if (options.crop_requested && sample_rate != 48000) {
                 throw std::runtime_error("--crop-offset requires a CLAP model");
             }

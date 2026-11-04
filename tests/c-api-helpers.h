@@ -21,11 +21,6 @@ template <class T, class F> std::vector<T> take_buffer(F call) {
         return {};
     return {data, data + count};
 }
-template <class F> int take_int(F call) {
-    int value = 0;
-    check(call(&value));
-    return value;
-}
 struct Frames {
     std::vector<float> values;
     size_t frames;

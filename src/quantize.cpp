@@ -129,7 +129,7 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
               << "; ineligible tensors kept unchanged\n";
 }
 } // namespace
-int run_quantize(const std::string &input, const std::string &output, const std::string &type) {
+int cmd_quantize(const std::string &input, const std::string &output, const std::string &type) {
     try {
         std::string preset(type);
         std::transform(preset.begin(), preset.end(), preset.begin(),
