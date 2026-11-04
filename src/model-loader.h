@@ -1,6 +1,5 @@
 #pragma once
 
-#include "clap-internal.h"
 #include <ggml.h>
 #include <gguf.h>
 #include <cstdint>
@@ -10,6 +9,23 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+namespace clap {
+// Internal runtime configuration shared by GGUF loading and backend selection.
+// Empty device uses CLAP_DEVICE, falling back to "auto"; "cpu" forces CPU.
+// Storage precision is independent of activation arithmetic.
+enum class ActivationPrecision { ModelDefault, F32 };
+struct RuntimeOptions {
+    int threads = 0;
+    std::string device;
+    ActivationPrecision activation_precision = ActivationPrecision::ModelDefault;
+};
+struct DeviceInfo {
+    std::string name, description;
+    bool gpu;
+};
+std::vector<DeviceInfo> available_devices();
+} // namespace clap
 
 namespace clap::detail {
 
@@ -53,7 +69,7 @@ class ModelLoader {
     void *mapping = nullptr;
     size_t mapping_size = 0;
     // MuQ F16 is a storage format, not F16 activation compute. Owning promoted
-    // buffers here preserves stable tensor identities and facade/backend lifetime.
+    // buffers here preserves stable tensor identities and model/backend lifetime.
     std::vector<std::vector<float>> promoted_weights;
 #ifdef _WIN32
     std::vector<char> storage;

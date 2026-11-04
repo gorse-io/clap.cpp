@@ -55,6 +55,8 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME clap_public_api_boundary
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/public_api_boundary.py")
     add_executable(clap-c-api-test tests/c-api-test.c)
     set_target_properties(clap-c-api-test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS OFF)
     if(NOT MSVC)
@@ -360,15 +362,13 @@ if(BUILD_TESTING)
     endforeach()
 endif()
 
-# Internal C++ consumers opt into implementation headers and language features.
+# C++ test tools opt into language features, not blanket private-header access.
+# Private implementation tests declare their src include directory above.
 get_property(CLAP_LOCAL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(target IN LISTS CLAP_LOCAL_TARGETS)
     get_target_property(kind ${target} TYPE)
-    if(kind STREQUAL "EXECUTABLE")
-        target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-        if(NOT target STREQUAL "clap-c-api-test")
-            target_compile_features(${target} PRIVATE cxx_std_20)
-        endif()
+    if(kind STREQUAL "EXECUTABLE" AND NOT target STREQUAL "clap-c-api-test")
+        target_compile_features(${target} PRIVATE cxx_std_20)
     endif()
 endforeach()
 

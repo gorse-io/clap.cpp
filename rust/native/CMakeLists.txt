@@ -154,7 +154,6 @@ include("${CLAP_ROOT}/cmake/icu.cmake")
 add_subdirectory("${CLAP_ROOT}/src" core EXCLUDE_FROM_ALL)
 
 add_library(clap-rust-native STATIC bridge.cpp)
-target_include_directories(clap-rust-native PRIVATE "${CLAP_ROOT}/src")
 target_link_libraries(clap-rust-native PRIVATE clap)
 target_compile_features(clap-rust-native PRIVATE cxx_std_20)
 set(rust_archives clap-rust-native clap ggml ggml-cpu)

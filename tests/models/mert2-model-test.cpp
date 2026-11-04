@@ -1,4 +1,5 @@
-#include "clap-internal.h"
+#include "clap.h"
+#include "../c-api-helpers.h"
 
 #include <nlohmann/json.hpp>
 
@@ -10,6 +11,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+using namespace c_api_test;
 
 static void require(bool value, const std::string &message) {
     if (!value)
@@ -35,17 +38,33 @@ int main(int argc, char **argv) {
         nlohmann::json fixture;
         input >> fixture;
 
-        clap::CLAP model(argv[1], 2);
-        require(model.audio_sample_rate() == fixture.at("sample_rate"), "MERT2 sample rate");
-        require(model.projection_dimension() == fixture.at("hidden_size"), "MERT2 hidden size");
+        clap_runtime_options options = clap_default_options();
+        options.threads = 2;
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Model model(raw, clap_destroy);
+        require(take_int([&](int *out) { return clap_audio_sample_rate(model.get(), out); }) ==
+                    fixture.at("sample_rate"),
+                "MERT2 sample rate");
+        require(take_int([&](int *out) { return clap_projection_dimension(model.get(), out); }) ==
+                    fixture.at("hidden_size"),
+                "MERT2 hidden size");
         const float tolerance = fixture.at("tolerance");
         for (const auto &test : fixture.at("waveform_cases")) {
             const auto waveform = test.at("waveform").get<std::vector<float>>();
-            const auto output = model.audio_frames(waveform, fixture.at("sample_rate"));
+            const auto output = take_frames([&](clap_audio_frames *out) {
+                const std::vector<float> &api_pcm = waveform;
+                return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), fixture.at("sample_rate"),
+                                             out);
+            });
             require(output.frames == test.at("frames"), test.at("name").get<std::string>() + " frame count");
             require(output.dimension == fixture.at("hidden_size"), "MERT2 frame width");
             compare(output.values, test.at("expected_frames").get<std::vector<float>>(), tolerance, test.at("name"));
-            compare(model.encode_audio(waveform, fixture.at("sample_rate")),
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::vector<float> &api_pcm = waveform;
+                        return clap_encode_audio(model.get(), api_pcm.data(), api_pcm.size(), fixture.at("sample_rate"),
+                                                 0, out, count);
+                    }),
                     test.at("expected_pooled").get<std::vector<float>>(), tolerance,
                     test.at("name").get<std::string>() + " pooled");
             if (test.value("full_song", false)) {
@@ -58,8 +77,12 @@ int main(int argc, char **argv) {
 
         bool rejected = false;
         try {
-            model.audio_frames(std::vector<float>(fixture.at("minimum_input_samples").get<size_t>() - 1),
-                               fixture.at("sample_rate"));
+            take_frames([&](clap_audio_frames *out) {
+                const std::vector<float> &api_pcm =
+                    std::vector<float>(fixture.at("minimum_input_samples").get<size_t>() - 1);
+                return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), fixture.at("sample_rate"),
+                                             out);
+            });
         } catch (const std::exception &) {
             rejected = true;
         }
@@ -68,14 +91,21 @@ int main(int argc, char **argv) {
         auto invalid = fixture.at("waveform_cases").at(0).at("waveform").get<std::vector<float>>();
         invalid[0] = std::numeric_limits<float>::quiet_NaN();
         try {
-            model.audio_frames(invalid, fixture.at("sample_rate"));
+            take_frames([&](clap_audio_frames *out) {
+                const std::vector<float> &api_pcm = invalid;
+                return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), fixture.at("sample_rate"),
+                                             out);
+            });
         } catch (const std::exception &) {
             rejected = true;
         }
         require(rejected, "non-finite MERT2 waveform must be rejected");
         rejected = false;
         try {
-            model.encode_text("MERT2 has no text tower");
+            take_buffer<float>([&](float **out, size_t *count) {
+                const std::string &api_text = "MERT2 has no text tower";
+                return clap_encode_text(model.get(), api_text.c_str(), out, count);
+            });
         } catch (const std::exception &) {
             rejected = true;
         }

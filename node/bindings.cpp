@@ -1,5 +1,5 @@
 #include <napi.h>
-#include "clap-internal.h"
+#include "clap.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +12,30 @@
 #include <vector>
 
 namespace {
+const char *c_string(const std::string &value) {
+    if (value.find('\0') != std::string::npos)
+        throw std::invalid_argument("text and paths must contain no NUL bytes");
+    return value.c_str();
+}
+
+void check(clap_status status) {
+    if (status == CLAP_OK)
+        return;
+    const std::string message = clap_last_error();
+    if (status == CLAP_INVALID_ARGUMENT)
+        throw std::invalid_argument(message);
+    if (status == CLAP_OUT_OF_MEMORY)
+        throw std::bad_alloc();
+    throw std::runtime_error(message);
+}
+
+template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
+    const std::unique_ptr<T, decltype(&clap_free)> owned(data, clap_free);
+    if (!count)
+        return {};
+    return {data, data + count};
+}
+
 // No C++ exception may escape a Node-API callback, including allocation errors.
 template <class F> Napi::Value guarded(Napi::Env env, F &&fn) {
     try {
@@ -90,20 +114,25 @@ Napi::Float32Array array(Napi::Env env, const std::vector<float> &v) {
         std::memcpy(output.Data(), v.data(), v.size() * sizeof(float));
     return output;
 }
-class CLAP : public Napi::ObjectWrap<CLAP> {
+class NodeCLAP : public Napi::ObjectWrap<NodeCLAP> {
   public:
     static Napi::Function define(Napi::Env env) {
         return DefineClass(env, "CLAP",
-                           {InstanceMethod<&CLAP::encode_text>("encodeText"),
-                            InstanceMethod<&CLAP::encode_audio>("encodeAudio"), InstanceMethod<&CLAP::close>("close")});
+                           {InstanceMethod<&NodeCLAP::encode_text>("encodeText"),
+                            InstanceMethod<&NodeCLAP::encode_audio>("encodeAudio"),
+                            InstanceMethod<&NodeCLAP::close>("close")});
     }
-    explicit CLAP(const Napi::CallbackInfo &info) : Napi::ObjectWrap<CLAP>(info) {
+    explicit NodeCLAP(const Napi::CallbackInfo &info) : Napi::ObjectWrap<NodeCLAP>(info) {
         guarded(info.Env(), [&]() -> Napi::Value {
             auto p = path(info[0]);
             int threads = info[1].IsUndefined()
                               ? 0
                               : static_cast<int>(integer(info[1], "threads", 0, std::numeric_limits<int>::max()));
-            model_ = std::make_unique<clap::CLAP>(p, threads);
+            auto options = clap_default_options();
+            options.threads = threads;
+            ::CLAP *model = nullptr;
+            check(clap_create(c_string(p), &options, &model));
+            model_.reset(model);
             return info.Env().Undefined();
         });
     }
@@ -111,11 +140,11 @@ class CLAP : public Napi::ObjectWrap<CLAP> {
   private:
     // Synchronous calls cannot overlap within one JS isolate; each worker owns its
     // own ObjectWrap. There is no globally shared model handle or borrowed output.
-    std::unique_ptr<clap::CLAP> model_;
-    clap::CLAP &get() {
+    std::unique_ptr<::CLAP, decltype(&clap_destroy)> model_{nullptr, clap_destroy};
+    ::CLAP *get() {
         if (!model_)
             throw std::runtime_error("CLAP is closed");
-        return *model_;
+        return model_.get();
     }
     Napi::Value encode_text(const Napi::CallbackInfo &info) {
         return guarded(info.Env(), [&]() -> Napi::Value {
@@ -123,10 +152,16 @@ class CLAP : public Napi::ObjectWrap<CLAP> {
             // completely before taking a native reference, then recheck ownership.
             if (info[0].IsString()) {
                 auto s = string(info[0], "text");
-                return array(info.Env(), get().encode_text(s));
+                float *values = nullptr;
+                std::size_t count = 0;
+                check(clap_encode_text(get(), c_string(s), &values, &count));
+                return array(info.Env(), take_buffer(values, count));
             }
             auto ids = tokens(info[0]);
-            return array(info.Env(), get().encode_text(ids));
+            float *values = nullptr;
+            std::size_t count = 0;
+            check(clap_encode_tokens(get(), ids.data(), ids.size(), &values, &count));
+            return array(info.Env(), take_buffer(values, count));
         });
     }
     Napi::Value encode_audio(const Napi::CallbackInfo &info) {
@@ -138,8 +173,11 @@ class CLAP : public Napi::ObjectWrap<CLAP> {
                                       : integer(info[1], "cropOffset", 0,
                                                 std::min(9007199254740991.0,
                                                          static_cast<double>(std::numeric_limits<std::size_t>::max())));
-                auto &m = get();
-                return array(info.Env(), m.encode_audio(filename, crop));
+                auto *m = get();
+                float *values = nullptr;
+                std::size_t count = 0;
+                check(clap_encode_audio_file(m, c_string(filename), crop, &values, &count));
+                return array(info.Env(), take_buffer(values, count));
             }
             auto pcm = samples(info[0]);
             int sr = optional_rate(info[1], 48000);
@@ -148,7 +186,10 @@ class CLAP : public Napi::ObjectWrap<CLAP> {
                             : integer(info[2], "cropOffset", 0,
                                       std::min(9007199254740991.0,
                                                static_cast<double>(std::numeric_limits<std::size_t>::max())));
-            return array(info.Env(), get().encode_audio(pcm, sr, crop));
+            float *values = nullptr;
+            std::size_t count = 0;
+            check(clap_encode_audio(get(), pcm.data(), pcm.size(), sr, crop, &values, &count));
+            return array(info.Env(), take_buffer(values, count));
         });
     }
     Napi::Value close(const Napi::CallbackInfo &info) {
@@ -160,7 +201,7 @@ class CLAP : public Napi::ObjectWrap<CLAP> {
 };
 
 Napi::Object initialize(Napi::Env env, Napi::Object exports) {
-    exports.Set("CLAP", CLAP::define(env));
+    exports.Set("CLAP", NodeCLAP::define(env));
     return exports;
 }
 } // namespace

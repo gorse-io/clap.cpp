@@ -4,7 +4,7 @@ file(GLOB CLAP_MODELS_SOURCES CONFIGURE_DEPENDS "models/*.cpp")
 
 set(CLAP_CORE_SOURCES
     c-api.cpp
-    clap-internal.h
+    model.h
     model.cpp
     model-loader.cpp
     graph.cpp

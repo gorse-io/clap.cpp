@@ -1,4 +1,4 @@
-#include "clap-internal.h"
+#include "clap.h"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -37,25 +37,44 @@ void validate_rate(int rate) {
         throw std::invalid_argument("sample rate must be positive");
 }
 
-std::vector<std::vector<float>> matrix(const clap::AudioFrames &frames) {
-    std::vector<std::vector<float>> output;
-    output.reserve(frames.frames);
-    for (int i = 0; i < frames.frames; ++i) {
-        const auto begin = frames.values.begin() + i * frames.dimension;
-        output.emplace_back(begin, begin + frames.dimension);
-    }
-    return output;
+const char *c_string(const std::string &value) {
+    if (value.find('\0') != std::string::npos)
+        throw std::invalid_argument("text and paths must contain no NUL bytes");
+    return value.c_str();
+}
+
+void check(clap_status status) {
+    if (status == CLAP_OK)
+        return;
+    const std::string message = clap_last_error();
+    if (status == CLAP_INVALID_ARGUMENT)
+        throw std::invalid_argument(message);
+    if (status == CLAP_OUT_OF_MEMORY)
+        throw std::bad_alloc();
+    throw std::runtime_error(message);
+}
+
+template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
+    const std::unique_ptr<T, decltype(&clap_free)> owned(data, clap_free);
+    if (!count)
+        return {};
+    return {data, data + count};
 }
 
 // Always release the GIL BEFORE taking the model mutex; release the mutex
 // BEFORE reacquiring the GIL. close(), properties and inference share this order.
-class CLAP {
+class PythonCLAP {
   public:
-    CLAP(const std::filesystem::path &path, int threads) {
+    PythonCLAP(const std::filesystem::path &path, int threads) {
         if (threads < 0)
             throw std::invalid_argument("threads must be nonnegative");
         py::gil_scoped_release release;
-        model_ = std::make_unique<clap::CLAP>(utf8_path(path), threads);
+        const auto filename = utf8_path(path);
+        auto options = clap_default_options();
+        options.threads = threads;
+        ::CLAP *model = nullptr;
+        check(clap_create(c_string(filename), &options, &model));
+        model_.reset(model);
     }
 
     template <typename F> auto call(F &&function) {
@@ -63,7 +82,7 @@ class CLAP {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!model_)
             throw std::runtime_error("CLAP is closed");
-        return function(*model_);
+        return function(model_.get());
     }
 
     void close() {
@@ -73,7 +92,7 @@ class CLAP {
     }
 
   private:
-    std::unique_ptr<clap::CLAP> model_;
+    std::unique_ptr<::CLAP, decltype(&clap_destroy)> model_{nullptr, clap_destroy};
     std::mutex mutex_;
 };
 
@@ -81,68 +100,118 @@ class CLAP {
 
 PYBIND11_MODULE(_clap_cpp, module) {
     module.doc() = "Native inference for clap.cpp";
-    py::class_<CLAP>(module, "CLAP")
+    py::class_<PythonCLAP>(module, "CLAP")
         .def(py::init<const std::filesystem::path &, int>(), py::arg("path"), py::arg("threads") = 0)
-        .def_property_readonly(
-            "projection_dimension",
-            [](CLAP &self) { return self.call([](clap::CLAP &model) { return model.projection_dimension(); }); })
-        .def_property_readonly(
-            "audio_sample_rate",
-            [](CLAP &self) { return self.call([](clap::CLAP &model) { return model.audio_sample_rate(); }); })
+        .def_property_readonly("projection_dimension",
+                               [](PythonCLAP &self) {
+                                   return self.call([](::CLAP *model) {
+                                       int value = 0;
+                                       check(clap_projection_dimension(model, &value));
+                                       return value;
+                                   });
+                               })
+        .def_property_readonly("audio_sample_rate",
+                               [](PythonCLAP &self) {
+                                   return self.call([](::CLAP *model) {
+                                       int value = 0;
+                                       check(clap_audio_sample_rate(model, &value));
+                                       return value;
+                                   });
+                               })
         .def(
             "tokenize",
-            [](CLAP &self, const std::string &text, py::ssize_t max_length) {
+            [](PythonCLAP &self, const std::string &text, py::ssize_t max_length) {
                 if (max_length <= 0)
                     throw std::invalid_argument("max_length must be positive");
-                return self.call([&](clap::CLAP &model) { return model.tokenize(text, max_length); });
+                return self.call([&](::CLAP *model) {
+                    int *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_tokenize(model, c_string(text), max_length, &values, &count));
+                    return take_buffer(values, count);
+                });
             },
             py::arg("text"), py::arg("max_length") = 512)
         .def(
             "encode_text",
-            [](CLAP &self, const std::string &text) {
-                return self.call([&](clap::CLAP &model) { return model.encode_text(text); });
+            [](PythonCLAP &self, const std::string &text) {
+                return self.call([&](::CLAP *model) {
+                    float *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_encode_text(model, c_string(text), &values, &count));
+                    return take_buffer(values, count);
+                });
             },
             py::arg("text"))
         .def(
             "encode_text",
-            [](CLAP &self, const std::vector<int> &tokens) {
-                return self.call([&](clap::CLAP &model) { return model.encode_text(tokens); });
+            [](PythonCLAP &self, const std::vector<int> &tokens) {
+                return self.call([&](::CLAP *model) {
+                    float *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_encode_tokens(model, tokens.data(), tokens.size(), &values, &count));
+                    return take_buffer(values, count);
+                });
             },
             py::arg("tokens"))
         .def(
             "encode_audio",
-            [](CLAP &self, const std::vector<float> &pcm, int sample_rate, py::ssize_t crop_offset) {
+            [](PythonCLAP &self, const std::vector<float> &pcm, int sample_rate, py::ssize_t crop_offset) {
                 validate_rate(sample_rate);
                 if (crop_offset < 0)
                     throw std::invalid_argument("crop_offset must be nonnegative");
                 validate_samples(pcm);
-                return self.call([&](clap::CLAP &model) { return model.encode_audio(pcm, sample_rate, crop_offset); });
+                return self.call([&](::CLAP *model) {
+                    float *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_encode_audio(model, pcm.data(), pcm.size(), sample_rate, crop_offset, &values, &count));
+                    return take_buffer(values, count);
+                });
             },
             py::arg("pcm"), py::arg("sample_rate") = 48000, py::arg("crop_offset") = 0)
         .def(
             "encode_audio",
-            [](CLAP &self, const std::filesystem::path &path, py::ssize_t crop_offset) {
+            [](PythonCLAP &self, const std::filesystem::path &path, py::ssize_t crop_offset) {
                 if (crop_offset < 0)
                     throw std::invalid_argument("crop_offset must be nonnegative");
                 const auto filename = utf8_path(path);
-                return self.call([&](clap::CLAP &model) { return model.encode_audio(filename, crop_offset); });
+                return self.call([&](::CLAP *model) {
+                    float *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_encode_audio_file(model, c_string(filename), crop_offset, &values, &count));
+                    return take_buffer(values, count);
+                });
             },
             py::arg("path"), py::arg("crop_offset") = 0)
         .def(
             "audio_frames",
-            [](CLAP &self, const std::vector<float> &pcm, int sample_rate) {
+            [](PythonCLAP &self, const std::vector<float> &pcm, int sample_rate) {
                 validate_rate(sample_rate);
                 validate_samples(pcm);
-                return matrix(self.call([&](clap::CLAP &model) { return model.audio_frames(pcm, sample_rate); }));
+                return self.call([&](::CLAP *model) {
+                    clap_audio_frames frames{};
+                    check(clap_get_audio_frames(model, pcm.data(), pcm.size(), sample_rate, &frames));
+                    const std::unique_ptr<clap_audio_frames, decltype(&clap_free_audio_frames)> owned(
+                        &frames, clap_free_audio_frames);
+                    std::vector<std::vector<float>> output;
+                    output.reserve(frames.frames);
+                    for (std::size_t i = 0; i < frames.frames; ++i) {
+                        if (!frames.dimension)
+                            output.emplace_back();
+                        else
+                            output.emplace_back(frames.values + i * frames.dimension,
+                                                frames.values + (i + 1) * frames.dimension);
+                    }
+                    return output;
+                });
             },
             py::arg("pcm"), py::arg("sample_rate") = 48000)
-        .def("close", &CLAP::close)
+        .def("close", &PythonCLAP::close)
         .def(
             "__enter__",
-            [](CLAP &self) -> CLAP & {
-                self.call([](clap::CLAP &) {});
+            [](PythonCLAP &self) -> PythonCLAP & {
+                self.call([](::CLAP *) {});
                 return self;
             },
             py::return_value_policy::reference_internal)
-        .def("__exit__", [](CLAP &self, py::object, py::object, py::object) { self.close(); });
+        .def("__exit__", [](PythonCLAP &self, py::object, py::object, py::object) { self.close(); });
 }

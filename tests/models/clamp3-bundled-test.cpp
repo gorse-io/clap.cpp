@@ -1,4 +1,5 @@
-#include "clap-internal.h"
+#include "clap.h"
+#include "../c-api-helpers.h"
 #include "audio.h"
 #include "feature-test.h"
 #include <algorithm>
@@ -6,6 +7,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+
+using namespace c_api_test;
 
 static void equal(const std::vector<float> &a, const std::vector<float> &b) {
     if (a.size() != b.size())
@@ -26,10 +29,16 @@ int main(int argc, char **argv) {
     try {
         if (argc != 4)
             throw std::runtime_error("bundled, feature-only, MERT models required");
-        clap::CLAP bundled(argv[1], 2), target(argv[2], 2);
-        if (bundled.audio_sample_rate() != 24000)
+        clap_runtime_options options = clap_default_options();
+        options.threads = 2;
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Model bundled(raw, clap_destroy);
+        check(clap_create(argv[2], &options, &raw));
+        Model target(raw, clap_destroy);
+        if (take_int([&](int *out) { return clap_audio_sample_rate(bundled.get(), out); }) != 24000)
             throw std::runtime_error("bundled sample rate");
-        if (target.audio_sample_rate() != 24000)
+        if (take_int([&](int *out) { return clap_audio_sample_rate(target.get(), out); }) != 24000)
             throw std::runtime_error("mandatory frontend sample rate");
         std::vector<float> pcm(48000);
         for (size_t i = 0; i < pcm.size(); ++i)
@@ -37,17 +46,62 @@ int main(int argc, char **argv) {
         const auto resampled = clap::resample_audio({pcm, 48000}, 24000).samples;
         const auto features = clap::detail::FeatureTestAccess::extract(argv[3], resampled, 24000);
         const auto expected = clap::detail::FeatureTestAccess::encode(argv[2], features.values, features.frames);
-        equal(bundled.encode_audio(pcm, 48000), expected);
-        equal(bundled.encode_audio(resampled, 24000), expected);
+        equal(take_buffer<float>([&](float **out, size_t *count) {
+                  const std::vector<float> &api_pcm = pcm;
+                  return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 48000, 0, out, count);
+              }),
+              expected);
+        equal(take_buffer<float>([&](float **out, size_t *count) {
+                  const std::vector<float> &api_pcm = resampled;
+                  return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+              }),
+              expected);
         equal(clap::detail::FeatureTestAccess::encode(argv[1], features.values, features.frames), expected);
-        equal(bundled.encode_text("ab c"), target.encode_text("ab c"));
-        rejects([&] { bundled.encode_audio(std::vector<float>{}, 24000); });
-        rejects([&] { bundled.encode_audio(std::vector<float>(23999), 24000); });
-        rejects([&] { bundled.encode_audio(pcm, 0); });
-        rejects([&] { bundled.encode_audio(pcm, 24000, 1); });
-        rejects([&] { bundled.audio_frames(pcm, 24000); });
+        equal(take_buffer<float>([&](float **out, size_t *count) {
+                  const std::string &api_text = "ab c";
+                  return clap_encode_text(bundled.get(), api_text.c_str(), out, count);
+              }),
+              take_buffer<float>([&](float **out, size_t *count) {
+                  const std::string &api_text = "ab c";
+                  return clap_encode_text(target.get(), api_text.c_str(), out, count);
+              }));
+        rejects([&] {
+            take_buffer<float>([&](float **out, size_t *count) {
+                const std::vector<float> &api_pcm = std::vector<float>{};
+                return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+            });
+        });
+        rejects([&] {
+            take_buffer<float>([&](float **out, size_t *count) {
+                const std::vector<float> &api_pcm = std::vector<float>(23999);
+                return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+            });
+        });
+        rejects([&] {
+            take_buffer<float>([&](float **out, size_t *count) {
+                const std::vector<float> &api_pcm = pcm;
+                return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 0, 0, out, count);
+            });
+        });
+        rejects([&] {
+            take_buffer<float>([&](float **out, size_t *count) {
+                const std::vector<float> &api_pcm = pcm;
+                return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 24000, 1, out, count);
+            });
+        });
+        rejects([&] {
+            take_frames([&](clap_audio_frames *out) {
+                const std::vector<float> &api_pcm = pcm;
+                return clap_get_audio_frames(bundled.get(), api_pcm.data(), api_pcm.size(), 24000, out);
+            });
+        });
         pcm[0] = std::numeric_limits<float>::quiet_NaN();
-        rejects([&] { bundled.encode_audio(pcm, 24000); });
+        rejects([&] {
+            take_buffer<float>([&](float **out, size_t *count) {
+                const std::vector<float> &api_pcm = pcm;
+                return clap_encode_audio(bundled.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+            });
+        });
         std::cout << "Bundled CLaMP3 native waveform/resampling/features/text/invalid-input passed\n";
         return 0;
     } catch (const std::exception &e) {

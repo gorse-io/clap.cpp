@@ -32,9 +32,10 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 ## C API
 
 `include/clap.h` is a standalone C11 header with an opaque `CLAP` handle and
-`clap_*` functions (also callable from C++ via `extern "C"`). The former public
-C++ class is now private; C++ applications use the same C API. The implementation
-still requires a C++20 compiler. Python, Node.js and Rust APIs are unchanged.
+`clap_*` functions (also callable from C++ via `extern "C"`). The CLI, HTTP
+service, and Python, Node.js and Rust bindings all use this C API; there is no
+parallel C++ `CLAP` interface. The implementation still requires a C++20 compiler.
+The language bindings' user-facing APIs are unchanged.
 
 ```c
 #include <clap.h>

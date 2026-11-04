@@ -1,5 +1,5 @@
 #include "server.h"
-#include "clap-internal.h"
+#include "clap.h"
 #include "audio.h"
 
 #include <httplib.h>
@@ -10,12 +10,37 @@
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
 namespace {
 
 using nlohmann::json;
+
+const char *c_string(const std::string &value) {
+    if (value.find('\0') != std::string::npos)
+        throw std::invalid_argument("text and paths must contain no NUL bytes");
+    return value.c_str();
+}
+
+void check(clap_status status) {
+    if (status == CLAP_OK)
+        return;
+    const std::string message = clap_last_error();
+    if (status == CLAP_INVALID_ARGUMENT)
+        throw std::invalid_argument(message);
+    if (status == CLAP_OUT_OF_MEMORY)
+        throw std::bad_alloc();
+    throw std::runtime_error(message);
+}
+
+template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
+    const std::unique_ptr<T, decltype(&clap_free)> owned(data, clap_free);
+    if (!count)
+        return {};
+    return {data, data + count};
+}
 
 void error_response(httplib::Response &response, int status, const std::string &type, const std::string &message) {
     response.status = status;
@@ -76,7 +101,7 @@ bool is_audio_input(const json &input) {
     return audio.contains("data") && audio["data"].is_string();
 }
 
-void embeddings(const httplib::Request &request, httplib::Response &response, clap::CLAP &model,
+void embeddings(const httplib::Request &request, httplib::Response &response, CLAP *model,
                 const std::string &identifier, int dimensions, std::mutex &inference_mutex) {
     const auto body = json::parse(request.body, nullptr, false);
     if (!body.is_object() || !body.contains("input")) {
@@ -96,6 +121,12 @@ void embeddings(const httplib::Request &request, httplib::Response &response, cl
             invalid_request(
                 response,
                 "Each input must be a non-empty string or exactly one input_audio content block with string data");
+            return;
+        }
+    }
+    for (const auto &input : inputs) {
+        if (input.is_string() && input.get_ref<const std::string &>().find('\0') != std::string::npos) {
+            invalid_request(response, "text must contain no NUL bytes");
             return;
         }
     }
@@ -124,7 +155,10 @@ void embeddings(const httplib::Request &request, httplib::Response &response, cl
                 const auto &input = inputs[index];
                 std::vector<float> embedding;
                 if (input.is_string()) {
-                    embedding = model.encode_text(input.get_ref<const std::string &>());
+                    float *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_encode_text(model, c_string(input.get_ref<const std::string &>()), &values, &count));
+                    embedding = take_buffer(values, count);
                 } else {
                     clap::Audio audio;
                     // Keep decoder errors separate from model inference errors.
@@ -137,7 +171,11 @@ void embeddings(const httplib::Request &request, httplib::Response &response, cl
                         return;
                     }
                     usage_available = false;
-                    embedding = model.encode_audio(audio.samples, audio.sample_rate);
+                    float *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_encode_audio(model, audio.samples.data(), audio.samples.size(), audio.sample_rate, 0,
+                                            &values, &count));
+                    embedding = take_buffer(values, count);
                 }
                 if (embedding.size() != static_cast<std::size_t>(dimensions))
                     throw std::runtime_error("Model returned an unexpected embedding dimension");
@@ -145,14 +183,17 @@ void embeddings(const httplib::Request &request, httplib::Response &response, cl
                     if (!std::isfinite(value))
                         throw std::runtime_error("Model returned a non-finite embedding");
                 data.push_back({{"object", "embedding"}, {"index", index}, {"embedding", embedding}});
-                // CLAP::encode_text(string) chooses its architecture's full context.
+                // clap_encode_text chooses its architecture's full context.
                 // The public tokenize() default is 512 and can truncate or be
                 // unsupported for smaller contexts. Omit usage rather than
                 // report an inaccurate count in either situation.
                 if (!input.is_string())
                     continue;
                 try {
-                    const auto ids = model.tokenize(input.get_ref<const std::string &>());
+                    int *values = nullptr;
+                    std::size_t count = 0;
+                    check(clap_tokenize(model, c_string(input.get_ref<const std::string &>()), 512, &values, &count));
+                    const auto ids = take_buffer(values, count);
                     if (ids.size() >= 512)
                         usage_available = false;
                     else
@@ -180,16 +221,22 @@ int run_server(const std::string &host, int port, const std::string &model_path,
     try {
         // Load once, before opening the listening socket. A bad model must fail
         // startup rather than leave a live server that can never serve requests.
-        clap::CLAP model(model_path, clap::RuntimeOptions{threads, device});
+        auto options = clap_default_options();
+        options.threads = threads;
+        options.device = c_string(device);
+        CLAP *handle = nullptr;
+        check(clap_create(c_string(model_path), &options, &handle));
+        const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
         const auto identifier = std::filesystem::path(model_path).filename().string();
-        const int dimensions = model.projection_dimension();
+        int dimensions = 0;
+        check(clap_projection_dimension(model.get(), &dimensions));
         if (dimensions <= 0)
             throw std::runtime_error("Model projection dimension must be positive");
         std::mutex inference_mutex;
         httplib::Server server;
         server.set_payload_max_length(32 * 1024 * 1024);
         server.Post("/v1/embeddings", [&](const httplib::Request &request, httplib::Response &response) {
-            embeddings(request, response, model, identifier, dimensions, inference_mutex);
+            embeddings(request, response, model.get(), identifier, dimensions, inference_mutex);
         });
         server.set_exception_handler(
             [](const httplib::Request &, httplib::Response &response, std::exception_ptr exception) {

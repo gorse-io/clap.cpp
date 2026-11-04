@@ -1,5 +1,4 @@
 #include "models.h"
-#include "clap-internal.h"
 #include "audio.h"
 #include <algorithm>
 #include <cmath>

@@ -44,7 +44,6 @@ execute_process(COMMAND node -p "require('node-addon-api').include"
 string(REPLACE "\"" "" NODE_ADDON_API_DIR "${NODE_ADDON_API_DIR}")
 add_library(clap_node MODULE bindings.cpp ${CMAKE_JS_SRC})
 target_include_directories(clap_node PRIVATE ${CMAKE_JS_INC} "${NODE_ADDON_API_DIR}")
-target_include_directories(clap_node PRIVATE "${CLAP_ROOT}/src")
 target_link_libraries(clap_node PRIVATE clap ${CMAKE_JS_LIB})
 if(APPLE)
     target_link_options(clap_node PRIVATE "-undefined" "dynamic_lookup")

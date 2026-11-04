@@ -1,5 +1,5 @@
 #include "embedding.h"
-#include "clap-internal.h"
+#include "clap.h"
 #include "quantize.h"
 #include "server.h"
 
@@ -7,6 +7,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -76,8 +77,14 @@ int main(int argc, char **argv) {
 
     try {
         if (*devices) {
-            for (const auto &device : clap::available_devices())
-                std::cout << device.name << "\t" << device.description << "\n";
+            clap_device *list = nullptr;
+            std::size_t count = 0;
+            if (clap_available_devices(&list, &count) != CLAP_OK)
+                throw std::runtime_error(clap_last_error());
+            const auto free_devices = [count](clap_device *value) { clap_free_devices(value, count); };
+            const std::unique_ptr<clap_device, decltype(free_devices)> owned(list, free_devices);
+            for (std::size_t i = 0; i < count; ++i)
+                std::cout << list[i].name << "\t" << list[i].description << "\n";
             return 0;
         }
         if (*embedding) {
