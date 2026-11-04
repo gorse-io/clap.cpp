@@ -1,5 +1,7 @@
 # clap.cpp
 
+<img width=160 src="assets/clap.png"/>
+
 [![CI](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml)
 
 C++20/ggml implementations of audio embedding inference features:
