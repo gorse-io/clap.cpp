@@ -54,6 +54,15 @@ impl Backends {
     }
 }
 
+fn validate_link_manifest(directives: &str) {
+    assert!(
+        directives
+            .lines()
+            .any(|line| line == "cargo:rustc-link-lib=static=clap"),
+        "CMake link manifest is missing the static C API core: {directives:?}"
+    );
+}
+
 fn main() {
     let enabled = |name| env::var_os(name).is_some();
     let backends = Backends {
@@ -259,10 +268,7 @@ fn main() {
         install.join("lib").display()
     );
     let directives = fs::read_to_string(link_manifest).expect("cannot read CMake link manifest");
-    assert!(
-        directives.contains("cargo:rustc-link-lib=static=clap\n"),
-        "CMake link manifest is missing the static C API core"
-    );
+    validate_link_manifest(&directives);
     print!("{directives}");
     if target.contains("apple") {
         println!("cargo:rustc-link-lib=c++");
@@ -284,6 +290,31 @@ fn main() {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn link_manifest_accepts_windows_cmake_crlf() {
+        // CMake file(WRITE) uses a text-mode stream, producing CRLF on Windows.
+        validate_link_manifest(
+            "cargo:rustc-link-lib=static=clap\r\ncargo:rustc-link-lib=static=ggml\r\n",
+        );
+    }
+
+    #[test]
+    fn link_manifest_requires_the_exact_static_core_directive() {
+        validate_link_manifest("cargo:rustc-link-lib=static=clap\n");
+        for directives in [
+            "",
+            "cargo:rustc-link-lib=dylib=clap\n",
+            "cargo:rustc-link-lib=static=clap-icu-uc\n",
+            "not-cargo:rustc-link-lib=static=clap\n",
+            "cargo:rustc-link-lib=static=clap extra\r\n",
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| validate_link_manifest(directives)).is_err(),
+                "accepted invalid manifest: {directives:?}"
+            );
+        }
+    }
 
     #[test]
     fn default_is_cpu_only_and_rocm_maps_to_hip() {
@@ -435,7 +466,7 @@ target_link_libraries(clap-link-probe PRIVATE clap)
             .arg("-P")
             .arg(script));
         let directives = fs::read_to_string(manifest).unwrap();
-        assert!(directives.contains("cargo:rustc-link-lib=static=clap\n"));
+        validate_link_manifest(&directives);
         assert!(directives.contains("cargo:rustc-link-lib=static=ggml-cuda\n"));
         assert!(directives.contains(&format!("cargo:rustc-link-search=native={sdk}\n")));
         directives
