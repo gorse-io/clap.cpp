@@ -1,7 +1,8 @@
 """CPU integration tests: no downloads, mocks, NumPy or model dependencies."""
 from array import array
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
+from copy import copy, deepcopy
+import weakref
 import gc
 from importlib.metadata import requires
 import math
@@ -59,6 +60,43 @@ def assert_close(actual, expected, rtol=1e-5, atol=1e-6):
             assert_close(a, b, rtol=rtol, atol=atol)
         else:
             assert abs(a - b) <= atol + rtol * abs(b)
+
+
+@pytest.mark.parametrize("copier", [copy, deepcopy])
+@pytest.mark.parametrize("explicit_close", [False, True])
+def test_model_rejects_copy_without_transferring_ownership(model_paths, monkeypatch, copier, explicit_close):
+    from clap_cpp import _clap_cpp as wrapper
+
+    destroy = wrapper._lib.clap_destroy
+    destroyed = []
+
+    def record_destroy(handle):
+        destroyed.append(handle.value)
+        destroy(handle)
+
+    monkeypatch.setattr(wrapper._lib, "clap_destroy", record_destroy)
+    original = clap_cpp.CLAP(model_paths[0], threads=2)
+    reference = weakref.ref(original)
+    expected = original.encode_text("hello")
+    try:
+        with pytest.raises(TypeError, match="CLAP.*cannot be copied"):
+            duplicate = copier(original)
+            # If this regresses, disarm the unsafe duplicate before failing:
+            # two finalizers on a real handle would abort the test process.
+            duplicate._handle = type(duplicate._handle)()
+        gc.collect()
+        assert destroyed == []
+        assert original.encode_text("hello") == expected
+        if explicit_close:
+            original.close()
+            original.close()
+            original.__del__()
+            assert len(destroyed) == 1
+    finally:
+        del original
+        gc.collect()
+    assert reference() is None
+    assert len(destroyed) == 1
 
 
 def test_module_exports():
@@ -278,3 +316,158 @@ def test_same_handle_is_safe_under_concurrent_inference(model):
         futures = [(prompt, executor.submit(model.encode_text, prompt)) for prompt in prompts * 4]
         for prompt, future in futures:
             assert_close(future.result(timeout=30), expected[prompt])
+
+
+@pytest.mark.parametrize("value", [2**31, 2**64, 2**100])
+def test_rejects_native_integer_overflow(model, model_paths, value):
+    with pytest.raises(OverflowError):
+        clap_cpp.CLAP(model_paths[0], threads=value)
+    with pytest.raises(OverflowError):
+        model.encode_audio([0.1], sample_rate=value)
+    with pytest.raises(OverflowError):
+        model.encode_text([value])
+    with pytest.raises(OverflowError):
+        model.encode_text([-value - 1])
+
+
+@pytest.mark.parametrize("value", [1.5, "1", None])
+def test_rejects_noninteger_abi_arguments(model, model_paths, value):
+    with pytest.raises(TypeError):
+        clap_cpp.CLAP(model_paths[0], threads=value)
+    with pytest.raises(TypeError):
+        model.tokenize("hello", max_length=value)
+    with pytest.raises(TypeError):
+        model.encode_audio([0.1], sample_rate=value)
+    with pytest.raises(TypeError):
+        model.encode_audio([0.1], crop_offset=value)
+    with pytest.raises(TypeError):
+        model.encode_text([value])
+
+
+def test_size_t_overflow_is_not_truncated(model):
+    with pytest.raises(OverflowError):
+        model.tokenize("hello", max_length=2**128)
+    with pytest.raises(OverflowError):
+        model.encode_audio([0.1], crop_offset=2**128)
+
+
+def test_nul_rejected_at_every_string_boundary(model, model_paths):
+    for call in (lambda: clap_cpp.CLAP(str(model_paths[0]) + chr(0)),
+                 lambda: model.tokenize("hello" + chr(0)),
+                 lambda: model.encode_text("hello" + chr(0)),
+                 lambda: model.encode_audio("missing.wav" + chr(0))):
+        with pytest.raises(ValueError, match="NUL"):
+            call()
+
+
+def test_keyword_overloads_and_duplicate_arguments(model):
+    tokens = model.tokenize("hello")
+    assert model.encode_text(tokens=tokens) == model.encode_text(text="hello")
+    for call in (lambda: model.encode_text("hello", tokens=tokens),
+                 lambda: model.encode_text(tokens="hello"),
+                 lambda: model.encode_audio(pcm="x.wav"),
+                 lambda: model.encode_audio([0.1], pcm=[0.1]),
+                 lambda: model.encode_audio([0.1], 24000, sample_rate=24000),
+                 lambda: model.encode_audio(path="x.wav", sample_rate=24000),
+                 lambda: model.encode_audio(path=123),
+                 lambda: model.encode_audio(path="x.wav", pcm=[0.1])):
+        with pytest.raises(TypeError):
+            call()
+
+
+def test_enter_closed_model_is_rejected(model):
+    model.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        model.__enter__()
+
+
+def test_close_races_all_native_operations_safely(model_paths):
+    from threading import Barrier
+    instance = clap_cpp.CLAP(model_paths[0], threads=1)
+    barrier = Barrier(5)
+    operations = [lambda: instance.encode_text("hello"),
+                  lambda: instance.tokenize("hello"),
+                  lambda: instance.audio_sample_rate,
+                  lambda: instance.projection_dimension,
+                  instance.close]
+    def run(operation):
+        barrier.wait(timeout=10)
+        try:
+            return operation()
+        except RuntimeError as exc:
+            assert "closed" in str(exc)
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = [pool.submit(run, operation) for operation in operations]
+        for future in futures:
+            future.result(timeout=30)
+    instance.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        instance.encode_text("hello")
+
+
+def test_distinct_threads_copy_their_own_native_diagnostic(tmp_path):
+    from threading import Barrier
+    barrier = Barrier(4)
+    def fail(index):
+        filename = tmp_path / f"missing-thread-{index}.gguf"
+        barrier.wait(timeout=10)
+        with pytest.raises(RuntimeError) as error:
+            clap_cpp.CLAP(filename, threads=1)
+        assert filename.name in str(error.value)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(fail, range(4)))
+
+
+@pytest.mark.parametrize("frames", [False, True])
+def test_conversion_failure_still_frees_native_allocation(model, mert, pcm, monkeypatch, frames):
+    import importlib
+    wrapper = importlib.import_module(clap_cpp.CLAP.__module__)
+    name = "clap_free_audio_frames" if frames else "clap_free"
+    original = getattr(wrapper._lib, name)
+    freed = []
+
+    def release(allocation):
+        freed.append(True)
+        original(allocation)
+
+    def cannot_copy(*args):
+        raise MemoryError("simulated Python result allocation failure")
+
+    monkeypatch.setattr(wrapper._lib, name, release)
+    monkeypatch.setattr(wrapper, "list", cannot_copy, raising=False)
+    with pytest.raises(MemoryError, match="Python result allocation"):
+        if frames:
+            mert.audio_frames(pcm, sample_rate=24000)
+        else:
+            model.encode_text("hello")
+    assert freed == [True]
+
+
+def test_explicit_close_and_finalizer_destroy_exactly_once(model_paths, monkeypatch):
+    import importlib
+    wrapper = importlib.import_module(clap_cpp.CLAP.__module__)
+    original = wrapper._lib.clap_destroy
+    destroyed = []
+
+    def destroy(handle):
+        destroyed.append(handle.value)
+        original(handle)
+
+    monkeypatch.setattr(wrapper._lib, "clap_destroy", destroy)
+    instance = clap_cpp.CLAP(model_paths[0], threads=1)
+    instance.close()
+    instance.close()
+    instance.__del__()
+    del instance
+    gc.collect()
+    assert len(destroyed) == 1
+
+
+def test_model_lock_is_a_real_blocking_lock(model):
+    import threading
+    assert type(model._lock) is type(threading.Lock())
+    assert model._lock.acquire(blocking=False)
+    try:
+        assert not model._lock.acquire(blocking=False)
+    finally:
+        model._lock.release()

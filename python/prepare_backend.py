@@ -21,7 +21,9 @@ def prepare(backend, destination):
     if not entries:
         raise ValueError("Missing native source manifest")
     destination.mkdir(parents=True, exist_ok=False)
-    ignore = shutil.ignore_patterns(".git", "__pycache__", "build", "dist")
+    # Preserve upstream source directories named build/dist too: the pinned
+    # manifest, not generic directory names, defines the source snapshot.
+    ignore = shutil.ignore_patterns(".git", "__pycache__")
     for original, target in entries:
         # Inside a base sdist the manifest's ../ paths have already been moved.
         origin = source / target if (source / "native").is_dir() else source / original
@@ -31,15 +33,18 @@ def prepare(backend, destination):
             shutil.copytree(origin, output, ignore=ignore)
         else:
             shutil.copy2(origin, output)
-    for name in ("CMakeLists.txt", "bindings.cpp", "README.md"):
+    for name in ("CMakeLists.txt", "README.md"):
         shutil.copy2(source / name, destination / name)
     (destination / package).mkdir()
+    # All backends use the identical ctypes loader, relative to their own package.
+    for name in ("_clap_cpp.py", "_clap_cpp.pyi", "py.typed"):
+        shutil.copy2(source / "clap_cpp" / name, destination / package / name)
     (destination / package / "__init__.py").write_text(
         f'"""Native {backend} runtime; import clap_cpp for the public API."""\n', encoding="utf-8"
     )
     (destination / "pyproject.toml").write_text(
         f'''[build-system]
-requires = ["scikit-build-core>=1.0", "pybind11>=2.13"]
+requires = ["scikit-build-core>=1.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -54,8 +59,11 @@ dependencies = []
 [tool.scikit-build]
 minimum-version = "build-system.requires"
 wheel.packages = ["{package}"]
+wheel.py-api = "py3"
 install.components = ["python"]
-build.targets = ["_clap_cpp"]
+build.targets = ["clap"]
+# Preserve the exact pinned source snapshot, without upstream .gitignore rules.
+sdist.inclusion-mode = "manual"
 sdist.exclude = ["**/.git", "**/__pycache__/**", "dist/**", "build/**"]
 
 [tool.scikit-build.cmake.define]

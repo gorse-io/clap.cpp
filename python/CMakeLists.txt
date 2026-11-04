@@ -12,8 +12,8 @@ foreach(source ggml/CMakeLists.txt thirdparty/json/CMakeLists.txt thirdparty/min
     endif()
 endforeach()
 
-# Each wheel contains one statically linked runtime. GPU wheels install into
-# separate packages so extras never overwrite the base package's CPU extension.
+# Each wheel contains one shared C runtime with static PIC ggml and ICU.
+# GPU packages have disjoint namespaces; vendor GPU runtimes remain external.
 set(CLAP_PYTHON_BACKEND "CPU" CACHE STRING "Python wheel backend: CPU, CUDA, HIP or VULKAN")
 set_property(CACHE CLAP_PYTHON_BACKEND PROPERTY STRINGS CPU CUDA HIP VULKAN)
 if(NOT CLAP_PYTHON_BACKEND MATCHES "^(CPU|CUDA|HIP|VULKAN)$")
@@ -50,16 +50,13 @@ set(CLAP_USE_SYSTEM_ICU OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CLAP_ROOT}/ggml" ggml EXCLUDE_FROM_ALL)
 add_subdirectory("${CLAP_ROOT}/thirdparty/json" json EXCLUDE_FROM_ALL)
 include("${CLAP_ROOT}/cmake/icu.cmake")
+# Dependency targets have already captured STATIC; only the core is shared.
+# This is deliberately not a Python extension and needs no Python headers.
+set(BUILD_SHARED_LIBS ON)
 add_subdirectory("${CLAP_ROOT}/src" core EXCLUDE_FROM_ALL)
-
-find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
-find_package(pybind11 CONFIG REQUIRED)
-pybind11_add_module(_clap_cpp MODULE bindings.cpp)
-target_link_libraries(_clap_cpp PRIVATE clap)
-target_compile_features(_clap_cpp PRIVATE cxx_std_20)
-set_target_properties(_clap_cpp PROPERTIES CXX_EXTENSIONS OFF)
-install(TARGETS _clap_cpp LIBRARY DESTINATION ${CLAP_PYTHON_PACKAGE} COMPONENT python
-                          RUNTIME DESTINATION ${CLAP_PYTHON_PACKAGE} COMPONENT python)
+set_target_properties(clap PROPERTIES OUTPUT_NAME clap)
+install(TARGETS clap LIBRARY DESTINATION ${CLAP_PYTHON_PACKAGE} COMPONENT python
+                     RUNTIME DESTINATION ${CLAP_PYTHON_PACKAGE} COMPONENT python)
 install(FILES "${CLAP_ROOT}/ggml/LICENSE" DESTINATION ${CLAP_PYTHON_PACKAGE}/licenses RENAME ggml.txt COMPONENT python)
 install(FILES "${CLAP_ROOT}/thirdparty/miniaudio/LICENSE" DESTINATION ${CLAP_PYTHON_PACKAGE}/licenses RENAME miniaudio.txt COMPONENT python)
 install(FILES "${CLAP_ROOT}/thirdparty/icu/LICENSE" DESTINATION ${CLAP_PYTHON_PACKAGE}/licenses RENAME icu.txt COMPONENT python)

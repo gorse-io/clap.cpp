@@ -110,13 +110,9 @@ jobs:
       matrix:
         os:
         - ubuntu-22.04
+        # ctypes payloads have no CPython ABI: one wheel per backend/platform.
         python:
-        - '3.9'
-        - '3.10'
         - '3.11'
-        - '3.12'
-        - '3.13'
-        - '3.14'
     runs-on: ${{ matrix.os }}
     env:
       SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
@@ -200,13 +196,9 @@ jobs:
       matrix:
         os:
         - ubuntu-24.04
+        # ctypes payloads have no CPython ABI: one wheel per backend/platform.
         python:
-        - '3.9'
-        - '3.10'
         - '3.11'
-        - '3.12'
-        - '3.13'
-        - '3.14'
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -262,13 +254,9 @@ jobs:
       matrix:
         os:
         - ubuntu-22.04
+        # ctypes payloads have no CPython ABI: one wheel per backend/platform.
         python:
-        - '3.9'
-        - '3.10'
         - '3.11'
-        - '3.12'
-        - '3.13'
-        - '3.14'
     runs-on: ${{ matrix.os }}
     env:
       SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
@@ -409,12 +397,10 @@ jobs:
         dist = pathlib.Path('dist')
         dist.mkdir()
         expected = Counter()
-        for minor in range(9, 15):
-            interpreter = f'cp3{minor}'
-            for platform in ('linux-x86_64', 'linux-aarch64', 'macosx-arm64', 'win-amd64'):
-                expected[('clap-cpp', interpreter, platform)] += 1
-            for backend in ('cuda', 'rocm', 'vulkan'):
-                expected[(f'clap-cpp-{backend}', interpreter, 'linux-x86_64')] += 1
+        for platform in ('linux-x86_64', 'linux-aarch64', 'macosx-arm64', 'win-amd64'):
+            expected[('clap-cpp', 'py3', platform)] += 1
+        for backend in ('cuda', 'rocm', 'vulkan'):
+            expected[(f'clap-cpp-{backend}', 'py3', 'linux-x86_64')] += 1
         actual = Counter()
         versions = set()
         for wheel in root.rglob('*.whl'):
@@ -422,9 +408,11 @@ jobs:
             versions.add(version)
             keys = set()
             for tag in tags:
+                if tag.interpreter != 'py3' or tag.abi != 'none':
+                    raise SystemExit(f'Unexpected Python/ABI tags (expected py3-none): {wheel.name}')
                 if tag.platform.startswith('linux_'):
                     raise SystemExit(f'Unrepaired Linux wheel: {wheel.name}')
-                if tag.platform.startswith('manylinux_'):
+                if tag.platform.startswith('manylinux_') and tag.platform.endswith(('_x86_64', '_aarch64')):
                     platform = 'linux-aarch64' if tag.platform.endswith('_aarch64') else 'linux-x86_64'
                 elif tag.platform.startswith('macosx_') and tag.platform.endswith('_arm64'):
                     platform = 'macosx-arm64'
@@ -437,8 +425,14 @@ jobs:
                 raise SystemExit(f'Ambiguous wheel: {wheel.name}')
             actual.update(keys)
             with zipfile.ZipFile(wheel) as archive:
-                if not any('_clap_cpp' in entry and entry.endswith(('.so', '.pyd')) for entry in archive.namelist()):
-                    raise SystemExit(f'Missing native extension: {wheel.name}')
+                package = name.replace('-', '_')
+                entries = set(archive.namelist())
+                if f'{package}/_clap_cpp.py' not in entries:
+                    raise SystemExit(f'Missing Python ctypes wrapper: {wheel.name}')
+                native = ('clap.dll' if platform == 'win-amd64' else
+                          'libclap.dylib' if platform == 'macosx-arm64' else 'libclap.so')
+                if f'{package}/{native}' not in entries:
+                    raise SystemExit(f'Missing package-local native library {package}/{native}: {wheel.name}')
             if (dist / wheel.name).exists():
                 raise SystemExit(f'Duplicate release asset: {wheel.name}')
             shutil.copy2(wheel, dist)
@@ -459,15 +453,16 @@ jobs:
         if names != Counter({'clap-cpp': 1, 'clap-cpp-cuda': 1, 'clap-cpp-rocm': 1, 'clap-cpp-vulkan': 1}) or len(versions) != 1:
             raise SystemExit(f'Sdist names/version mismatch: {names}, {versions}')
         manifests = list(root.rglob('ROCM-6.4.3-EXCLUDED-SONAMES.txt'))
-        if len(manifests) != 6 or len({p.read_bytes() for p in manifests}) != 1:
-            raise SystemExit('ROCm exclusion manifests are missing or disagree')
+        if len(manifests) != 1:
+            raise SystemExit('Expected exactly one ROCm exclusion manifest')
         shutil.copy2(manifests[0], dist)
         (dist / 'PYTHON-WHEEL-RUNTIME.txt').write_text('''Python wheels are GitHub Release assets; stable releases also publish to PyPI.
-        CPU: CPython 3.9-3.14, Linux x86_64/aarch64 (wheel tags record the glibc minimum),
+        CPU: Python 3.9-3.14, Linux x86_64/aarch64 (wheel tags record the glibc minimum),
         macOS arm64 (wheel filename records deployment minimum), Windows amd64.
-        GPU: CPython 3.9-3.14, Linux x86_64 only. No Windows GPU wheels yet.
+        GPU: Python 3.9-3.14, Linux x86_64 only. No Windows GPU wheels yet.
+        Wheels use Python ctypes with ABI-independent py3-none platform tags.
         Install clap-cpp plus the matching clap-cpp-cuda/rocm/vulkan wheel,
-        with identical versions and matching CPython/platform tags.
+        with identical versions and compatible platform tags.
         CUDA: toolkit 12.9.2, glibc >= 2.35; static cudart/cuBLAS;
         compatible NVIDIA driver required, libcuda.so.1 is NOT bundled.
         Vulkan: glibc >= 2.39; system libvulkan.so.1 loader and a working
