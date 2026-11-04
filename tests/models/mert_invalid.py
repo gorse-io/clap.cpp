@@ -31,7 +31,8 @@ cases=[('sample_rate',48000,'24 kHz'),('hidden_size',0,'invalid MERT'),
        ('conv_kernel',[-1]*7,'dimension'),('conv_stride',[0]*7,'dimension'),
        ('conv_dim',[8.5]*7,'dimension'),('conv_stride',[100000]*7,'receptive'),
        ('layer_norm_eps',0,'layer_norm_eps'),('feature_extractor_cqt',True,'variant'),
-       ('deepnorm',True,'variant'),('do_stable_layer_norm',True,'variant'),
+       ('deepnorm',True,'variant'),('do_stable_layer_norm',1,'invalid MERT boolean'),
+       ('do_stable_layer_norm','true','invalid MERT boolean'),
        ('feat_extract_norm','layer','variant'),('hidden_act','relu','variant'),
        ('conv_pos_batch_norm',True,'variant'),('feat_proj_layer_norm',False,'variant'),
        ('num_feat_extract_layers',6,'convolution geometry'),
@@ -114,3 +115,18 @@ with tempfile.TemporaryDirectory(prefix='mert-converter-weights-') as temp:
         else:
             raise AssertionError(f'accepted invalid positional weight representation: {names}')
 print(f'{len(representations)} invalid MERT positional weight representations rejected')
+
+with tempfile.TemporaryDirectory(prefix='mert-converter-identity-') as temp:
+    source = Path(temp)
+    (source/'preprocessor_config.json').write_text(json.dumps(preprocessor))
+    for stable, identity in [(False, 'm-a-p/MERT-v1-95M'), (True, 'm-a-p/MERT-v1-330M'),
+                             (True, None)]:
+        config = dict(base, do_stable_layer_norm=stable)
+        if identity is not None:
+            config['_name_or_path'] = identity
+        (source/'config.json').write_text(json.dumps(config))
+        _, metadata = converter.mert_inputs(source, revision, Checkpoint(['weight']))
+        assert metadata['general.name'] == (identity or 'MERT-v1')
+        assert json.loads(metadata['mert.config']) == config
+        assert metadata['mert.source_revision'] == revision
+print('MERT post/pre-norm identity, exact config and revision preserved')

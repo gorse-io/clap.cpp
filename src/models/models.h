@@ -145,8 +145,8 @@ class Mert2Model final : public ModelArchitecture {
     std::vector<Stage> stages;
     std::vector<ConformerWeights> layers;
 };
-// MERT-v1-95M: normalized waveform, HuBERT convolutional frontend and
-// post-layer-normalized transformer. CLaMP3 pooling is a separate contract.
+// MERT-v1: normalized waveform, HuBERT convolutional frontend and pre/post-
+// layer-normalized transformer. CLaMP3 pooling is a separate contract.
 class MertModel final : public ModelArchitecture {
   public:
     MertModel(const ModelLoader &loader, int threads, const std::string &tensor_prefix = "",
