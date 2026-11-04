@@ -143,6 +143,14 @@ To run the same formatting check as GitHub Actions:
 git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 clang-format --dry-run --Werror
 ```
 
+The CI `lint` job uses a single `cpp-linter/cpp-linter-action@v2` step with
+`id: lint` to check both formatting and clang-tidy 18 using the repository's
+configuration files. Its `checks-failed` output fails the job on lint errors.
+The lint job does not configure CMake, generate a compilation database, or install
+FFmpeg. It checks project C/C++ files with the action's default compilation flags;
+submodules and the build directory are excluded. Analyzer warnings are treated as
+errors.
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
