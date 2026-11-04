@@ -9,7 +9,7 @@ readme = "README.md"
 # scripts/vendor.py stages ignored sources before cargo package/publish.
 include = [
     "Cargo.toml", "Cargo.lock", "README.md", "build.rs", "src/**",
-    "native/**", "examples/*.rs", "tests/*.rs", "tests/*.py", "scripts/vendor.py", "vendor/**",
+    "examples/*.rs", "tests/*.rs", "tests/ffi/*.rs", "tests/*.py", "scripts/vendor.py", "vendor/**",
 ]
 
 [features]

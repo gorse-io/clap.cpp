@@ -75,6 +75,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 4
+      CARGO_TARGET_DIR: ${{ github.workspace }}/rust/target
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,6 +109,13 @@ jobs:
         run: python rust/scripts/vendor.py
       - name: Verify standalone package build
         run: cargo package --manifest-path rust/Cargo.toml --allow-dirty
+      - name: Test standalone package inference and safety
+        shell: bash
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("rust/Cargo.toml", "rb"))["package"]["version"])')
+          manifest="rust/target/package/clap-cpp-${version}/Cargo.toml"
+          cargo test --manifest-path "$manifest" --all-targets --locked
+          cargo test --manifest-path "$manifest" --doc --locked
 
   rust-gpu:
     strategy:
@@ -121,6 +129,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 3
+      CARGO_TARGET_DIR: ${{ github.workspace }}/rust/target
     steps:
       - uses: actions/checkout@v4
         with:
@@ -147,6 +156,13 @@ jobs:
         run: python rust/scripts/vendor.py
       - name: Verify GPU source package builds and links
         run: cargo package --manifest-path rust/Cargo.toml --allow-dirty --features ${{ matrix.feature }}
+      - name: Test standalone GPU package inference and safety
+        shell: bash
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("rust/Cargo.toml", "rb"))["package"]["version"])')
+          manifest="rust/target/package/clap-cpp-${version}/Cargo.toml"
+          cargo test --manifest-path "$manifest" --features ${{ matrix.feature }} --all-targets --locked
+          cargo test --manifest-path "$manifest" --features ${{ matrix.feature }} --doc --locked
       - name: GPU-enabled text and audio inference
         run: cargo test --manifest-path rust/Cargo.toml --features ${{ matrix.feature }} --all-targets
       - name: GPU-enabled documentation tests

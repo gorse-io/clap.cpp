@@ -10,7 +10,6 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 CONSUMERS = (
     "src/clap.cpp", "src/embedding.cpp", "src/server.cpp",
-    "rust/native/bridge.cpp",
 )
 PRIVATE_HEADERS = {
     "clap-internal.h", "model.h", "model-loader.h", "graph.h", "tensor-data.h", "vocab.h",

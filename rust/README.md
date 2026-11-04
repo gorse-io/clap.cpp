@@ -13,6 +13,13 @@ or require Git, Python, GPU SDKs, shared ICU libraries, or the parent repository
 is not currently supported. Python 3 is required only for integration-test
 fixture generation and maintainer packaging.
 
+Rust declares the public C API directly with `unsafe extern "C"` and wraps model
+handles and returned buffers in Rust RAII owners. There is no C++ Rust bridge or
+separate `rust/native/CMakeLists.txt` build graph. Both checkout and packaged
+builds configure the root `CMakeLists.txt` in core-only mode, without CLI or test
+dependencies, and link the static clap/ggml/ICU archives. CMake supplies the
+resolved transitive SDK link dependencies for enabled GPU features.
+
 ## GPU features
 
 Enable an optional backend when adding the dependency:
@@ -67,7 +74,7 @@ cargo package --manifest-path rust/Cargo.toml --allow-dirty --locked -j 3
 ```
 
 `vendor.py` rejects missing, wrong-revision, or dirty submodules before copying
-anything. It stages the native build source subsets (including optional GPU
+anything. It stages the root CMake build graph and native source subsets (including optional GPU
 backends), upstream licenses,
 root Apache license, submodule revision manifest, and the stdlib-only tiny-model
 fixture generator into ignored `rust/vendor/`. The script can be rerun; no

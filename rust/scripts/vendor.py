@@ -15,7 +15,7 @@ CRATE = Path(__file__).resolve().parents[1]
 ROOT = CRATE.parent
 SUBMODULES = ("ggml", "thirdparty/json", "thirdparty/icu", "thirdparty/miniaudio")
 TREES = (
-    "include", "src", "cmake/icu.cmake", "LICENSE",
+    "CMakeLists.txt", "include", "src", "cmake", "LICENSE",
     "ggml/CMakeLists.txt", "ggml/cmake", "ggml/include", "ggml/src", "ggml/LICENSE",
     "thirdparty/json/CMakeLists.txt", "thirdparty/json/cmake",
     "thirdparty/json/include", "thirdparty/json/nlohmann_json.natvis",
@@ -51,7 +51,7 @@ def main():
     for source in (*TREES, "python/tests/tiny_models.py"):
         if not (ROOT / source).exists():
             raise SystemExit(f"Missing {source}; run git submodule update --init --recursive")
-    # Validate first, then replace only generated files. Never overwrite the bridge.
+    # Validate first, then replace only the generated native source snapshot.
     with tempfile.TemporaryDirectory(prefix=".vendor-", dir=CRATE) as tmp:
         staged = Path(tmp) / "vendor"
         staged.mkdir()

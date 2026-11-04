@@ -5,6 +5,7 @@ project(clap_cpp VERSION 0.1.0 LANGUAGES C CXX)
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 option(CLAP_BUILD_CLI "Build the clap command-line executable" ON)
 option(CLAP_STATIC_DEPENDENCIES "Build bundled dependencies as static PIC libraries" OFF)
+option(CLAP_GENERATE_LINK_METADATA "Generate a never-built native consumer link probe for File API" OFF)
 include(GNUInstallDirs)
 
 option(GGML_NATIVE "Optimize ggml for the build machine" OFF)
@@ -54,6 +55,8 @@ function(clap_add_dependencies)
 endfunction()
 clap_add_dependencies()
 add_subdirectory(src)
+include(cmake/static-development.cmake)
+clap_static_development()
 
 if(CLAP_BUILD_CLI)
     # The CLI target differs from the core library target, while its executable
@@ -412,7 +415,9 @@ foreach(dependency IN ITEMS ggml miniaudio icu json)
     else()
         set(license "thirdparty/${dependency}/LICENSE")
     endif()
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/${license}"
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/licenses
-        RENAME ${dependency}.txt COMPONENT runtime)
+    foreach(component IN ITEMS runtime development)
+        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/${license}"
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/licenses
+            RENAME ${dependency}.txt COMPONENT ${component})
+    endforeach()
 endforeach()

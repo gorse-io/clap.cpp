@@ -76,6 +76,9 @@ fn main() {
         manifest.parent().unwrap().to_path_buf()
     };
     for required in [
+        "CMakeLists.txt",
+        "cmake/static-development.cmake",
+        "cmake/cargo-link.cmake",
         "include/clap.h",
         "ggml/CMakeLists.txt",
         "thirdparty/json/CMakeLists.txt",
@@ -85,11 +88,8 @@ fn main() {
         assert!(root.join(required).is_file(),
             "clap-cpp native source missing: {required}. In a Git checkout run git submodule update --init --recursive, then python3 rust/scripts/vendor.py before cargo package/publish. Registry archives must contain vendor/ (see README.md).");
     }
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest.join("native").display()
-    );
     for path in [
+        "CMakeLists.txt",
         "src",
         "include",
         "cmake",
@@ -145,12 +145,73 @@ fn main() {
     let mut configure = Command::new("cmake");
     configure
         .arg("-S")
-        .arg(manifest.join("native"))
+        .arg(&root)
         .arg("-B")
         .arg(&build)
         .arg("-DCMAKE_BUILD_TYPE=Release")
-        .arg(format!("-DCLAP_ROOT={}", root.display()))
+        .args([
+            "-DCLAP_BUILD_CLI=OFF",
+            "-DBUILD_TESTING=OFF",
+            "-DBUILD_SHARED_LIBS=OFF",
+            "-DCLAP_STATIC_DEPENDENCIES=ON",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+            "-DCLAP_USE_SYSTEM_ICU=OFF",
+            "-DCLAP_GENERATE_LINK_METADATA=ON",
+            "-DCMAKE_INSTALL_LIBDIR=lib",
+            "-DGGML_STATIC=OFF",
+            "-DGGML_NATIVE=OFF",
+            "-DGGML_CPU=ON",
+        ])
         .arg(format!("-DCMAKE_INSTALL_PREFIX={}", install.display()));
+    // Package policy belongs here, not in a parallel native CMake project.
+    // GGML_STATIC also controls SDK runtime linkage and is unsupported by HIP;
+    // BUILD_SHARED_LIBS=OFF supplies static core/backend archives independently.
+    for option in [
+        "METAL",
+        "CUDA",
+        "HIP",
+        "VULKAN",
+        "SYCL",
+        "OPENCL",
+        "OPENVINO",
+        "RPC",
+        "MUSA",
+        "WEBGPU",
+        "ZDNN",
+        "CANN",
+        "VIRTGPU",
+        "VIRTGPU_BACKEND",
+        "ET",
+        "HEXAGON",
+        "ZENDNN",
+        "BLAS",
+        "ACCELERATE",
+        "BACKEND_DL",
+        "OPENMP",
+        "BUILD_TESTS",
+        "BUILD_EXAMPLES",
+        "CPU_ALL_VARIANTS",
+        "SSE42",
+        "AVX",
+        "AVX2",
+        "AVX_VNNI",
+        "BMI2",
+        "FMA",
+        "F16C",
+        "AVX512",
+        "AVX512_VBMI",
+        "AVX512_VNNI",
+        "AVX512_BF16",
+        "AMX_TILE",
+        "AMX_INT8",
+        "AMX_BF16",
+    ] {
+        configure.arg(format!("-DGGML_{option}=OFF"));
+    }
+    configure.arg(format!(
+        "-DGGML_METAL_EMBED_LIBRARY={}",
+        if backends.metal { "ON" } else { "OFF" }
+    ));
     if let Some(toolchain) = env::var_os("CMAKE_TOOLCHAIN_FILE") {
         configure.arg(format!(
             "-DCMAKE_TOOLCHAIN_FILE={}",
@@ -159,7 +220,7 @@ fn main() {
     }
     for (backend, enabled) in backends.cmake_definitions() {
         configure.arg(format!(
-            "-DCLAP_RUST_{backend}={}",
+            "-DGGML_{backend}={}",
             if enabled { "ON" } else { "OFF" }
         ));
     }
@@ -178,29 +239,20 @@ fn main() {
     run(&mut configure);
     let link_manifest = out.join("cargo-link.txt");
     run(Command::new("cmake")
-        .arg(format!("-DCLAP_RUST_BUILD={}", build.display()))
-        .arg(format!(
-            "-DCLAP_RUST_LINK_MANIFEST={}",
-            link_manifest.display()
-        ))
+        .arg(format!("-DCLAP_LINK_BUILD={}", build.display()))
+        .arg(format!("-DCLAP_LINK_MANIFEST={}", link_manifest.display()))
         .arg("-P")
-        .arg(manifest.join("native/CMakeLists.txt")));
+        .arg(root.join("cmake/cargo-link.cmake")));
     run(Command::new("cmake")
         .arg("--build")
         .arg(&build)
-        .args([
-            "--config",
-            "Release",
-            "--target",
-            "clap-rust-native",
-            "--parallel",
-        ])
+        .args(["--config", "Release", "--target", "clap", "--parallel"])
         .arg(env::var("NUM_JOBS").unwrap_or_else(|_| "2".into())));
     run(Command::new("cmake").arg("--install").arg(&build).args([
         "--config",
         "Release",
         "--component",
-        "rust",
+        "development",
     ]));
     println!(
         "cargo:rustc-link-search=native={}",
@@ -208,8 +260,8 @@ fn main() {
     );
     let directives = fs::read_to_string(link_manifest).expect("cannot read CMake link manifest");
     assert!(
-        directives.contains("cargo:rustc-link-lib=static=clap-rust-native"),
-        "CMake link manifest is missing the Rust bridge"
+        directives.contains("cargo:rustc-link-lib=static=clap\n"),
+        "CMake link manifest is missing the static C API core"
     );
     print!("{directives}");
     if target.contains("apple") {
@@ -336,10 +388,10 @@ set_target_properties(SDK::runtime PROPERTIES IMPORTED_LOCATION "{sdk}/{sdk_file
     INTERFACE_LINK_LIBRARIES "{framework}")
 add_library(ggml-cuda STATIC empty.cpp)
 target_link_libraries(ggml-cuda PRIVATE SDK::runtime)
-add_library(clap-rust-native STATIC empty.cpp)
-target_link_libraries(clap-rust-native PRIVATE ggml-cuda)
-add_executable(clap-rust-link-probe EXCLUDE_FROM_ALL empty.cpp)
-target_link_libraries(clap-rust-link-probe PRIVATE clap-rust-native)
+add_library(clap STATIC empty.cpp)
+target_link_libraries(clap PRIVATE ggml-cuda)
+add_executable(clap-link-probe EXCLUDE_FROM_ALL empty.cpp)
+target_link_libraries(clap-link-probe PRIVATE clap)
 "#
             ),
         )
@@ -350,9 +402,9 @@ target_link_libraries(clap-rust-link-probe PRIVATE clap-rust-native)
             .arg("-B")
             .arg(&build));
         fs::write(
-            build.join("cargo-link-config.cmake"),
+            build.join("clap-link-config.cmake"),
             format!(
-                "set(CLAP_RUST_ARCHIVES clap-rust-native ggml-cuda)\nset(CLAP_RUST_APPLE {})\nset(CLAP_RUST_WINDOWS {})\n",
+                "set(CLAP_LINK_ARCHIVES clap ggml-cuda)\nset(CLAP_LINK_APPLE {})\nset(CLAP_LINK_WINDOWS {})\n",
                 if apple { "ON" } else { "OFF" },
                 if windows { "ON" } else { "OFF" }
             ),
@@ -364,14 +416,26 @@ target_link_libraries(clap-rust-link-probe PRIVATE clap-rust-native)
             .unwrap()
             .parent()
             .unwrap()
-            .join("native/CMakeLists.txt");
+            .join("vendor/cmake/cargo-link.cmake");
+        let script = if script.is_file() {
+            script
+        } else {
+            PathBuf::from(file!())
+                .canonicalize()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("cmake/cargo-link.cmake")
+        };
         run(Command::new("cmake")
-            .arg(format!("-DCLAP_RUST_BUILD={}", build.display()))
-            .arg(format!("-DCLAP_RUST_LINK_MANIFEST={}", manifest.display()))
+            .arg(format!("-DCLAP_LINK_BUILD={}", build.display()))
+            .arg(format!("-DCLAP_LINK_MANIFEST={}", manifest.display()))
             .arg("-P")
             .arg(script));
         let directives = fs::read_to_string(manifest).unwrap();
-        assert!(directives.contains("cargo:rustc-link-lib=static=clap-rust-native\n"));
+        assert!(directives.contains("cargo:rustc-link-lib=static=clap\n"));
         assert!(directives.contains("cargo:rustc-link-lib=static=ggml-cuda\n"));
         assert!(directives.contains(&format!("cargo:rustc-link-search=native={sdk}\n")));
         directives
