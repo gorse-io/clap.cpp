@@ -6,7 +6,7 @@ const { execFileSync } = require('node:child_process');
 const pkg = path.resolve(__dirname, '..');
 const root = path.resolve(pkg, '..');
 const native = path.join(pkg, 'native');
-const trees = ['include', 'src', 'ggml/CMakeLists.txt', 'ggml/cmake', 'ggml/include',
+const trees = ['CMakeLists.txt', 'LICENSE', 'cmake', 'include', 'src', 'ggml/CMakeLists.txt', 'ggml/cmake', 'ggml/include',
   'ggml/src', 'ggml/LICENSE', 'thirdparty/json/CMakeLists.txt', 'thirdparty/json/cmake',
   'thirdparty/json/include', 'thirdparty/json/nlohmann_json.natvis', 'thirdparty/json/LICENSE.MIT',
   'thirdparty/miniaudio/miniaudio.h', 'thirdparty/miniaudio/LICENSE',
@@ -27,7 +27,10 @@ if (!fs.existsSync(path.join(root, 'include/clap.h'))) {
 for (const dir of ['ggml', 'thirdparty/json', 'thirdparty/icu', 'thirdparty/miniaudio']) {
   const entry = execFileSync('git', ['ls-tree', 'HEAD', dir], { cwd: root, encoding: 'utf8' }).trim();
   const expected = entry.split(/\s+/)[2];
+  if (!fs.existsSync(path.join(root, dir, '.git'))) throw new Error(`${dir}: initialize the pinned submodule before packing`);
   const actual = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: path.join(root, dir), encoding: 'utf8' }).trim();
+  if (execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: path.join(root, dir), encoding: 'utf8' }).trim())
+    throw new Error(`${dir}: refusing modified dependency sources`);
   if (!expected || expected !== actual) throw new Error(`${dir}: initialize the pinned submodule revision before packing`);
 }
 for (const p of [...trees, 'cmake/icu.cmake', 'LICENSE', ...Object.values(licenses)]) {
