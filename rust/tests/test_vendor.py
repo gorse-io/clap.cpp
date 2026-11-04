@@ -15,6 +15,14 @@ vendor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vendor)
 
 
+class BuildGraphTests(unittest.TestCase):
+    def test_vendors_root_build_graph_instead_of_a_private_project(self):
+        self.assertIn("CMakeLists.txt", vendor.TREES)
+        self.assertIn("cmake", vendor.TREES)
+        manifest = (vendor.CRATE / "Cargo.toml").read_text()
+        self.assertNotIn('"native/**"', manifest)
+
+
 class VendorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="clap-vendor-test-")

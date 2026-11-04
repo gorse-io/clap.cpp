@@ -29,7 +29,10 @@ fn close(a: &[f32], b: &[f32]) {
 fn errors_are_owned_and_inputs_are_checked() {
     assert!(CLAP::new("missing.gguf", 1).is_err());
     assert!(CLAP::new("nul\0.gguf", 1).is_err());
-    assert!(CLAP::new("missing.gguf", -1).is_err());
+    assert_eq!(
+        CLAP::new("missing.gguf", -1).err().unwrap().to_string(),
+        "threads must be nonnegative"
+    );
     let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
     assert!(model.encode_text("hi\0").is_err());
     assert!(model.encode_audio("bad\0.wav", 0).is_err());
@@ -83,6 +86,28 @@ fn mert_audio_file_and_unsupported_operations() {
     assert!(audio.iter().all(|v| v.is_finite()));
     assert!(model.encode_text("not supported").is_err());
     assert!(model.encode_audio(fixtures().join("mert.wav"), 1).is_err());
+}
+
+#[test]
+fn embedding_vectors_outlive_model_and_subsequent_calls() {
+    let (text, audio, saved_text, saved_audio) = {
+        let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
+        let text = model.encode_text("Hi").unwrap();
+        let audio = model.encode_audio(fixtures().join("音频.wav"), 0).unwrap();
+        let saved_text = text.clone();
+        let saved_audio = audio.clone();
+        for _ in 0..3 {
+            model.encode_text("another input").unwrap();
+        }
+        (text, audio, saved_text, saved_audio)
+    };
+    // Reuse native allocator storage after destroying the original handle.
+    let mut replacement = CLAP::new(fixtures().join("mert.gguf"), 1).unwrap();
+    replacement
+        .encode_audio(fixtures().join("mert.wav"), 0)
+        .unwrap();
+    assert_eq!(text, saved_text);
+    assert_eq!(audio, saved_audio);
 }
 
 #[cfg(unix)]
