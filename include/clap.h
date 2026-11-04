@@ -1,77 +1,97 @@
-#pragma once
+#ifndef CLAP_H
+#define CLAP_H
 
-#include <cstddef>
-#include <memory>
-#include <string>
-#include <vector>
+#include <stdbool.h>
+#include <stddef.h>
 
-namespace clap {
+/* Windows DLL clients define CLAP_SHARED; static clients need no defines. */
+#if defined(_WIN32) && defined(CLAP_SHARED)
+#if defined(CLAP_BUILD)
+#define CLAP_API __declspec(dllexport)
+#else
+#define CLAP_API __declspec(dllimport)
+#endif
+#else
+#define CLAP_API
+#endif
 
-// Time-major frame representations returned by waveform encoders such as
-// MERT-v1-95M/MERT-v2-FullSong. values has exactly frames * dimension elements.
-struct AudioFrames {
-    std::vector<float> values;
-    int frames = 0;
-    int dimension = 0;
-};
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// Device names come from available_devices(); "auto" prefers a GPU, "cpu" forces CPU.
-// An empty device uses CLAP_DEVICE, falling back to "auto". Storage precision is
-// independent of device selection; F32 preserves F32 dense activation arithmetic.
-enum class ActivationPrecision { ModelDefault, F32 };
-struct RuntimeOptions {
-    int threads = 0;
-    std::string device;
-    ActivationPrecision activation_precision = ActivationPrecision::ModelDefault;
-};
-struct DeviceInfo {
-    std::string name, description;
+typedef struct CLAP CLAP;
+
+typedef enum clap_status { CLAP_OK = 0, CLAP_INVALID_ARGUMENT = 1, CLAP_OUT_OF_MEMORY = 2, CLAP_ERROR = 3 } clap_status;
+
+typedef enum clap_activation_precision {
+    CLAP_ACTIVATION_MODEL_DEFAULT = 0,
+    CLAP_ACTIVATION_F32 = 1
+} clap_activation_precision;
+
+typedef struct clap_runtime_options {
+    int threads;        /* 0: automatic; otherwise positive. */
+    const char *device; /* NULL/empty: CLAP_DEVICE or auto; cpu forces CPU. */
+    clap_activation_precision activation_precision;
+} clap_runtime_options;
+
+typedef struct clap_device {
+    const char *name;
+    const char *description;
     bool gpu;
-};
-std::vector<DeviceInfo> available_devices();
+} clap_device;
 
-// Native CLAP, CLaMP3, MERT-v1, MERT2, MuQ or MuQ-MuLan, selected from GGUF metadata. Weights are
-// memory-mapped on POSIX platforms; MuQ F16 weights expand to owned F32 buffers.
-// Each call embeds one item; methods on the same instance are not thread-safe.
-// CLAP returns unit-normalized projections. CLaMP3 returns its native unnormalized
-// pooled projections. Its mandatory bundled MERT-v1-95M frontend handles
-// waveform preprocessing internally; no separate feature-input API is exposed.
-// MERT-v1 audio_frames() exposes final-layer frames; encode_audio() mean-pools them.
-// CLaMP3's all-layer MERT feature extraction is handled internally.
-// MERT-v2-FullSong and MuQ encode_audio() mean-pool the complete input's final frames;
-// audio_frames() returns the unpooled sequence (approximately 25 Hz for published weights).
-// MuQ-MuLan encode_text() returns a single L2-normalized joint embedding. encode_audio() uses
-// successive 10 s clips, one prefix slice for a tail, per-clip normalization and
-// an unweighted average without final normalization. No amplitude normalization.
-// MuLan supports neither frame/features APIs nor crop offsets; published width
-// is 512. Its text string API rejects over-context input without truncation.
-class CLAP {
-  public:
-    explicit CLAP(const std::string &gguf_path, int threads = 0);
-    CLAP(const std::string &gguf_path, const RuntimeOptions &options);
-    ~CLAP();
-    CLAP(CLAP &&) noexcept;
-    CLAP &operator=(CLAP &&) noexcept;
-    CLAP(const CLAP &) = delete;
-    CLAP &operator=(const CLAP &) = delete;
+typedef struct clap_audio_frames {
+    float *values; /* Time-major, frames * dimension elements. */
+    size_t frames;
+    size_t dimension;
+} clap_audio_frames;
 
-    std::vector<int> tokenize(const std::string &utf8, std::size_t max_length = 512) const;
-    std::vector<float> encode_text(const std::vector<int> &token_ids);
-    std::vector<float> encode_text(const std::string &utf8);
-    // Mono waveform input; automatically resampled for the model.
-    // CLaMP3 GGUFs must contain the bundled MERT-v1-95M frontend.
-    std::vector<float> encode_audio(const std::vector<float> &pcm, int sample_rate = 48000,
-                                    std::size_t crop_offset = 0);
-    // Decode WAV, MP3 or FLAC by contents and encode with automatic resampling.
-    // crop_offset has the same model-specific semantics as the PCM overload.
-    // Throws on unreadable, unsupported, empty or invalid audio.
-    std::vector<float> encode_audio(const std::string &path, std::size_t crop_offset = 0);
-    AudioFrames audio_frames(const std::vector<float> &pcm, int sample_rate = 48000);
-    int audio_sample_rate() const;
-    int projection_dimension() const;
+/* All input strings are NUL-terminated UTF-8, borrowed for the call only.
+ * Calls on the same handle must be serialized, including destruction. Distinct
+ * handles may be used concurrently. No C++ exception crosses this API.
+ * Fallible calls clear their output pointers/counts before validating inputs;
+ * on failure all provided outputs remain zero/NULL. Pass fresh output slots:
+ * overwriting a previous successful output does NOT free its allocation.
+ * Each successful allocated output belongs to the caller, independently of the
+ * model lifetime. Use ONLY its matching free below (never the C runtime free).
+ * NULL is accepted by every free function. */
+CLAP_API clap_runtime_options clap_default_options(void);
+/* Diagnostic for the calling thread, valid until its next fallible API call.
+ * Success clears it. Reading it and freeing outputs never change it. */
+CLAP_API const char *clap_last_error(void);
+CLAP_API clap_status clap_create(const char *gguf_path, const clap_runtime_options *options, CLAP **out);
+CLAP_API void clap_destroy(CLAP *model);
+CLAP_API clap_status clap_available_devices(clap_device **out, size_t *count);
+/* Frees the list and its strings; count must be the original returned count. */
+CLAP_API void clap_free_devices(clap_device *devices, size_t count);
+CLAP_API void clap_free(void *allocation);                       /* Tokens and embedding buffers. */
+CLAP_API void clap_free_audio_frames(clap_audio_frames *frames); /* Also zeroes the struct. */
 
-  private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
-};
-} // namespace clap
+CLAP_API clap_status clap_tokenize(const CLAP *model, const char *utf8, size_t max_length, int **tokens, size_t *count);
+CLAP_API clap_status clap_encode_text(CLAP *model, const char *utf8, float **values, size_t *count);
+CLAP_API clap_status clap_encode_tokens(CLAP *model, const int *tokens, size_t token_count, float **values,
+                                        size_t *count);
+/* Mono PCM, positive sample rate; automatically resampled. Nonempty finite
+ * samples required. crop_offset is measured at the model sample rate: CLAP uses
+ * a crop in long audio; other models may reject nonzero offsets. */
+CLAP_API clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
+                                       size_t crop_offset, float **values, size_t *count);
+/* Decode WAV/MP3/FLAC by contents, then encode with the same crop semantics. */
+CLAP_API clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop_offset, float **values,
+                                            size_t *count);
+CLAP_API clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
+                                           clap_audio_frames *out);
+CLAP_API clap_status clap_audio_sample_rate(const CLAP *model, int *out);
+CLAP_API clap_status clap_projection_dimension(const CLAP *model, int *out);
+
+/* Architecture is selected from GGUF metadata. Unsupported modalities return
+ * CLAP_ERROR. CLAP projections are unit-normalized; CLaMP3 uses native unnormalized
+ * projections and requires a bundled MERT frontend. MERT/MERT2/MuQ audio embeddings
+ * mean-pool final-layer frames; their frame API returns the unpooled sequence.
+ * MuQ-MuLan text is L2-normalized; audio averages normalized 10-second clips
+ * without final normalization and exposes no frames or crop offsets. */
+
+#ifdef __cplusplus
+}
+#endif
+#endif /* CLAP_H */

@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "../c-api-helpers.h"
 #include "audio.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -7,6 +8,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+
+using namespace c_api_test;
 
 static void require(bool ok, const std::string &message) {
     if (!ok)
@@ -29,13 +32,22 @@ int main(int argc, char **argv) {
         nlohmann::json fixture;
         std::ifstream input(argv[2]);
         input >> fixture;
-        clap::CLAP model(argv[1], 2);
-        require(model.audio_sample_rate() == 24000, "MuQ rate");
-        require(model.projection_dimension() == fixture.at("hidden_size"), "MuQ width");
+        clap_runtime_options options = clap_default_options();
+        options.threads = 2;
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Model model(raw, clap_destroy);
+        require(take_int([&](int *out) { return clap_audio_sample_rate(model.get(), out); }) == 24000, "MuQ rate");
+        require(take_int([&](int *out) { return clap_projection_dimension(model.get(), out); }) ==
+                    fixture.at("hidden_size"),
+                "MuQ width");
         const float tolerance = fixture.at("tolerance");
         for (const auto &test : fixture.at("waveform_cases")) {
             const auto wave = test.at("waveform").get<std::vector<float>>();
-            const auto sequence = model.audio_frames(wave, 24000);
+            const auto sequence = take_frames([&](clap_audio_frames *out) {
+                const std::vector<float> &api_pcm = wave;
+                return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 24000, out);
+            });
             require(sequence.frames == test.at("frames"), "MuQ frames");
             require(sequence.frames == static_cast<int>((wave.size() / 240 + 3) / 4), "MuQ ceil subsampling");
             require(sequence.dimension == fixture.at("hidden_size"), "MuQ frame width");
@@ -43,13 +55,23 @@ int main(int argc, char **argv) {
             // noise-floor sensitivity and catches unintended activation packing.
             const float bound = test.at("name") == "silence" ? std::min(tolerance, 1e-5f) : tolerance;
             compare(sequence.values, test.at("expected_frames").get<std::vector<float>>(), bound, test.at("name"));
-            compare(model.encode_audio(wave, 24000), test.at("expected_pooled").get<std::vector<float>>(), bound,
-                    "MuQ pooled");
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::vector<float> &api_pcm = wave;
+                        return clap_encode_audio(model.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+                    }),
+                    test.at("expected_pooled").get<std::vector<float>>(), bound, "MuQ pooled");
         }
         const auto wave = fixture.at("waveform_cases").at(1).at("waveform").get<std::vector<float>>();
         const auto resampled = clap::resample_audio({wave, 48000}, 24000);
-        compare(model.audio_frames(wave, 48000).values, model.audio_frames(resampled.samples, 24000).values, 0.0f,
-                "MuQ automatic resampling");
+        compare(take_frames([&](clap_audio_frames *out) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 48000, out);
+                }).values,
+                take_frames([&](clap_audio_frames *out) {
+                    const std::vector<float> &api_pcm = resampled.samples;
+                    return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 24000, out);
+                }).values,
+                0.0f, "MuQ automatic resampling");
         auto rejects = [&](auto action, const std::string &message) {
             bool rejected = false;
             try {
@@ -59,13 +81,48 @@ int main(int argc, char **argv) {
             }
             require(rejected, message);
         };
-        rejects([&] { model.encode_text("no text tower"); }, "MuQ text must fail");
-        rejects([&] { model.audio_frames(std::vector<float>(1024), 24000); }, "MuQ short waveform must fail");
-        rejects([&] { model.audio_frames(wave, 0); }, "MuQ invalid rate must fail");
-        rejects([&] { model.encode_audio(wave, 24000, 1); }, "MuQ crop must fail");
+        rejects(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::string &api_text = "no text tower";
+                    return clap_encode_text(model.get(), api_text.c_str(), out, count);
+                });
+            },
+            "MuQ text must fail");
+        rejects(
+            [&] {
+                take_frames([&](clap_audio_frames *out) {
+                    const std::vector<float> &api_pcm = std::vector<float>(1024);
+                    return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 24000, out);
+                });
+            },
+            "MuQ short waveform must fail");
+        rejects(
+            [&] {
+                take_frames([&](clap_audio_frames *out) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 0, out);
+                });
+            },
+            "MuQ invalid rate must fail");
+        rejects(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_encode_audio(model.get(), api_pcm.data(), api_pcm.size(), 24000, 1, out, count);
+                });
+            },
+            "MuQ crop must fail");
         auto invalid = wave;
         invalid[0] = std::numeric_limits<float>::infinity();
-        rejects([&] { model.audio_frames(invalid, 24000); }, "MuQ nonfinite must fail");
+        rejects(
+            [&] {
+                take_frames([&](clap_audio_frames *out) {
+                    const std::vector<float> &api_pcm = invalid;
+                    return clap_get_audio_frames(model.get(), api_pcm.data(), api_pcm.size(), 24000, out);
+                });
+            },
+            "MuQ nonfinite must fail");
         std::cout << "MuQ native parity passed\n";
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

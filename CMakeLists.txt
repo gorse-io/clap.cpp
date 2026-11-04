@@ -55,6 +55,28 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME clap_public_api_boundary
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/public_api_boundary.py")
+    add_executable(clap-c-api-test tests/c-api-test.c)
+    set_target_properties(clap-c-api-test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS OFF)
+    if(NOT MSVC)
+        target_compile_options(clap-c-api-test PRIVATE -pedantic-errors)
+    endif()
+    target_link_libraries(clap-c-api-test PRIVATE clap)
+    add_test(NAME clap_c_api
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/c_api.py"
+                "$<TARGET_FILE:clap-c-api-test>")
+    if(BUILD_SHARED_LIBS)
+        add_test(NAME clap_c_abi_ctypes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/c_api.py"
+                    "$<TARGET_FILE:clap-c-api-test>" "$<TARGET_FILE:clap>")
+        set_tests_properties(clap_c_abi_ctypes PROPERTIES TIMEOUT 120 ENVIRONMENT "CLAP_DEVICE=cpu")
+    else()
+        add_executable(clap-c-api-allocation-test tests/c-api-allocation-test.cpp)
+        target_link_libraries(clap-c-api-allocation-test PRIVATE clap)
+        add_test(NAME clap_c_api_allocation COMMAND clap-c-api-allocation-test)
+    endif()
+    set_tests_properties(clap_c_api PROPERTIES TIMEOUT 120)
     add_test(NAME clap_conversion_imports
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(clap_conversion_imports PROPERTIES TIMEOUT 30)
@@ -339,5 +361,15 @@ if(BUILD_TESTING)
         endif()
     endforeach()
 endif()
+
+# C++ test tools opt into language features, not blanket private-header access.
+# Private implementation tests declare their src include directory above.
+get_property(CLAP_LOCAL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(target IN LISTS CLAP_LOCAL_TARGETS)
+    get_target_property(kind ${target} TYPE)
+    if(kind STREQUAL "EXECUTABLE" AND NOT target STREQUAL "clap-c-api-test")
+        target_compile_features(${target} PRIVATE cxx_std_20)
+    endif()
+endforeach()
 
 install(TARGETS clap-cli RUNTIME DESTINATION bin)

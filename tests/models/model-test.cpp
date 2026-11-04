@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "../c-api-helpers.h"
 #include "audio.h"
 #include "feature-test.h"
 #include <nlohmann/json.hpp>
@@ -8,10 +9,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-#include <type_traits>
-template <class T, class = void> struct has_feature_input : std::false_type {};
-template <class T> struct has_feature_input<T, std::void_t<decltype(&T::audio_features)>> : std::true_type {};
-static_assert(!has_feature_input<clap::CLAP>::value, "public feature interface must not return");
+
+using namespace c_api_test;
 
 static void require(bool value, const std::string &message) {
     if (!value)
@@ -75,7 +74,10 @@ int main(int argc, char **argv) {
         require(rejected, "out-of-range crop must be rejected");
         rejected = false;
         try {
-            clap::CLAP missing("/this/path/does/not/exist.gguf");
+            CLAP *raw = nullptr;
+            const auto status = clap_create("/this/path/does/not/exist.gguf", nullptr, &raw);
+            Model missing(raw, clap_destroy);
+            check(status);
         } catch (const std::exception &) {
             rejected = true;
         }
@@ -86,13 +88,23 @@ int main(int argc, char **argv) {
         std::ifstream input(argv[2]);
         nlohmann::json fixture;
         input >> fixture;
-        clap::CLAP model(argv[1], 2);
+        clap_runtime_options options = clap_default_options();
+        options.threads = 2;
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Model model(raw, clap_destroy);
         const float embedding_tolerance = fixture.value("embedding_tolerance", 5e-5f);
         for (const auto &test : fixture.at("text_cases")) {
-            const auto ids = model.tokenize(test.at("text").get<std::string>());
+            const auto ids = take_buffer<int>([&](int **out, size_t *count) {
+                const std::string &api_text = test.at("text").get<std::string>();
+                return clap_tokenize(model.get(), api_text.c_str(), 512, out, count);
+            });
             require(ids == test.at("ids").get<std::vector<int>>(),
                     "tokenizer mismatch: " + test.at("text").get<std::string>());
-            compare(model.encode_text(test.at("padded_ids").get<std::vector<int>>()),
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::vector<int> &api_ids = test.at("padded_ids").get<std::vector<int>>();
+                        return clap_encode_tokens(model.get(), api_ids.data(), api_ids.size(), out, count);
+                    }),
                     test.at("expected").get<std::vector<float>>(), embedding_tolerance, "text embedding");
         }
         compare(clap::detail::FeatureTestAccess::encode(argv[1], fixture.at("features").get<std::vector<float>>(),
@@ -102,7 +114,10 @@ int main(int argc, char **argv) {
             compare(clap::log_mel(fixture.at("waveform").get<std::vector<float>>()),
                     fixture.at("mel").get<std::vector<float>>(), 3e-4f, "waveform log mel");
             if (fixture.value("end_to_end", false))
-                compare(model.encode_audio(fixture.at("waveform").get<std::vector<float>>()),
+                compare(take_buffer<float>([&](float **out, size_t *count) {
+                            const std::vector<float> &api_pcm = fixture.at("waveform").get<std::vector<float>>();
+                            return clap_encode_audio(model.get(), api_pcm.data(), api_pcm.size(), 48000, 0, out, count);
+                        }),
                         fixture.at("expected_audio").get<std::vector<float>>(), 5e-5f, "waveform embedding");
         }
         std::cout << "Native CLAP parity passed\n";

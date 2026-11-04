@@ -3,6 +3,8 @@
 file(GLOB CLAP_MODELS_SOURCES CONFIGURE_DEPENDS "models/*.cpp")
 
 set(CLAP_CORE_SOURCES
+    c-api.cpp
+    model.h
     model.cpp
     model-loader.cpp
     graph.cpp
@@ -15,7 +17,11 @@ add_library(clap
     ${CLAP_CORE_SOURCES}
     ${CLAP_MODELS_SOURCES})
 
-target_compile_features(clap PUBLIC cxx_std_20)
+target_compile_features(clap PRIVATE cxx_std_20)
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(clap PUBLIC CLAP_SHARED PRIVATE CLAP_BUILD)
+    set_target_properties(clap PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+endif()
 target_include_directories(clap
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

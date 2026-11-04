@@ -8,12 +8,37 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
 namespace {
 using Vector = std::vector<float>;
 using nlohmann::json;
+
+const char *c_string(const std::string &value) {
+    if (value.find('\0') != std::string::npos)
+        throw std::invalid_argument("text and paths must contain no NUL bytes");
+    return value.c_str();
+}
+
+void check(clap_status status) {
+    if (status == CLAP_OK)
+        return;
+    const std::string message = clap_last_error();
+    if (status == CLAP_INVALID_ARGUMENT)
+        throw std::invalid_argument(message);
+    if (status == CLAP_OUT_OF_MEMORY)
+        throw std::bad_alloc();
+    throw std::runtime_error(message);
+}
+
+template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
+    const std::unique_ptr<T, decltype(&clap_free)> owned(data, clap_free);
+    if (!count)
+        return {};
+    return {data, data + count};
+}
 
 // Native projections (notably CLaMP3) are not necessarily unit normalized.
 double cosine(const Vector &left, const Vector &right) {
@@ -74,31 +99,54 @@ int run_embedding(const EmbeddingOptions &options) {
         clap::Audio decoded;
         if (!options.audio_path.empty())
             decoded = clap::decode_audio(options.audio_path);
-        clap::CLAP model(options.model_path, clap::RuntimeOptions{options.threads, options.device});
+        auto runtime = clap_default_options();
+        runtime.threads = options.threads;
+        runtime.device = c_string(options.device);
+        CLAP *handle = nullptr;
+        check(clap_create(c_string(options.model_path), &runtime, &handle));
+        const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
         std::vector<Vector> vectors;
         if (!options.audio_path.empty()) {
-            if (options.crop_requested && model.audio_sample_rate() != 48000) {
+            int sample_rate = 0;
+            check(clap_audio_sample_rate(model.get(), &sample_rate));
+            if (options.crop_requested && sample_rate != 48000) {
                 throw std::runtime_error("--crop-offset requires a CLAP model");
             }
             if (options.frames) {
-                const auto sequence = model.audio_frames(decoded.samples, decoded.sample_rate);
-                std::cout << json{{"frames", sequence.frames},
-                                  {"dimension", sequence.dimension},
-                                  {"values", sequence.values}}
-                                 .dump()
-                          << '\n';
+                clap_audio_frames sequence{};
+                check(clap_get_audio_frames(model.get(), decoded.samples.data(), decoded.samples.size(),
+                                            decoded.sample_rate, &sequence));
+                const std::unique_ptr<clap_audio_frames, decltype(&clap_free_audio_frames)> owned(
+                    &sequence, clap_free_audio_frames);
+                const Vector values =
+                    sequence.frames && sequence.dimension
+                        ? Vector(sequence.values, sequence.values + sequence.frames * sequence.dimension)
+                        : Vector{};
+                std::cout
+                    << json{{"frames", sequence.frames}, {"dimension", sequence.dimension}, {"values", values}}.dump()
+                    << '\n';
             } else {
-                vectors.push_back(model.encode_audio(decoded.samples, decoded.sample_rate, options.crop_offset));
+                float *values = nullptr;
+                std::size_t count = 0;
+                check(clap_encode_audio(model.get(), decoded.samples.data(), decoded.samples.size(),
+                                        decoded.sample_rate, options.crop_offset, &values, &count));
+                vectors.push_back(take_buffer(values, count));
             }
         } else if (options.single_text) {
-            vectors.push_back(model.encode_text(options.text));
+            float *values = nullptr;
+            std::size_t count = 0;
+            check(clap_encode_text(model.get(), c_string(options.text), &values, &count));
+            vectors.push_back(take_buffer(values, count));
         } else {
             // Preserve empty and trailing separator-delimited prompt/file segments.
             std::size_t start = 0;
             while (true) {
                 const auto end = options.text.find(options.separator, start);
-                vectors.push_back(
-                    model.encode_text(options.text.substr(start, end == std::string::npos ? end : end - start)));
+                const auto text = options.text.substr(start, end == std::string::npos ? end : end - start);
+                float *values = nullptr;
+                std::size_t count = 0;
+                check(clap_encode_text(model.get(), c_string(text), &values, &count));
+                vectors.push_back(take_buffer(values, count));
                 if (end == std::string::npos)
                     break;
                 start = end + options.separator.size();

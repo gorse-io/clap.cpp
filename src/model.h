@@ -1,9 +1,21 @@
 #pragma once
 
 #include "clap.h"
+#include "model-loader.h"
 #include <cstddef>
-#include <vector>
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace clap {
+// Time-major waveform encoder output; values contains frames * dimension elements.
+struct AudioFrames {
+    std::vector<float> values;
+    int frames = 0;
+    int dimension = 0;
+};
+} // namespace clap
 
 namespace clap::detail {
 struct TextParameters {
@@ -38,4 +50,25 @@ class ModelArchitecture {
     virtual void load_arch_hparams() = 0;
     virtual void load_arch_tensors() const = 0;
 };
+class Vocabulary;
+} // namespace clap::detail
+
+// Definition of the public opaque C handle, not a second C++ API or facade.
+// Reverse destruction order keeps the GGUF mapping alive for its architecture.
+struct CLAP {
+    clap::detail::ModelLoader loader;
+    std::unique_ptr<clap::detail::ModelArchitecture> architecture;
+    std::unique_ptr<clap::detail::Vocabulary> vocabulary;
+
+    CLAP(const std::string &path, const clap::RuntimeOptions &options);
+    ~CLAP();
+};
+
+namespace clap::detail {
+// Core-only operations shared by the C entry points. Upper layers use clap.h.
+std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max_length);
+std::vector<float> encode_text(CLAP &model, const std::string &utf8);
+std::vector<float> encode_audio(CLAP &model, const std::vector<float> &pcm, int sample_rate, size_t crop_offset);
+std::vector<float> encode_audio_file(CLAP &model, const std::string &path, size_t crop_offset);
+AudioFrames audio_frames(CLAP &model, const std::vector<float> &pcm, int sample_rate);
 } // namespace clap::detail

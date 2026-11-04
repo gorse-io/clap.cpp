@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "../c-api-helpers.h"
 #include "audio.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -7,6 +8,8 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+
+using namespace c_api_test;
 
 void require(bool ok, const std::string &message) {
     if (!ok)
@@ -41,18 +44,39 @@ int main(int argc, char **argv) {
         nlohmann::json f;
         std::ifstream input(argv[2]);
         input >> f;
-        clap::CLAP m(argv[1], 2);
-        require(m.projection_dimension() == f.at("dimension"), "joint width");
-        require(m.audio_sample_rate() == 24000, "rate");
+        clap_runtime_options options = clap_default_options();
+        options.threads = 2;
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Model m(raw, clap_destroy);
+        require(take_int([&](int *out) { return clap_projection_dimension(m.get(), out); }) == f.at("dimension"),
+                "joint width");
+        require(take_int([&](int *out) { return clap_audio_sample_rate(m.get(), out); }) == 24000, "rate");
         const float tol = f.at("tolerance");
         for (const auto &c : f.at("texts")) {
             const auto ids = c.at("ids").get<std::vector<int>>();
-            require(m.tokenize(c.at("text"), 10000) == ids, "token parity");
-            compare(m.encode_text(ids), c.at("expected"), tol, "IDs: " + c.at("text").get<std::string>());
-            compare(m.encode_text(c.at("text").get<std::string>()), c.at("expected"), tol, "UTF8");
+            require(take_buffer<int>([&](int **out, size_t *count) {
+                        const std::string &api_text = c.at("text");
+                        return clap_tokenize(m.get(), api_text.c_str(), 10000, out, count);
+                    }) == ids,
+                    "token parity");
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::vector<int> &api_ids = ids;
+                        return clap_encode_tokens(m.get(), api_ids.data(), api_ids.size(), out, count);
+                    }),
+                    c.at("expected"), tol, "IDs: " + c.at("text").get<std::string>());
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::string &api_text = c.at("text").get<std::string>();
+                        return clap_encode_text(m.get(), api_text.c_str(), out, count);
+                    }),
+                    c.at("expected"), tol, "UTF8");
         }
         for (const auto &c : f.at("audio"))
-            compare(m.encode_audio(c.at("wave"), 24000), c.at("expected"), tol, c.at("name"));
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::vector<float> &api_pcm = c.at("wave");
+                        return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+                    }),
+                    c.at("expected"), tol, c.at("name"));
         auto reject = [&](auto fn, const std::string &name) {
             bool caught = false;
             try {
@@ -63,20 +87,97 @@ int main(int argc, char **argv) {
             require(caught, "must reject " + name);
         };
         const auto wave = f.at("audio").back().at("wave").get<std::vector<float>>();
-        compare(m.encode_audio(wave, 48000), m.encode_audio(clap::resample_audio({wave, 48000}, 24000).samples, 24000),
+        compare(take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 48000, 0, out, count);
+                }),
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = clap::resample_audio({wave, 48000}, 24000).samples;
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+                }),
                 0, "automatic native resampling");
-        reject([&] { m.audio_frames(wave, 24000); }, "frames");
-        reject([&] { m.encode_audio(wave, 24000, 1); }, "crop");
-        reject([&] { m.encode_audio(wave, 0); }, "rate");
-        reject([&] { m.encode_audio(std::vector<float>{}, 24000); }, "empty");
-        reject([&] { m.encode_audio(std::vector<float>(512), 24000); }, "short");
+        reject(
+            [&] {
+                take_frames([&](clap_audio_frames *out) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_get_audio_frames(m.get(), api_pcm.data(), api_pcm.size(), 24000, out);
+                });
+            },
+            "frames");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 24000, 1, out, count);
+                });
+            },
+            "crop");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = wave;
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 0, 0, out, count);
+                });
+            },
+            "rate");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = std::vector<float>{};
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+                });
+            },
+            "empty");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = std::vector<float>(512);
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+                });
+            },
+            "short");
         auto bad = wave;
         bad[0] = std::numeric_limits<float>::quiet_NaN();
-        reject([&] { m.encode_audio(bad, 24000); }, "nonfinite");
-        reject([&] { m.encode_text(std::vector<int>{}); }, "empty IDs");
-        reject([&] { m.encode_text(std::vector<int>{-1}); }, "invalid ID");
-        reject([&] { m.encode_text(std::vector<int>(600, 0)); }, "over context IDs");
-        reject([&] { m.encode_text(std::string(3000, 'a')); }, "over context UTF8");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<float> &api_pcm = bad;
+                    return clap_encode_audio(m.get(), api_pcm.data(), api_pcm.size(), 24000, 0, out, count);
+                });
+            },
+            "nonfinite");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<int> &api_ids = std::vector<int>{};
+                    return clap_encode_tokens(m.get(), api_ids.data(), api_ids.size(), out, count);
+                });
+            },
+            "empty IDs");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<int> &api_ids = std::vector<int>{-1};
+                    return clap_encode_tokens(m.get(), api_ids.data(), api_ids.size(), out, count);
+                });
+            },
+            "invalid ID");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::vector<int> &api_ids = std::vector<int>(600, 0);
+                    return clap_encode_tokens(m.get(), api_ids.data(), api_ids.size(), out, count);
+                });
+            },
+            "over context IDs");
+        reject(
+            [&] {
+                take_buffer<float>([&](float **out, size_t *count) {
+                    const std::string &api_text = std::string(3000, 'a');
+                    return clap_encode_text(m.get(), api_text.c_str(), out, count);
+                });
+            },
+            "over context UTF8");
         std::cout << "MuLan native contracts passed" << std::endl;
     } catch (const std::exception &e) {
         std::cerr << e.what() << std::endl;

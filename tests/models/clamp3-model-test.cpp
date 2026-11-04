@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "../c-api-helpers.h"
 #include "feature-test.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -9,6 +10,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+using namespace c_api_test;
 
 static void require(bool value, const std::string &message) {
     if (!value)
@@ -34,28 +37,45 @@ int main(int argc, char **argv) {
         std::ifstream input(argv[2]);
         nlohmann::json fixture;
         input >> fixture;
-        clap::RuntimeOptions options;
+        clap_runtime_options options = clap_default_options();
         options.threads = 2;
         if (argc == 4)
-            options.activation_precision = clap::ActivationPrecision::F32;
-        clap::CLAP model(argv[1], options);
-        require(model.projection_dimension() == fixture.at("projection_dim"), "projection dimension");
+            options.activation_precision = CLAP_ACTIVATION_F32;
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Model model(raw, clap_destroy);
+        require(take_int([&](int *out) { return clap_projection_dimension(model.get(), out); }) ==
+                    fixture.at("projection_dim"),
+                "projection dimension");
+        clap::RuntimeOptions private_options;
+        private_options.threads = options.threads;
+        if (argc == 4)
+            private_options.activation_precision = clap::ActivationPrecision::F32;
         const float tolerance = fixture.value("embedding_tolerance", 8e-5f);
         for (const auto &test : fixture.at("tokenizer_cases")) {
-            const auto ids = model.tokenize(test.at("text").get<std::string>(), test.value("max_length", 512));
+            const auto ids = take_buffer<int>([&](int **out, size_t *count) {
+                const std::string &api_text = test.at("text").get<std::string>();
+                return clap_tokenize(model.get(), api_text.c_str(), test.value("max_length", 512), out, count);
+            });
             require(ids == test.at("ids").get<std::vector<int>>(),
                     "tokenizer mismatch: " + test.at("text").get<std::string>());
         }
         for (const auto &test : fixture.at("text_cases")) {
-            compare(model.encode_text(test.at("ids").get<std::vector<int>>()),
+            compare(take_buffer<float>([&](float **out, size_t *count) {
+                        const std::vector<int> &api_ids = test.at("ids").get<std::vector<int>>();
+                        return clap_encode_tokens(model.get(), api_ids.data(), api_ids.size(), out, count);
+                    }),
                     test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
             if (test.contains("utf8"))
-                compare(model.encode_text(test.at("utf8").get<std::string>()),
+                compare(take_buffer<float>([&](float **out, size_t *count) {
+                            const std::string &api_text = test.at("utf8").get<std::string>();
+                            return clap_encode_text(model.get(), api_text.c_str(), out, count);
+                        }),
                         test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
         }
         for (const auto &test : fixture.at("audio_cases"))
             compare(clap::detail::FeatureTestAccess::encode(argv[1], test.at("features").get<std::vector<float>>(),
-                                                            test.at("frames"), options),
+                                                            test.at("frames"), private_options),
                     test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
 
         bool rejected = false;
