@@ -1,4 +1,4 @@
-"""Type declarations for the native clap.cpp extension."""
+"""Type declarations for the ctypes-backed clap.cpp API."""
 
 from collections.abc import Sequence
 from os import PathLike

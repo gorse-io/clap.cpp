@@ -12,14 +12,17 @@ pip install "clap-cpp[vulkan]" # Vulkan
 The extras install version-matched `clap-cpp-cuda`, `clap-cpp-rocm` or
 `clap-cpp-vulkan` wheels. They do not change compiler flags during pip install.
 The public import remains `from clap_cpp import CLAP`. With one GPU backend
-installed it is selected automatically; otherwise the CPU extension is used.
+installed it is selected automatically; otherwise the CPU native library is used.
 Set `CLAP_CPP_BACKEND=cpu|cuda|rocm|vulkan` before importing to select explicitly.
 If multiple GPU packages are installed, explicit selection is required.
 `clap_cpp.backend` reports the selected compiled backend, not device availability.
-A GPU extension that cannot load raises an error rather than silently loading
-CPU; `CLAP_CPP_BACKEND=cpu` explicitly uses the bundled CPU extension.
+A GPU native library that cannot load raises an error rather than silently loading
+CPU; `CLAP_CPP_BACKEND=cpu` explicitly uses the bundled CPU library.
 
-Release wheels cover CPython 3.9–3.14 (not free-threaded builds):
+The wrapper uses standard-library `ctypes` to load the bundled C API library;
+there is no pybind11 bridge or CPython extension. Platform wheels are tagged
+`py3-none` and can be shared across supported Python versions (Python 3.9+).
+Free-threaded interpreter builds are not currently part of release validation:
 
 | Backend | Platforms | Required system runtime |
 | --- | --- | --- |
@@ -78,9 +81,13 @@ python -m pip install ./python
 ```
 
 Requires Python 3.9+, a C++20 compiler and CMake 3.20+. The build backend installs
-CMake/Ninja if necessary. The CPU package has no runtime Python dependencies;
-PyTorch, FFmpeg, a separate `clap` executable and GPU drivers are not required.
-The extension statically links the CPU runtime and bundled ICU. The base package
+CMake/Ninja if necessary. Python packaging invokes the repository-root CMake
+entrypoint in core-only mode; there is no separate `python/CMakeLists.txt`.
+That mode skips CLI/HTTP dependencies and test-fixture discovery. The CPU package
+has no runtime Python dependencies; PyTorch, FFmpeg, a separate `clap` executable
+and GPU drivers are not required.
+The package-local shared library statically links ggml and bundled ICU.
+Building it does not require Python development headers or pybind11. The base package
 disables GPU backends and OpenMP. x86 wheels use baseline instructions rather
 than the build machine's instruction set. No pretrained weights are downloaded
 automatically.
@@ -120,7 +127,9 @@ dependencies, then builds one canonical CPU source distribution. CPU wheels are
 built and tested from that archive using the existing cibuildwheel platform matrix.
 The GPU source distributions are generated from the same CPU archive, and GPU
 wheels are built from those source distributions with sccache for C, C++, CUDA
-and HIP compilation. GPU wheels are not runtime-tested by this workflow.
+and HIP compilation. Each GPU backend/platform builds one Python-ABI-independent
+wheel rather than rebuilding for every CPython version. GPU wheels are not
+runtime-tested by this workflow.
 Cache storage reuses the repository's
 `SCCACHE_BUCKET`, `SCCACHE_ENDPOINT`, `SCCACHE_REGION` variables and
 `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` secrets. Linux wheels are repaired

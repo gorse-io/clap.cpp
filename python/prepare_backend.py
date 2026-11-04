@@ -21,7 +21,9 @@ def prepare(backend, destination):
     if not entries:
         raise ValueError("Missing native source manifest")
     destination.mkdir(parents=True, exist_ok=False)
-    ignore = shutil.ignore_patterns(".git", "__pycache__", "build", "dist")
+    # Preserve upstream source directories named build/dist too: the pinned
+    # manifest, not generic directory names, defines the source snapshot.
+    ignore = shutil.ignore_patterns(".git", "__pycache__")
     for original, target in entries:
         # Inside a base sdist the manifest's ../ paths have already been moved.
         origin = source / target if (source / "native").is_dir() else source / original
@@ -31,15 +33,22 @@ def prepare(backend, destination):
             shutil.copytree(origin, output, ignore=ignore)
         else:
             shutil.copy2(origin, output)
-    for name in ("CMakeLists.txt", "bindings.cpp", "README.md"):
-        shutil.copy2(source / name, destination / name)
+    shutil.copy2(source / "README.md", destination / "README.md")
     (destination / package).mkdir()
+    # All backends use the identical ctypes loader, relative to their own package.
+    for name in ("clap.py", "clap.pyi", "py.typed"):
+        shutil.copy2(source / "clap_cpp" / name, destination / package / name)
     (destination / package / "__init__.py").write_text(
         f'"""Native {backend} runtime; import clap_cpp for the public API."""\n', encoding="utf-8"
     )
+    # Inherit all portable CPU/dependency switches from the canonical project;
+    # only the selected GGML backend and runtime installation namespace differ.
+    defines = metadata.split("[tool.scikit-build.cmake.define]", 1)[1].split("\n[", 1)[0]
+    defines = defines.replace('"clap_cpp"', f'"{package}"')
+    defines = defines.replace(f'GGML_{cmake_backend} = "OFF"', f'GGML_{cmake_backend} = "ON"')
     (destination / "pyproject.toml").write_text(
         f'''[build-system]
-requires = ["scikit-build-core>=1.0", "pybind11>=2.13"]
+requires = ["scikit-build-core>=1.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -54,12 +63,15 @@ dependencies = []
 [tool.scikit-build]
 minimum-version = "build-system.requires"
 wheel.packages = ["{package}"]
-install.components = ["python"]
-build.targets = ["_clap_cpp"]
+wheel.py-api = "py3"
+install.components = ["runtime"]
+cmake.source-dir = "native"
+cmake.version = ">=3.20"
+# Preserve the exact pinned source snapshot, without upstream .gitignore rules.
+sdist.inclusion-mode = "manual"
 sdist.exclude = ["**/.git", "**/__pycache__/**", "dist/**", "build/**"]
 
-[tool.scikit-build.cmake.define]
-CLAP_PYTHON_BACKEND = "{cmake_backend}"
+[tool.scikit-build.cmake.define]{defines}
 ''', encoding="utf-8"
     )
     print(f"Prepared clap-cpp-{backend} {version} in {destination}")

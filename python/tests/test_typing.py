@@ -9,7 +9,7 @@ import sys
 def test_installed_package_has_typing_metadata():
     package = files("clap_cpp")
     assert package.joinpath("py.typed").is_file()
-    assert package.joinpath("_clap_cpp.pyi").is_file()
+    assert package.joinpath("clap.pyi").is_file()
 
 
 def test_public_api_types():
