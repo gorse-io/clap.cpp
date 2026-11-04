@@ -12,6 +12,8 @@
         }                                                                                                              \
     } while (0)
 
+_Static_assert(_Generic(((clap_device *)0)->gpu, _Bool: 1, default: 0), "device gpu must be bool");
+
 int main(int argc, char **argv) {
     CLAP *model = NULL;
     clap_runtime_options options = clap_default_options();

@@ -1,6 +1,7 @@
 #ifndef CLAP_H
 #define CLAP_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 /* Windows DLL clients define CLAP_SHARED; static clients need no defines. */
@@ -36,7 +37,7 @@ typedef struct clap_runtime_options {
 typedef struct clap_device {
     const char *name;
     const char *description;
-    int gpu;
+    bool gpu;
 } clap_device;
 
 typedef struct clap_audio_frames {

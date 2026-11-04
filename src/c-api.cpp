@@ -129,7 +129,7 @@ clap_status clap_available_devices(clap_device **out, size_t *count) {
             for (size_t i = 0; i < native.size(); ++i) {
                 devices[i].name = copy_string(native[i].name);
                 devices[i].description = copy_string(native[i].description);
-                devices[i].gpu = native[i].gpu ? 1 : 0;
+                devices[i].gpu = native[i].gpu;
             }
         } catch (...) {
             clap_free_devices(devices, native.size());

@@ -1,4 +1,4 @@
-"""Run the strict C99 consumer against generated waveform-capable weights."""
+"""Run the strict C11 consumer against generated waveform-capable weights."""
 import subprocess
 import sys
 import tempfile
