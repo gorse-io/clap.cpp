@@ -1,23 +1,47 @@
 {
   "name": "clap-cpp",
   "version": "0.1.0",
-  "description": "Synchronous Node-API CPU bindings for clap.cpp audio and text embeddings",
+  "description": "Synchronous Koffi CPU bindings for clap.cpp audio and text embeddings",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "git+https://github.com/gorse-io/clap.cpp.git", "directory": "node" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gorse-io/clap.cpp.git",
+    "directory": "node"
+  },
   "main": "index.js",
   "types": "index.d.ts",
-  "engines": { "node": ">=22.0.0" },
-  "files": ["index.js", "index.d.ts", "bindings.cpp", "CMakeLists.txt", "scripts", "native", "native-tests", "test/addon.test.js", "test/surface.test.js", "test/packaging.test.js", "test/generate-fixtures.py", "test/types.ts", "test/tsconfig.json", "README.md", "LICENSE", "THIRD_PARTY_LICENSES"],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "scripts",
+    "native",
+    "native-tests",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES",
+    "test/*.test.js",
+    "test/generate-fixtures.py",
+    "test/types.ts",
+    "test/tsconfig.json"
+  ],
   "scripts": {
-    "install": "cmake-js compile",
-    "build": "cmake-js compile",
-    "rebuild": "cmake-js rebuild",
+    "install": "node scripts/build.js",
+    "build": "node scripts/build.js",
+    "rebuild": "node scripts/build.js --rebuild",
     "test:fixtures": "python3 test/generate-fixtures.py",
-    "test": "node --test test/addon.test.js test/surface.test.js",
+    "test": "node --test test/addon.test.js test/surface.test.js test/ffi.test.js",
     "test:packaging": "node --test test/packaging.test.js",
     "test:types": "tsc -p test/tsconfig.json",
     "prepack": "node scripts/vendor.js"
   },
-  "dependencies": { "cmake-js": "^8.0.0", "node-addon-api": "^8.9.2" },
-  "devDependencies": { "typescript": "^5.9.3", "@types/node": "^22.0.0" }
+  "dependencies": {
+    "koffi": "^3.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  }
 }

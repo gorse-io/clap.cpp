@@ -6,6 +6,19 @@
 npm install clap-cpp
 ```
 
+Requires Node.js 22+, CMake 3.20+ and a C++20 compiler. Installation builds the
+package-local shared `clap` library using the repository-root CMake graph in
+core-only mode. Source packages include pinned native sources and licenses;
+no Git checkout, Node.js development headers, Python, or FFmpeg are needed to
+compile the library.
+
+The JavaScript wrapper calls the public C API through Koffi. There is no
+clap.cpp-specific C++ Node addon or separate `node/CMakeLists.txt`. Koffi remains
+a native FFI dependency; this is not a native-code-free package. The shared core
+statically links bundled ggml and ICU, with GPU backends and OpenMP disabled for
+the CPU package. It is loaded only from this package's own runtime directory,
+without searching for a system `libclap`.
+
 ## Usage
 
 ```js

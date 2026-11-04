@@ -9,3 +9,8 @@ test('only CLAP and its encoding/lifecycle methods are public', () => {
   assert.deepEqual(Object.getOwnPropertyNames(binding.CLAP.prototype).sort(),
     ['constructor', 'encodeAudio', 'encodeText', 'close'].sort());
 });
+
+test('CLAP is a JavaScript class with no callable constructor', () => {
+  assert.match(Function.prototype.toString.call(binding.CLAP), /^class CLAP\s*\{/);
+  assert.throws(() => binding.CLAP('missing.gguf'), TypeError);
+});

@@ -67,6 +67,100 @@ test('encodeText rejects a model closed by a reentrant token array getter', () =
   assert.equal(child.status, 0, child.stderr);
   assert.match(child.stdout, /reentrant close rejected safely/);
 });
+test('token Proxy length and index traps finish before borrowing a handle', () => {
+  for (const key of ['length', '0']) {
+    const m = new CLAP(modelPath, 1);
+    const ids = new Proxy([0, 2], { get(target, property, receiver) {
+      if (property === key) m.close();
+      return Reflect.get(target, property, receiver);
+    } });
+    assert.throws(() => m.encodeText(ids), /closed/i);
+    m.close();
+  }
+});
+test('typed array conversion ignores user getters, iterators and species', () => {
+  const m = new CLAP(modelPath, 1);
+  try {
+    const ids = new Int32Array([0, 2]);
+    const waveform = new Float32Array(pcm);
+    for (const value of [ids, waveform]) {
+      for (const key of ['length', 'buffer', 'byteOffset', 'constructor', Symbol.iterator]) {
+        Object.defineProperty(value, key, { get() { throw new Error('must not run a user getter'); } });
+      }
+    }
+    vector(m.encodeText(ids), 3);
+    vector(m.encodeAudio(waveform, 24000), 3);
+    assert.throws(() => m.encodeText(new Proxy(ids, {})), TypeError);
+    assert.throws(() => m.encodeAudio(new Proxy(waveform, {})), TypeError);
+  } finally { m.close(); }
+});
+test('instances cannot be copied or impersonated to borrow native ownership', () => {
+  const m = new CLAP(modelPath, 1);
+  try {
+    assert.deepEqual(Reflect.ownKeys(m), []);
+    for (const receiver of [{ ...m }, Object.create(m), Object.create(CLAP.prototype),
+      new Proxy(m, {}), {}, null]) {
+      for (const [method, args] of [['close', []], ['encodeText', ['hello']], ['encodeAudio', [pcm]]]) {
+        assert.throws(() => Reflect.apply(CLAP.prototype[method], receiver, args), TypeError);
+      }
+    }
+    vector(m.encodeText('hello'), 3);
+  } finally { m.close(); }
+});
+test('explicit close and garbage collection keep separate owners and returned vectors safe', () => {
+  const entry = require.resolve(root);
+  const koffiPath = require.resolve('koffi', { paths: [path.dirname(entry)] });
+  const child = spawnSync(process.execPath, ['--expose-gc', '-e', `
+    const assert = require('node:assert/strict');
+    const koffi = require(${JSON.stringify(koffiPath)});
+    const load = koffi.load;
+    let destroys = 0;
+    koffi.load = (...args) => {
+      const lib = load(...args);
+      return { func(...declaration) {
+        const fn = lib.func(...declaration);
+        if (declaration[0] !== 'clap_destroy') return fn;
+        return pointer => { ++destroys; return fn(pointer); };
+      } };
+    };
+    const { CLAP } = require(${JSON.stringify(entry)});
+    (async () => {
+      const survivor = new CLAP(${JSON.stringify(modelPath)}, 1);
+      const vectors = [];
+      const weak = [];
+      for (let i = 0; i < 12; ++i) {
+        let model = new CLAP(${JSON.stringify(modelPath)}, 1);
+        vectors.push(model.encodeText('hello'));
+        weak.push(new WeakRef(model));
+        if (i % 2 === 0) { model.close(); model.close(); }
+        model = null;
+      }
+      assert.equal(destroys, 6, 'close destroys each explicitly closed owner exactly once');
+      let collected = false;
+      for (let i = 0; i < 100; ++i) {
+        await new Promise(resolve => setImmediate(resolve));
+        global.gc();
+        await new Promise(resolve => setImmediate(resolve));
+        if (weak.every(ref => ref.deref() === undefined)) { collected = true; break; }
+      }
+      assert.ok(collected, 'models should be collectible (registry must not retain owners)');
+      global.gc();
+      for (let i = 0; i < 100 && destroys !== 12; ++i) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      assert.equal(destroys, 12, 'GC destroys only the remaining unclosed owners');
+      assert.deepEqual(survivor.encodeText('hello'), vectors[0]);
+      survivor.close(); survivor.close();
+      assert.equal(destroys, 13);
+      vectors.forEach(v => assert.ok(v instanceof Float32Array && v.every(Number.isFinite)));
+      console.log('GC and close owners remain independent');
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+  `], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(child.error, undefined);
+  assert.equal(child.signal, null, child.stderr);
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /GC and close owners remain independent/);
+});
 test('CLAP encodes waveforms and audio paths with automatic resampling', () => {
   const m = new CLAP(modelPath, 1);
   vector(m.encodeAudio(pcm, 24000), 3);
@@ -94,7 +188,7 @@ test('strict method input validation and native exceptions', () => {
     assert.throws(() => m.encodeAudio(pcm, 24000, offset));
     assert.throws(() => m.encodeAudio(path.join(fixtures, 'stereo.wav'), offset));
   }
-  for (const x of [null, undefined, {}, 3, [], [-1], [0.5], [NaN], [Infinity], [2147483648],
+  for (const x of [null, undefined, {}, 3, 'a\0b', [], [-1], [0.5], [NaN], [Infinity], [2147483648],
     ['1'], new Float32Array([1]), new Int32Array([-1])]) assert.throws(() => m.encodeText(x));
   assert.throws(() => m.encodeText([999999]));
   for (const p of ['', 'a\0b', path.join(fixtures, 'missing.wav'), modelPath]) assert.throws(() => m.encodeAudio(p));
