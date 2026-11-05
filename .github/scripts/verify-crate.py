@@ -23,8 +23,8 @@ def sources(path):
             stream = archive.extractfile(member)
             assert stream is not None
             result[name] = stream.read()
-    if "Cargo.toml" not in result or "vendor/include/clap.h" not in result:
-        raise ValueError("Missing package manifest or vendored native sources")
+    if "Cargo.toml" not in result or "include/clap.h" not in result:
+        raise ValueError("Missing package manifest or native sources")
     return result
 
 

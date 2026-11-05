@@ -48,8 +48,8 @@ only exercised when a release is published and registry authorization is ready.
 
 ```sh
 python -m unittest discover -s .github/scripts -v
-python rust/scripts/vendor.py
-cargo package --manifest-path rust/Cargo.toml --allow-dirty
+python -m unittest discover -s rust/tests -p test_package.py -v
+cargo package --allow-dirty -j 3
 cd node
 npm ci
 npm run test:fixtures
@@ -64,8 +64,8 @@ npm run test:fixtures
 npm test
 ```
 
-The checkout must contain the pinned initialized submodules. The Rust vendoring
-step copies the required sources and licenses into ignored generated directories;
-see `rust/README.md`. Node's `prepack` does the equivalent. Do not commit generated
-native trees or archives. CMake, a C++20 compiler and Python are needed for local
+The checkout must contain the pinned initialized submodules. The repository-root
+Rust package includes the original native sources and upstream licenses directly;
+no staging or vendoring step is needed (see `rust/README.md`). Node's `prepack`
+still stages its own native tree. Do not commit generated native trees or archives. CMake, a C++20 compiler and Python are needed for local
 checks; install NumPy for Node's numerical oracle.

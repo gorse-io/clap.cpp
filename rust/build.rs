@@ -78,12 +78,7 @@ fn main() {
         )
         .unwrap_or_else(|error| panic!("{error}"));
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let vendored = manifest.join("vendor");
-    let root = if vendored.join("include/clap.h").is_file() {
-        vendored
-    } else {
-        manifest.parent().unwrap().to_path_buf()
-    };
+    let root = manifest.clone();
     for required in [
         "CMakeLists.txt",
         "cmake/static-development.cmake",
@@ -95,7 +90,7 @@ fn main() {
         "thirdparty/miniaudio/miniaudio.h",
     ] {
         assert!(root.join(required).is_file(),
-            "clap-cpp native source missing: {required}. In a Git checkout run git submodule update --init --recursive, then python3 rust/scripts/vendor.py before cargo package/publish. Registry archives must contain vendor/ (see README.md).");
+            "clap-cpp native source missing: {required}. In a Git checkout run git submodule update --init --recursive. Registry archives must contain the original native source trees (see rust/README.md).");
     }
     for path in [
         "CMakeLists.txt",
@@ -447,19 +442,9 @@ target_link_libraries(clap-link-probe PRIVATE clap)
             .unwrap()
             .parent()
             .unwrap()
-            .join("vendor/cmake/cargo-link.cmake");
-        let script = if script.is_file() {
-            script
-        } else {
-            PathBuf::from(file!())
-                .canonicalize()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("cmake/cargo-link.cmake")
-        };
+            .parent()
+            .unwrap()
+            .join("cmake/cargo-link.cmake");
         run(Command::new("cmake")
             .arg(format!("-DCLAP_LINK_BUILD={}", build.display()))
             .arg(format!("-DCLAP_LINK_MANIFEST={}", manifest.display()))

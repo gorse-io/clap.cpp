@@ -21,7 +21,7 @@ class CrateSourcesTest(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(content))
 
     def test_repackaging_metadata_only(self):
-        files = {"Cargo.toml": "normalized", "vendor/include/clap.h": "native",
+        files = {"Cargo.toml": "normalized", "include/clap.h": "native",
                  "Cargo.toml.orig": "original", ".cargo_vcs_info.json": "revision"}
         with tempfile.TemporaryDirectory() as directory:
             a, b = Path(directory) / "a.crate", Path(directory) / "b.crate"
@@ -30,7 +30,7 @@ class CrateSourcesTest(unittest.TestCase):
             del files[".cargo_vcs_info.json"]
             self.archive(b, files)
             crate.verify(a, b)
-            for name in ("Cargo.toml", "vendor/include/clap.h"):
+            for name in ("Cargo.toml", "include/clap.h"):
                 changed = dict(files, **{name: "modified"})
                 self.archive(b, changed)
                 with self.subTest(name=name), self.assertRaises(ValueError):

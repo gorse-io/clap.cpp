@@ -28,7 +28,7 @@ def release_version(tag):
 
 def update(root, tag):
     version = release_version(tag)
-    manifest = root / "rust/Cargo.toml"
+    manifest = root / "Cargo.toml"
     text = manifest.read_text()
     text, count = re.subn(r'^version = "[^"]+"$', f'version = "{version}"', text,
                           count=0, flags=re.MULTILINE)

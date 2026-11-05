@@ -9,7 +9,7 @@ fn fixtures() -> &'static PathBuf {
             .join(format!("fixtures-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let status = Command::new(if cfg!(windows) { "python" } else { "python3" })
-            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/generate.py"))
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rust/tests/generate.py"))
             .arg(&dir)
             .status()
             .unwrap();

@@ -59,11 +59,9 @@ def text_reference(ids):
 import sys
 import wave
 
-crate = Path(__file__).resolve().parents[1]
-source = crate / 'vendor/test-data/tiny_models.py'
-if not source.is_file():
-    source = crate.parent / 'python/tests/tiny_models.py'
-# Do not add bytecode artifacts to the vendored source archive during tests.
+crate = Path(__file__).resolve().parents[2]
+source = crate / 'python/tests/tiny_models.py'
+# Keep the packaged source tree unchanged during fixture generation.
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('tiny_models', source)
 tiny = importlib.util.module_from_spec(spec)
