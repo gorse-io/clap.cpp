@@ -23,9 +23,8 @@ class ReleaseVersionTest(unittest.TestCase):
     def test_updates_manifests_and_lockfile(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "rust").mkdir()
             (root / "node").mkdir()
-            cargo = root / "rust/Cargo.toml"
+            cargo = root / "Cargo.toml"
             cargo.write_text('[package]\nname = "clap-cpp"\nversion = "0.1.0"\n')
             (root / "node/package.json").write_text('{"name":"clap-cpp","version":"0.1.0"}')
             lock = {"version": "0.1.0", "packages": {"": {"version": "0.1.0"}, "node_modules/example": {"version": "2.0.0"}}}

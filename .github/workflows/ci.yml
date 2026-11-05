@@ -74,8 +74,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
-      CARGO_BUILD_JOBS: 4
-      CARGO_TARGET_DIR: ${{ github.workspace }}/rust/target
+      CARGO_BUILD_JOBS: 3
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,35 +87,36 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-          cache-workspaces: rust -> target
+          cache-workspaces: . -> target
           build-warnings: ""
       - name: Build configuration tests
         shell: bash
         run: |
-          mkdir -p rust/target
-          rustc --edition=2021 --test rust/build.rs -o rust/target/build-script-tests
-          rust/target/build-script-tests
+          mkdir -p target
+          rustc --edition=2021 --test rust/build.rs -o target/build-script-tests
+          target/build-script-tests
       - name: Format
-        run: cargo fmt --manifest-path rust/Cargo.toml -- --check
+        run: cargo fmt -- --check
       - name: Lint
-        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
       - name: Real CPU inference and safety tests
-        run: cargo test --manifest-path rust/Cargo.toml --all-targets
+        run: cargo test --all-targets
       - name: Compile-fail thread-safety contract
-        run: cargo test --manifest-path rust/Cargo.toml --doc
-      - name: Test vendoring guards
-        run: python -m unittest discover -s rust/tests -p test_vendor.py -v
-      - name: Vendor pinned native sources and licenses
-        run: python rust/scripts/vendor.py
+        run: cargo test --doc
+      - name: Check package inventory and pinned sources
+        run: python -m unittest discover -s rust/tests -p test_package.py -v
       - name: Verify standalone package build
-        run: cargo package --manifest-path rust/Cargo.toml --allow-dirty
+        run: cargo package --allow-dirty
       - name: Test standalone package inference and safety
         shell: bash
         run: |
-          version=$(python -c 'import tomllib; print(tomllib.load(open("rust/Cargo.toml", "rb"))["package"]["version"])')
-          manifest="rust/target/package/clap-cpp-${version}/Cargo.toml"
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          manifest="target/package/clap-cpp-${version}/Cargo.toml"
           cargo test --manifest-path "$manifest" --all-targets --locked
           cargo test --manifest-path "$manifest" --doc --locked
+          python -m unittest discover -s "$(dirname "$manifest")/rust/tests" -p test_package.py -v
+      - name: Recheck checkout after package verification
+        run: cargo test --all-targets --locked
 
   rust-gpu:
     strategy:
@@ -129,7 +130,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 3
-      CARGO_TARGET_DIR: ${{ github.workspace }}/rust/target
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v4
         with:
@@ -140,7 +141,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
-          cache-workspaces: rust -> target
+          cache-workspaces: . -> target
           build-warnings: ""
       - name: Install Vulkan SDK and software driver
         if: matrix.feature == 'vulkan'
@@ -152,21 +153,19 @@ jobs:
           echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
           echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
           echo "GGML_VK_VISIBLE_DEVICES=0" >> "$GITHUB_ENV"
-      - name: Vendor pinned native sources and licenses
-        run: python rust/scripts/vendor.py
       - name: Verify GPU source package builds and links
-        run: cargo package --manifest-path rust/Cargo.toml --allow-dirty --features ${{ matrix.feature }}
+        run: cargo package --allow-dirty --features ${{ matrix.feature }}
       - name: Test standalone GPU package inference and safety
         shell: bash
         run: |
-          version=$(python -c 'import tomllib; print(tomllib.load(open("rust/Cargo.toml", "rb"))["package"]["version"])')
-          manifest="rust/target/package/clap-cpp-${version}/Cargo.toml"
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          manifest="target/package/clap-cpp-${version}/Cargo.toml"
           cargo test --manifest-path "$manifest" --features ${{ matrix.feature }} --all-targets --locked
           cargo test --manifest-path "$manifest" --features ${{ matrix.feature }} --doc --locked
       - name: GPU-enabled text and audio inference
-        run: cargo test --manifest-path rust/Cargo.toml --features ${{ matrix.feature }} --all-targets
+        run: cargo test --features ${{ matrix.feature }} --all-targets
       - name: GPU-enabled documentation tests
-        run: cargo test --manifest-path rust/Cargo.toml --features ${{ matrix.feature }} --doc
+        run: cargo test --features ${{ matrix.feature }} --doc
 
   python:
     strategy:

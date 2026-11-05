@@ -1,0 +1,44 @@
+[package]
+name = "clap-cpp"
+version = "0.1.0"
+edition = "2021"
+description = "Safe Rust bindings for clap.cpp with optional GPU backends"
+license = "Apache-2.0"
+repository = "https://github.com/gorse-io/clap.cpp"
+readme = "rust/README.md"
+build = "rust/build.rs"
+autotests = false
+autoexamples = false
+# Package the original native trees directly, including initialized submodules.
+include = [
+    "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/rust/README.md",
+    "/rust/build.rs", "/rust/src/**", "/rust/examples/*.rs",
+    "/rust/tests/*.rs", "/rust/tests/ffi/*.rs", "/rust/tests/*.py",
+    "/python/tests/tiny_models.py", "/CMakeLists.txt", "/include/**", "/src/**", "/cmake/**",
+    "/ggml/CMakeLists.txt", "/ggml/cmake/**", "/ggml/include/**", "/ggml/src/**", "/ggml/LICENSE",
+    "/thirdparty/json/CMakeLists.txt", "/thirdparty/json/cmake/**",
+    "/thirdparty/json/include/**", "/thirdparty/json/nlohmann_json.natvis", "/thirdparty/json/LICENSE.MIT",
+    "/thirdparty/miniaudio/miniaudio.h", "/thirdparty/miniaudio/LICENSE", "/thirdparty/icu/LICENSE",
+    "/thirdparty/icu/icu4c/source/common/**", "/thirdparty/icu/icu4c/source/i18n/**",
+    "/thirdparty/icu/icu4c/source/stubdata/**",
+]
+
+[features]
+# Native clap/ggml archives remain static; GPU SDK runtimes may be shared.
+default = []
+cuda = []
+vulkan = []
+rocm = []
+metal = []
+
+[lib]
+name = "clap_cpp"
+path = "rust/src/lib.rs"
+
+[[test]]
+name = "bindings"
+path = "rust/tests/bindings.rs"
+
+[[example]]
+name = "embed"
+path = "rust/examples/embed.rs"

@@ -38,8 +38,7 @@ int main(int argc, char **argv) {
         check(clap_create(argv[1], &options, &raw));
         Model model(raw, clap_destroy);
         require(clap_audio_sample_rate(model.get()) == 24000, "MuQ rate");
-        require(clap_projection_dimension(model.get()) == fixture.at("hidden_size"),
-                "MuQ width");
+        require(clap_projection_dimension(model.get()) == fixture.at("hidden_size"), "MuQ width");
         const float tolerance = fixture.at("tolerance");
         for (const auto &test : fixture.at("waveform_cases")) {
             const auto wave = test.at("waveform").get<std::vector<float>>();

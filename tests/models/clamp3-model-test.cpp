@@ -44,8 +44,7 @@ int main(int argc, char **argv) {
         CLAP *raw = nullptr;
         check(clap_create(argv[1], &options, &raw));
         Model model(raw, clap_destroy);
-        require(clap_projection_dimension(model.get()) == fixture.at("projection_dim"),
-                "projection dimension");
+        require(clap_projection_dimension(model.get()) == fixture.at("projection_dim"), "projection dimension");
         clap::RuntimeOptions private_options;
         private_options.threads = options.threads;
         if (argc == 4)
