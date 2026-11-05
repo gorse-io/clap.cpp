@@ -1,5 +1,5 @@
 """Check the real Cargo inventory in checkouts and extracted source packages."""
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import subprocess
 import unittest
 
@@ -26,11 +26,21 @@ def git(*args, cwd=ROOT):
     return subprocess.check_output(["git", *args], cwd=cwd, text=True).strip()
 
 
+def package_paths(output):
+    # Cargo --list displays host-native separators, while archive keys are POSIX.
+    return {PureWindowsPath(name).as_posix() for name in output.splitlines()}
+
+
 class PackageTests(unittest.TestCase):
+    def test_inventory_paths_are_platform_independent(self):
+        expected = {"Cargo.toml", "rust/src/lib.rs", "thirdparty/icu/LICENSE"}
+        self.assertEqual(package_paths("Cargo.toml\nrust/src/lib.rs\nthirdparty/icu/LICENSE\n"), expected)
+        self.assertEqual(package_paths("Cargo.toml\r\nrust\\src\\lib.rs\r\nthirdparty\\icu\\LICENSE\r\n"), expected)
+
     def test_root_package_inventory(self):
-        files = set(subprocess.check_output(
+        files = package_paths(subprocess.check_output(
             ["cargo", "package", "--manifest-path", str(ROOT / "Cargo.toml"),
-             "--list", "--allow-dirty", "--offline"], cwd=ROOT, text=True).splitlines())
+             "--list", "--allow-dirty", "--offline"], cwd=ROOT, text=True))
         self.assertFalse(set(REQUIRED) - files, f"missing: {set(REQUIRED) - files}")
         for name in files:
             parts = Path(name).parts
