@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "clap-cpp"
 version = "0.1.0"
-description = "CPU Python bindings for clap.cpp audio and text embeddings"
+description = "Python bindings for clap.cpp audio and text embeddings"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -49,6 +49,13 @@ sdist.exclude = ["**/.git", "**/__pycache__/**", "dist/**", "build/**"]
 if.from-sdist = true
 cmake.source-dir = "native"
 
+# The base macOS runtime includes Metal; other platforms remain CPU-only.
+[[tool.scikit-build.overrides]]
+if.platform-system = "^darwin$"
+inherit.cmake.define = "append"
+cmake.define.GGML_METAL = "ON"
+cmake.define.GGML_METAL_EMBED_LIBRARY = "ON"
+
 [tool.scikit-build.cmake.define]
 CLAP_BUILD_CLI = "OFF"
 BUILD_TESTING = "OFF"
@@ -61,6 +68,7 @@ CMAKE_INSTALL_BINDIR = "clap_cpp"
 GGML_NATIVE = "OFF"
 GGML_CPU = "ON"
 GGML_METAL = "OFF"
+GGML_METAL_EMBED_LIBRARY = "OFF"
 GGML_CUDA = "OFF"
 GGML_HIP = "OFF"
 GGML_VULKAN = "OFF"

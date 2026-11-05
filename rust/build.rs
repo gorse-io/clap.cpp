@@ -22,6 +22,15 @@ struct Backends {
 }
 
 impl Backends {
+    fn from_features(target_os: &str, enabled: impl Fn(&str) -> bool) -> Self {
+        Self {
+            cuda: enabled("CARGO_FEATURE_CUDA"),
+            vulkan: enabled("CARGO_FEATURE_VULKAN"),
+            rocm: enabled("CARGO_FEATURE_ROCM"),
+            metal: target_os == "macos" || enabled("CARGO_FEATURE_METAL"),
+        }
+    }
+
     fn validate(&self, os: &str, target_env: &str) -> Result<(), &'static str> {
         if os == "windows" && target_env != "msvc" {
             return Err("Windows requires the MSVC Rust toolchain");
@@ -64,18 +73,10 @@ fn validate_link_manifest(directives: &str) {
 }
 
 fn main() {
-    let enabled = |name| env::var_os(name).is_some();
-    let backends = Backends {
-        cuda: enabled("CARGO_FEATURE_CUDA"),
-        vulkan: enabled("CARGO_FEATURE_VULKAN"),
-        rocm: enabled("CARGO_FEATURE_ROCM"),
-        metal: enabled("CARGO_FEATURE_METAL"),
-    };
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let backends = Backends::from_features(&target_os, |name| env::var_os(name).is_some());
     backends
-        .validate(
-            &env::var("CARGO_CFG_TARGET_OS").unwrap(),
-            &env::var("CARGO_CFG_TARGET_ENV").unwrap(),
-        )
+        .validate(&target_os, &env::var("CARGO_CFG_TARGET_ENV").unwrap())
         .unwrap_or_else(|error| panic!("{error}"));
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let root = manifest.clone();
@@ -308,6 +309,32 @@ mod tests {
                 std::panic::catch_unwind(|| validate_link_manifest(directives)).is_err(),
                 "accepted invalid manifest: {directives:?}"
             );
+        }
+    }
+
+    #[test]
+    fn macos_target_enables_metal_without_a_feature() {
+        let backends = Backends::from_features("macos", |_| false);
+        assert_eq!(backends.cmake_definitions()[3], ("METAL", true));
+        assert!(backends.validate("macos", "").is_ok());
+    }
+
+    #[test]
+    fn non_macos_targets_remain_cpu_only_without_features() {
+        for os in ["linux", "windows"] {
+            assert!(Backends::from_features(os, |_| false)
+                .cmake_definitions()
+                .iter()
+                .all(|(_, on)| !on));
+        }
+    }
+
+    #[test]
+    fn explicit_metal_feature_remains_supported_and_platform_checked() {
+        for os in ["macos", "linux", "windows"] {
+            let backends = Backends::from_features(os, |name| name == "CARGO_FEATURE_METAL");
+            assert_eq!(backends.cmake_definitions()[3], ("METAL", true));
+            assert_eq!(backends.validate(os, "msvc").is_ok(), os == "macos");
         }
     }
 

@@ -50,6 +50,29 @@ def test_supported_checkout_and_sdist_source_dirs(tmp_path, monkeypatch):
             assert str(settings.cmake.source_dir) == expected
 
 
+@pytest.mark.parametrize("platform_name", ["darwin", "linux", "win32"])
+@pytest.mark.parametrize("from_sdist", [False, True])
+def test_platform_default_metal(tmp_path, monkeypatch, platform_name, from_sdist):
+    reader = pytest.importorskip("scikit_build_core.settings.skbuild_read_settings")
+    overrides = pytest.importorskip("scikit_build_core.settings.skbuild_overrides")
+    monkeypatch.chdir(tmp_path)
+    if from_sdist:
+        (tmp_path / "PKG-INFO").write_text("Metadata-Version: 2.1\n")
+    monkeypatch.setattr(overrides.sys, "platform", platform_name)
+    settings = reader.SettingsReader(metadata(), {}, state="wheel").settings
+    expected = "ON" if platform_name == "darwin" else "OFF"
+    assert settings.cmake.define["GGML_METAL"] == expected
+    assert settings.cmake.define["GGML_METAL_EMBED_LIBRARY"] == expected
+    assert settings.cmake.define["GGML_CPU"] == "ON"
+    assert settings.cmake.define["CLAP_BUILD_CLI"] == "OFF"
+    assert settings.cmake.define["CMAKE_INSTALL_LIBDIR"] == "clap_cpp"
+    assert str(settings.cmake.source_dir) == ("native" if from_sdist else "..")
+    settings = reader.SettingsReader(
+        metadata(), {"cmake.define.GGML_METAL": "OFF"}, state="wheel"
+    ).settings
+    assert settings.cmake.define["GGML_METAL"] == "OFF"
+
+
 @pytest.mark.parametrize("from_sdist", [False, True])
 @pytest.mark.parametrize("backend,flag", [("cuda", "CUDA"), ("rocm", "HIP"), ("vulkan", "VULKAN")])
 def test_backend_projects_share_root_manifest(tmp_path, from_sdist, backend, flag):

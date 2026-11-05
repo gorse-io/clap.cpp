@@ -6,7 +6,7 @@
 ## Install
 
 ```sh
-pip install clap-cpp           # CPU
+pip install clap-cpp           # Metal on macOS, CPU elsewhere
 pip install "clap-cpp[cuda]"   # NVIDIA CUDA
 pip install "clap-cpp[rocm]"   # AMD ROCm
 pip install "clap-cpp[vulkan]" # Vulkan
@@ -15,12 +15,17 @@ pip install "clap-cpp[vulkan]" # Vulkan
 The extras install version-matched `clap-cpp-cuda`, `clap-cpp-rocm` or
 `clap-cpp-vulkan` wheels. They do not change compiler flags during pip install.
 The public import remains `from clap_cpp import CLAP`. With one GPU backend
-installed it is selected automatically; otherwise the CPU native library is used.
+installed it is selected automatically; otherwise the base native library is used
+(Metal on macOS, CPU elsewhere).
 Set `CLAP_CPP_BACKEND=cpu|cuda|rocm|vulkan` before importing to select explicitly.
 If multiple GPU packages are installed, explicit selection is required.
 `clap_cpp.backend` reports the selected compiled backend, not device availability.
 A GPU native library that cannot load raises an error rather than silently loading
-CPU; `CLAP_CPP_BACKEND=cpu` explicitly uses the bundled CPU library.
+the base runtime; `CLAP_CPP_BACKEND=cpu` explicitly uses the bundled base library.
+For compatibility, its package selector and `clap_cpp.backend` value remain `cpu`
+even on macOS. This selects a library, not the execution device: set
+`CLAP_DEVICE=cpu` before loading a model to force CPU execution, or
+`CLAP_METAL=0` to disable automatic Metal selection.
 
 The wrapper uses standard-library `ctypes` to load the bundled C API library;
 there is no pybind11 bridge or CPython extension. Platform wheels are tagged
@@ -29,15 +34,16 @@ Free-threaded interpreter builds are not currently part of release validation:
 
 | Backend | Platforms | Required system runtime |
 | --- | --- | --- |
-| CPU | Linux x86_64/ARM64 (glibc minimum recorded in wheel tags), macOS ARM64, Windows x86_64 | None beyond platform runtimes |
+| Base (Metal on macOS, CPU elsewhere) | Linux x86_64/ARM64 (glibc minimum recorded in wheel tags), macOS ARM64, Windows x86_64 | None beyond platform runtimes |
 | CUDA | Linux x86_64 (glibc 2.35+) | CUDA 12.9-compatible NVIDIA driver; cudart/cuBLAS are statically linked |
 | ROCm | Linux x86_64 (glibc 2.35+) | ROCm 6.4.3 HIP, hipBLAS, rocBLAS (including library data), compatible AMD driver |
 | Vulkan | Linux x86_64 (glibc 2.39+) | System Vulkan loader and vendor ICD/driver |
 
 GPU wheels do not bundle drivers. ROCm libraries must be discoverable through
 `ldconfig` or `LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64`; keep rocBLAS's data
-installed in the matching ROCm prefix. No Windows GPU or macOS GPU wheels are
-built by this workflow. On other targets pip can build from a source archive,
+installed in the matching ROCm prefix. No Windows GPU wheels or separate macOS
+GPU wheels are built by this workflow; Metal is included in the base macOS wheel.
+On other targets pip can build from a source archive,
 but this requires the corresponding GPU SDK and compiler.
 
 GPU acceleration currently uses the native runtime's cached dense matrix
@@ -86,12 +92,15 @@ python -m pip install ./python
 Requires Python 3.9+, a C++20 compiler and CMake 3.20+. The build backend installs
 CMake/Ninja if necessary. Python packaging invokes the repository-root CMake
 entrypoint in core-only mode; there is no separate `python/CMakeLists.txt`.
-That mode skips CLI/HTTP dependencies and test-fixture discovery. The CPU package
+That mode skips CLI/HTTP dependencies and test-fixture discovery. The base package
 has no runtime Python dependencies; PyTorch, FFmpeg, a separate `clap` executable
 and GPU drivers are not required.
 The package-local shared library statically links ggml and bundled ICU.
 Building it does not require Python development headers or pybind11. The base package
-disables GPU backends and OpenMP. x86 wheels use baseline instructions rather
+enables Metal by default on macOS and embeds its shader library; other GPU
+backends and OpenMP remain disabled. To build without Metal on macOS, use
+`python -m pip install ./python -Ccmake.define.GGML_METAL=OFF`.
+x86 wheels use baseline instructions rather
 than the build machine's instruction set. No pretrained weights are downloaded
 automatically.
 
@@ -107,7 +116,7 @@ Replace `cuda` with `rocm` or `vulkan` as needed. The helper also works inside
 the unpacked base source distribution. Extra CMake options can be passed with
 pip's `-Ccmake.define.NAME=VALUE`, for example CUDA/HIP architecture lists when
 building on a machine without a GPU. GPU backend selection and wheel package
-names must match: do not enable a GPU backend directly on the base project.
+names must match for CUDA, ROCm and Vulkan; Metal is part of the base macOS project.
 
 ## Development and source distributions
 
