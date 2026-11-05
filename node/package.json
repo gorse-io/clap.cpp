@@ -1,7 +1,7 @@
 {
   "name": "clap-cpp",
   "version": "0.1.0",
-  "description": "Synchronous Koffi CPU bindings for clap.cpp audio and text embeddings",
+  "description": "Synchronous Koffi bindings for clap.cpp audio and text embeddings",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -32,7 +32,7 @@
     "build": "node scripts/build.js",
     "rebuild": "node scripts/build.js --rebuild",
     "test:fixtures": "python3 test/generate-fixtures.py",
-    "test": "node --test test/addon.test.js test/surface.test.js test/ffi.test.js",
+    "test": "node --test test/addon.test.js test/surface.test.js test/ffi.test.js test/build.test.js",
     "test:packaging": "node --test test/packaging.test.js",
     "test:types": "tsc -p test/tsconfig.json",
     "prepack": "node scripts/vendor.js"

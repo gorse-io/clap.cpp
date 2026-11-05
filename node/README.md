@@ -18,9 +18,11 @@ compile the library.
 The JavaScript wrapper calls the public C API through Koffi. There is no
 clap.cpp-specific C++ Node addon or separate `node/CMakeLists.txt`. Koffi remains
 a native FFI dependency; this is not a native-code-free package. The shared core
-statically links bundled ggml and ICU, with GPU backends and OpenMP disabled for
-the CPU package. It is loaded only from this package's own runtime directory,
-without searching for a system `libclap`.
+statically links bundled ggml and ICU. On macOS, Metal is enabled by default and
+its shader library is embedded in the shared library. Other platforms default to
+CPU-only builds. OpenMP, other GPU backends and host-specific CPU instruction
+flags remain disabled for portability. The core is loaded only from this
+package's own runtime directory, without searching for a system `libclap`.
 
 ## Usage
 

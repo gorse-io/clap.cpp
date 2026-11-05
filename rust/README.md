@@ -11,10 +11,12 @@ cargo add clap-cpp
 
 Requires CMake 3.20 or newer and a C++20 compiler (MSVC on Windows). The
 published crate bundles clap.cpp, ggml, JSON, ICU Unicode/regex,
-and miniaudio sources. Default builds are CPU-only and do not download dependencies
-or require Git, Python, GPU SDKs, shared ICU libraries, or the parent repository. Cross-compiling
-is not currently supported. Python 3 is required only for integration-test
-fixture generation and maintainer checks.
+and miniaudio sources. Default builds enable Metal for macOS targets and remain
+CPU-only on Linux and Windows. macOS builds require the Apple SDK and Metal
+compiler. Default Linux and Windows builds need no GPU SDK. Builds do not download
+dependencies or require Git, Python, shared ICU libraries, or the parent repository.
+Cross-compiling is not currently supported. Python 3 is required only for
+integration-test fixture generation and maintainer checks.
 
 Rust declares the public C API directly with `unsafe extern "C"` and wraps model
 handles and returned buffers in Rust RAII owners. There is no C++ Rust bridge or
@@ -25,7 +27,8 @@ resolved transitive SDK link dependencies for enabled GPU features.
 
 ## GPU features
 
-Enable an optional backend when adding the dependency:
+Enable an optional backend when adding the dependency (Metal is already enabled
+by default on macOS):
 
 ```sh
 cargo add clap-cpp --features cuda
@@ -37,7 +40,10 @@ cargo add clap-cpp --features cuda
 | `cuda` | GGML CUDA | NVIDIA CUDA Toolkit and a supported C++ host compiler |
 | `vulkan` | GGML Vulkan | Vulkan headers/loader, `glslc`, and SPIR-V headers |
 | `rocm` | GGML HIP | AMD ROCm/HIP SDK with hipBLAS and rocBLAS |
-| `metal` | GGML Metal | Apple SDK and Metal compiler on macOS |
+| `metal` | GGML Metal (default on macOS; explicit feature still supported) | Apple SDK and Metal compiler on macOS |
+
+`--no-default-features` does not disable the target-based macOS Metal default.
+To force CPU inference at runtime, set `CLAP_DEVICE=cpu` before loading a model.
 
 The CPU backend remains available with every feature. Features compile backends;
 they do not guarantee that a compatible GPU is present or that every operation

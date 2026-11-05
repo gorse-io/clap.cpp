@@ -29,8 +29,9 @@ function main() {
     for (const dir of [build, runtime]) fs.rmSync(dir, { recursive: true, force: true });
   }
   fs.mkdirSync(output, { recursive: true });
+  const metal = process.platform === 'darwin' ? 'ON' : 'OFF';
   const off = ['GGML_NATIVE', 'GGML_BACKEND_DL', 'GGML_OPENMP', 'GGML_BUILD_TESTS', 'GGML_BUILD_EXAMPLES',
-    'GGML_METAL', 'GGML_CUDA', 'GGML_HIP', 'GGML_VULKAN', 'GGML_SYCL', 'GGML_OPENCL', 'GGML_OPENVINO',
+    'GGML_CUDA', 'GGML_HIP', 'GGML_VULKAN', 'GGML_SYCL', 'GGML_OPENCL', 'GGML_OPENVINO',
     'GGML_RPC', 'GGML_MUSA', 'GGML_WEBGPU', 'GGML_ZDNN', 'GGML_VIRTGPU', 'GGML_VIRTGPU_BACKEND',
     'GGML_ET', 'GGML_HEXAGON', 'GGML_ZENDNN', 'GGML_BLAS', 'GGML_ACCELERATE',
     ...['SSE42', 'AVX', 'AVX2', 'AVX_VNNI', 'BMI2', 'FMA', 'F16C', 'AVX512', 'AVX512_VBMI',
@@ -38,6 +39,7 @@ function main() {
   run(['-S', source, '-B', build, '-DCMAKE_BUILD_TYPE=Release', '-DBUILD_SHARED_LIBS=ON',
     '-DCLAP_STATIC_DEPENDENCIES=ON', '-DCMAKE_POSITION_INDEPENDENT_CODE=ON', '-DCLAP_BUILD_CLI=OFF',
     '-DBUILD_TESTING=OFF', '-DCLAP_USE_SYSTEM_ICU=OFF', '-DGGML_CPU=ON',
+    `-DGGML_METAL=${metal}`, `-DGGML_METAL_EMBED_LIBRARY=${metal}`,
     `-DCMAKE_INSTALL_PREFIX=${runtime}`, '-DCMAKE_INSTALL_LIBDIR=.', '-DCMAKE_INSTALL_BINDIR=.',
     ...off.map(name => `-D${name}=OFF`)]);
   const jobs = process.env.CMAKE_BUILD_PARALLEL_LEVEL || String(Math.min(os.availableParallelism(), 4));
