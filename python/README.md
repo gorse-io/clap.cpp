@@ -157,3 +157,14 @@ The release workflow updates the version in `python/pyproject.toml` and all thre
 exact extra dependencies together from the normalized release tag. The backend
 helper copies that version into each backend distribution. One publisher uploads
 the verified CPU and GPU artifacts; existing PyPI versions cannot be overwritten.
+
+For EmbeddingGemma 2 audio, also load the matching audio mmproj GGUF:
+
+```python
+with CLAP("embeddinggemma2.gguf", threads=4, mmproj="mmproj-Q8_0.gguf") as model:
+    audio_embedding = model.encode_audio("recording.wav")
+```
+
+`mmproj` accepts a string or `pathlib.Path`. Text still works without it; the
+existing positional `threads` argument is unchanged. Missing/incompatible
+projectors raise native errors. Image encoding is not supported.

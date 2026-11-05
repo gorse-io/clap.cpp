@@ -25,6 +25,7 @@ C++20/ggml implementations of audio embedding inference features:
 | [MERT v2 FullSong](https://huggingface.co/m-a-p/MERT-v2-FullSong) / [30s](https://huggingface.co/m-a-p/MERT-v2-30s) | ❌ | ✅ | 1,024 | 24 kHz |
 | [MuQ](https://huggingface.co/OpenMuQ/MuQ-large-msd-iter) | ❌ | ✅ | 1,024 | 24 kHz |
 | [MuQ-MuLan](https://huggingface.co/OpenMuQ/MuQ-MuLan-large) | ✅ | ✅ | 512 | 24 kHz |
+| [EmbeddingGemma 2](https://huggingface.co/unsloth/embeddinggemma-2-GGUF) | ✅ | ✅ | 768 | 16 kHz |
 
 GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/collections/gorse-io/audio-embedding-gguf) collection.
 
@@ -46,6 +47,65 @@ Load a converted GGUF and generate real native text or audio embeddings:
 clap embedding --model model.gguf --text 'A jazz quartet.'
 clap embedding --model model.gguf --audio music.flac
 ```
+
+### EmbeddingGemma 2 (text and audio)
+
+Load the published [Unsloth EmbeddingGemma 2 GGUF](https://huggingface.co/unsloth/embeddinggemma-2-GGUF)
+files directly; no conversion or Python inference is required. Text needs only
+the main model. Audio additionally needs `mmproj-Q8_0.gguf` (or the published
+F16/BF16 mmproj), which contains the audio tower and projector. For example:
+
+```sh
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf --text 'Hello world'
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf \
+  --text 'task: search result | query: How do plants grow?'
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf \
+  --text 'title: none | text: Plants use sunlight for photosynthesis.'
+./build/clap serve --model embeddinggemma-2-UD-Q4_K_XL.gguf
+```
+
+`encode_text` returns a normalized 768-dimensional embedding. Both BOS and EOS
+are added automatically; mean pooling includes these tokens and any prompt.
+Retrieval prefixes are **not** added automatically: supply
+`task: search result | query: ` for queries and `title: none | text: ` for
+untitled documents, or `title: {title} | text: {content}` for titled documents.
+The tokenizer preserves Unicode, case, and repeated whitespace. Google advertises
+an 8192-token context; use that limit even though the GGUF positional capacity is
+larger. Native computation preserves F32 activations with F16/BF16 storage and
+accepts the published Q4_K/Q5_K/Q6_K/Q8_0 mixed tensor types.
+
+This integration supports text and native waveform embeddings; **`encode_image`
+remains unsupported**, even though the published mmproj also contains vision
+weights. Audio is encoded directly, not transcribed to text:
+
+```sh
+./build/clap embedding --model embeddinggemma-2-UD-Q4_K_XL.gguf \
+  --mmproj mmproj-Q8_0.gguf --audio recording.wav
+```
+
+```c
+CLAP *model = NULL;
+float *embedding = NULL;
+size_t dimension = 0;
+if (clap_create_with_mmproj("embeddinggemma-2-UD-Q4_K_XL.gguf", "mmproj-Q8_0.gguf",
+                            NULL, &model) == CLAP_OK) {
+    clap_status status = clap_encode_audio_file(model, "recording.wav", 0, &embedding, &dimension);
+    /* Check status; on failure clap_last_error() describes the error. */
+    clap_free(embedding);
+    clap_destroy(model);
+}
+```
+
+WAV/MP3/FLAC input is downmixed and resampled to 16 kHz. Audio preprocessing
+follows the published Gemma4 frontend and uses the first 30 seconds, matching
+the default processor's truncation policy. The audio Conformer/projector's
+soft tokens pass through the same text backbone and final mean/L2 pooling,
+producing a normalized 768D embedding in the joint space. Audio requires the
+matching mmproj; text still works without it. Crop offsets and frame APIs are
+not supported for this joint encoder. The HTTP endpoint remains text-only.
+
+Use published GGUFs directly; the checkpoint converter and local quantization
+presets remain scoped to the six existing audio/joint architectures.
 
 ## Embeddings server
 

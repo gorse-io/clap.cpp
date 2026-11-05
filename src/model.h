@@ -57,10 +57,11 @@ class Vocabulary;
 // Reverse destruction order keeps the GGUF mapping alive for its architecture.
 struct CLAP {
     clap::detail::ModelLoader loader;
+    std::unique_ptr<clap::detail::ModelLoader> audio_loader;
     std::unique_ptr<clap::detail::ModelArchitecture> architecture;
     std::unique_ptr<clap::detail::Vocabulary> vocabulary;
 
-    CLAP(const std::string &path, const clap::RuntimeOptions &options);
+    CLAP(const std::string &path, const clap::RuntimeOptions &options, const std::string &mmproj_path = "");
     ~CLAP();
 };
 

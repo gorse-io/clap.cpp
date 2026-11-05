@@ -42,6 +42,12 @@ mod ffi {
             options: *const RuntimeOptions,
             out: *mut *mut Model,
         ) -> Status;
+        pub fn clap_create_with_mmproj(
+            path: *const c_char,
+            mmproj: *const c_char,
+            options: *const RuntimeOptions,
+            out: *mut *mut Model,
+        ) -> Status;
         pub fn clap_destroy(model: *mut Model);
         pub fn clap_encode_text(
             model: *mut Model,
@@ -145,7 +151,22 @@ impl Drop for CLAP {
 impl CLAP {
     /// Load a UTF-8 GGUF path. Zero threads selects the native default.
     pub fn new(p: impl AsRef<Path>, threads: i32) -> Result<Self> {
-        let s = path(p.as_ref())?;
+        Self::load(p.as_ref(), None, threads)
+    }
+    /// Load an EmbeddingGemma2 model with its separate audio mmproj GGUF.
+    pub fn new_with_mmproj(
+        p: impl AsRef<Path>,
+        mmproj: impl AsRef<Path>,
+        threads: i32,
+    ) -> Result<Self> {
+        Self::load(p.as_ref(), Some(mmproj.as_ref()), threads)
+    }
+    fn load(p: &Path, mmproj: Option<&Path>, threads: i32) -> Result<Self> {
+        let s = path(p)?;
+        let audio_path = mmproj.map(path).transpose()?;
+        if audio_path.as_ref().is_some_and(|p| p.as_bytes().is_empty()) {
+            return Err("mmproj path must be nonempty".into());
+        }
         if threads < 0 {
             return Err("threads must be nonnegative".into());
         }
@@ -155,7 +176,14 @@ impl CLAP {
         let mut created = std::ptr::null_mut();
         // SAFETY: Strings/options live through the synchronous call; created
         // is a fresh writable slot. On failure the API leaves it null.
-        let status = unsafe { ffi::clap_create(s.as_ptr(), &options, &mut created) };
+        let status = unsafe {
+            match audio_path {
+                Some(ref audio) => {
+                    ffi::clap_create_with_mmproj(s.as_ptr(), audio.as_ptr(), &options, &mut created)
+                }
+                None => ffi::clap_create(s.as_ptr(), &options, &mut created),
+            }
+        };
         check_status(status)?;
         let ptr = NonNull::new(created).ok_or("native model missing")?;
         Ok(Self {

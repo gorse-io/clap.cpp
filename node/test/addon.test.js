@@ -194,3 +194,21 @@ test('strict method input validation and native exceptions', () => {
   for (const p of ['', 'a\0b', path.join(fixtures, 'missing.wav'), modelPath]) assert.throws(() => m.encodeAudio(p));
   m.close();
 });
+
+test('constructor options preserve text loading and do not ignore mmproj', () => {
+  for (const options of [{}, { threads: 1 }, { threads: 1, mmproj: undefined }]) {
+    const m = new CLAP(modelPath, options);
+    try { vector(m.encodeText('hello'), 3); } finally { m.close(); }
+  }
+  assert.throws(() => new CLAP(path.join(fixtures, 'embeddinggemma2-dispatch.gguf'), {
+    threads: 1, mmproj: path.join(fixtures, 'missing-audio-mmproj.gguf')
+  }), /missing-audio-mmproj/);
+  assert.throws(() => new CLAP(modelPath, { mmproj: 'missing-audio-mmproj.gguf' }),
+    error => error instanceof Error && !(error instanceof TypeError));
+  for (const mmproj of [null, 1, '', 'a\0b']) {
+    assert.throws(() => new CLAP(modelPath, { mmproj }), TypeError);
+  }
+  for (const threads of [-1, 0.5, NaN, null, '1']) {
+    assert.throws(() => new CLAP(modelPath, { threads }), TypeError);
+  }
+});

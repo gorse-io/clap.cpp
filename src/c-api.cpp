@@ -103,6 +103,28 @@ clap_status clap_create(const char *path, const clap_runtime_options *options, C
         *out = new CLAP(path, native);
     });
 }
+clap_status clap_create_with_mmproj(const char *path, const char *mmproj_path, const clap_runtime_options *options,
+                                    CLAP **out) {
+    if (out)
+        *out = nullptr;
+    return protect([&] {
+        require(path && *path && out, "CLAP: nonempty model path and output slot are required");
+        require(mmproj_path && *mmproj_path, "CLAP: nonempty mmproj path is required");
+        clap::RuntimeOptions native;
+        if (options) {
+            require(options->threads >= 0, "CLAP: threads must be nonnegative");
+            require(options->activation_precision == CLAP_ACTIVATION_MODEL_DEFAULT ||
+                        options->activation_precision == CLAP_ACTIVATION_F32,
+                    "CLAP: invalid activation precision");
+            native.threads = options->threads;
+            if (options->device)
+                native.device = options->device;
+            if (options->activation_precision == CLAP_ACTIVATION_F32)
+                native.activation_precision = clap::ActivationPrecision::F32;
+        }
+        *out = new CLAP(path, native, mmproj_path);
+    });
+}
 void clap_destroy(CLAP *model) { delete model; }
 void clap_free(void *allocation) { std::free(allocation); }
 void clap_free_devices(clap_device *devices, size_t count) {

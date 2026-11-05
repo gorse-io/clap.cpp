@@ -16,6 +16,9 @@ out = root / 'test' / 'fixtures'
 out.mkdir(parents=True, exist_ok=True)
 fixtures.clap_fixture(out / 'clap.gguf')
 fixtures.mert_fixture(out / 'mert.gguf')
+# Metadata-only probe; missing mmproj must fail before model tensor validation.
+fixtures.write_gguf(out / 'embeddinggemma2-dispatch.gguf',
+                    {'general.architecture': 'gemma-embedding2'}, {})
 with wave.open(str(out / 'stereo.wav'), 'wb') as wav:
     wav.setparams((2, 2, 24000, 0, 'NONE', 'not compressed'))
     wav.writeframes(struct.pack('<hh', 16384, 0) * 24000)
