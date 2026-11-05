@@ -47,6 +47,32 @@ clap embedding --model model.gguf --text 'A jazz quartet.'
 clap embedding --model model.gguf --audio music.flac
 ```
 
+## Quantization
+
+Convert an existing F32, F16 or BF16 GGUF with the native CLI (the default
+preset remains `Q8_0`):
+
+```sh
+clap quantize --type BF16 model-f32.gguf model-bf16.gguf
+clap quantize --type Q8_0 model-bf16.gguf model-q8.gguf
+clap quantize --type Q4_K_M model-f32.gguf model-q4.gguf
+```
+
+All supported architectures accept BF16 weights. BF16 is 16-bit floating-point
+storage, not block quantization: eligible dense/embedding matrices need no
+32/256-element row alignment. Vectors, convolution kernels, frontend buffers
+and CLaMP3's bundled MERT tensors retain their original storage and bytes.
+MERT/MERT2/MuQ/MuLan use the same dense-role allowlist as the block presets.
+Inference reads BF16 scalars/embedding rows directly and computes BF16 dense
+products with F32 activations using graph-local F32 weight casts; it does not
+expand the whole mapped model.
+
+`Q8_0` needs row widths divisible by 32; `Q4_K_M` needs widths divisible by
+256 and mixes Q4_K with Q6_K for sensitive attention-value, FFN-down and
+projection matrices. Ineligible tensors remain unchanged. Output paths must
+not exist; block-quantized inputs are rejected rather than requantized. BF16
+output uses GGUF model file type 32 (distinct from tensor type 30).
+
 ## Embeddings server
 
 Start the server with a GGUF supporting the requested modality, such as CLAP,

@@ -135,6 +135,11 @@ if(BUILD_TESTING)
     target_include_directories(clap-quantize-output-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     add_test(NAME clap_quantize_publication
         COMMAND clap-quantize-output-test "${CMAKE_CURRENT_BINARY_DIR}/quantize-publication-fixture")
+    add_executable(clap-bf16-test tests/bf16-test.cpp src/quantize.cpp)
+    target_include_directories(clap-bf16-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(clap-bf16-test PRIVATE clap)
+    add_test(NAME clap_bf16 COMMAND clap-bf16-test "${CMAKE_CURRENT_BINARY_DIR}/bf16-fixture")
+    set_tests_properties(clap_bf16 PROPERTIES TIMEOUT 120)
     add_executable(all-quantization-test tests/all-quantization-test.cpp src/quantize.cpp)
     target_include_directories(all-quantization-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(all-quantization-test PRIVATE clap)
@@ -144,6 +149,10 @@ if(BUILD_TESTING)
     target_include_directories(clap-q8-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(clap-q8-test PRIVATE clap)
     if(CLAP_BUILD_CLI)
+        add_test(NAME clap_bf16_cli
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bf16_cli.py"
+                    "$<TARGET_FILE:clap-cli>" "$<TARGET_FILE:clap-q8-test>")
+        set_tests_properties(clap_bf16_cli PROPERTIES TIMEOUT 120)
         add_test(NAME clap_quantize_cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/quantize_cli.py" "$<TARGET_FILE:clap-cli>")
         set_tests_properties(clap_quantize_cli PROPERTIES TIMEOUT 30)

@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
         require(argc == 2, "usage: all-quantization-test DIRECTORY");
         std::filesystem::create_directories(argv[1]);
         for (const std::string arch : {"mert", "mert2", "muq", "muq_mulan"})
-            for (auto type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+            for (auto type : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16}) {
                 const auto dense = roles(arch);
                 const std::string source = std::string(argv[1]) + "/" + arch + std::to_string(type) + ".gguf";
                 fixture(source, arch, type, dense);
