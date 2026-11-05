@@ -184,10 +184,6 @@ clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int r
         out->dimension = static_cast<size_t>(frames.dimension);
     });
 }
-int clap_audio_sample_rate(const CLAP *model) {
-    return model ? model->architecture->sample_rate() : 0;
-}
-int clap_projection_dimension(const CLAP *model) {
-    return model ? model->architecture->projection_dimension() : 0;
-}
+int clap_audio_sample_rate(const CLAP *model) { return model ? model->architecture->sample_rate() : 0; }
+int clap_projection_dimension(const CLAP *model) { return model ? model->architecture->projection_dimension() : 0; }
 } // extern "C"
