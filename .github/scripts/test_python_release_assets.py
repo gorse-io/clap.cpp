@@ -59,7 +59,12 @@ class PythonReleaseAssetsTest(unittest.TestCase):
     def unit_sdist(self, source, distribution, omitted=None, extra=()):
         """Write wrapper-only UNIT FIXTURE source archives for the real heredoc."""
         with tarfile.open(source, "w:gz") as archive:
-            for name in ("pyproject.toml", "stage_runtime.py", f"{distribution}/clap.py", *extra):
+            required = ["pyproject.toml", "stage_runtime.py", "_build_backend.py", "LICENSE",
+                        f"{distribution}/__init__.py", f"{distribution}/clap.py",
+                        f"{distribution}/clap.pyi", f"{distribution}/py.typed"]
+            if distribution == "clap_cpp":
+                required.append("prepare_backend.py")
+            for name in (*required, *extra):
                 if name == omitted:
                     continue
                 data = b"# UNIT FIXTURE wrapper packaging input\n"
@@ -68,10 +73,18 @@ class PythonReleaseAssetsTest(unittest.TestCase):
                 archive.addfile(entry, io.BytesIO(data))
 
     def test_unit_fixture_sdist_requires_wrapper_metadata_and_helper(self):
-        for required in ("pyproject.toml", "stage_runtime.py", "clap_cpp/clap.py"):
-            with self.subTest(required=required):
-                self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", omitted=required)
-                self.assert_rejected("Sdist missing wrapper or staging helper")
+        for distribution in DISTRIBUTIONS:
+            required_files = ["pyproject.toml", "stage_runtime.py", "_build_backend.py", "LICENSE",
+                              f"{distribution}/__init__.py", f"{distribution}/clap.py",
+                              f"{distribution}/clap.pyi", f"{distribution}/py.typed"]
+            if distribution == "clap_cpp":
+                required_files.append("prepare_backend.py")
+            for required in required_files:
+                with self.subTest(distribution=distribution, required=required):
+                    source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
+                    self.unit_sdist(source, distribution, omitted=required)
+                    self.assert_rejected("Sdist missing wrapper or staging helper")
+                    self.unit_sdist(source, distribution)
 
     def test_unit_fixture_sdist_rejects_native_graph_and_binaries(self):
         for native in ("native/ggml/CMakeLists.txt", "clap_cpp/libclap.so", "clap_cpp/clap.dll", "clap_cpp/libclap.dylib"):

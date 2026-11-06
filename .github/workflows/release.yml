@@ -161,7 +161,7 @@ jobs:
         CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
         # before-build only copies runtime files; wheel.cmake=false in the sdist.
         CIBW_BEFORE_BUILD: python {package}/stage_runtime.py {package} {package}/external-runtime
-        CIBW_TEST_REQUIRES: pytest scikit-build-core>=1.1.2 mypy>=1.8 typing_extensions>=4.2
+        CIBW_TEST_REQUIRES: build pytest scikit-build-core>=1.1.2 mypy>=1.8 typing_extensions>=4.2
         CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
     - uses: actions/upload-artifact@v4
       with:
@@ -540,7 +540,11 @@ jobs:
             with tarfile.open(source) as archive:
                 entries = {entry.name.split('/', 1)[1] for entry in archive if '/' in entry.name and entry.isfile()}
                 package = name.replace('-', '_')
-                required = {'pyproject.toml', 'stage_runtime.py', f'{package}/clap.py'}
+                required = {'pyproject.toml', 'stage_runtime.py', '_build_backend.py', 'LICENSE',
+                            f'{package}/__init__.py', f'{package}/clap.py',
+                            f'{package}/clap.pyi', f'{package}/py.typed'}
+                if name == 'clap-cpp':
+                    required.add('prepare_backend.py')
                 if not required <= entries:
                     raise SystemExit(f'Sdist missing wrapper or staging helper: {source.name}: {required - entries}')
                 if any(entry.startswith('native/') or entry.endswith(('.so', '.dylib', '.dll', '.pyd')) for entry in entries):
