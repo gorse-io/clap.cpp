@@ -28,7 +28,15 @@ class ReleaseVersionTest(unittest.TestCase):
             cargo.write_text('[package]\nname = "clap-cpp"\nversion = "0.1.0"\n')
             optional = {"@gorse/clap-cpp-linux-x64": "0.1.0"}
             (root / "node/package.json").write_text(json.dumps({"name": "clap-cpp", "version": "0.1.0", "optionalDependencies": optional}))
-            lock = {"version": "0.1.0", "packages": {"": {"version": "0.1.0", "optionalDependencies": optional}, "node_modules/example": {"version": "2.0.0"}}}
+            workspace = root / "node/packages/linux-x64/package.json"
+            workspace.parent.mkdir(parents=True)
+            workspace.write_text(json.dumps({"name": "@gorse/clap-cpp-linux-x64", "version": "0.1.0", "os": ["linux"], "cpu": ["x64"]}))
+            lock = {"version": "0.1.0", "packages": {
+                "": {"version": "0.1.0", "optionalDependencies": optional},
+                "packages/linux-x64": json.loads(workspace.read_text()),
+                "node_modules/@gorse/clap-cpp-linux-x64": {"resolved": "packages/linux-x64", "link": True},
+                "node_modules/example": {"version": "2.0.0"},
+            }}
             (root / "node/package-lock.json").write_text(json.dumps(lock))
             self.assertEqual(release.update(root, "v1.2.3-rc.1"), "1.2.3-rc.1")
             self.assertIn('version = "1.2.3-rc.1"', cargo.read_text())
@@ -40,6 +48,13 @@ class ReleaseVersionTest(unittest.TestCase):
             self.assertEqual(lock["version"], manifest["version"])
             self.assertEqual(lock["packages"][""]["version"], manifest["version"])
             self.assertEqual(lock["packages"]["node_modules/example"]["version"], "2.0.0")
+            platform = json.loads(workspace.read_text())
+            self.assertEqual(platform["version"], manifest["version"])
+            self.assertEqual(platform["os"], ["linux"])
+            self.assertEqual(platform["cpu"], ["x64"])
+            self.assertEqual(lock["packages"]["packages/linux-x64"], platform)
+            self.assertEqual(lock["packages"]["node_modules/@gorse/clap-cpp-linux-x64"],
+                             {"resolved": "packages/linux-x64", "link": True})
 
 
 if __name__ == "__main__":

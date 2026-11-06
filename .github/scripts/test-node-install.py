@@ -18,6 +18,35 @@ import tempfile
 import threading
 from urllib.parse import unquote, urlparse
 
+TARGETS = {
+    'linux-x64': 'libclap.so',
+    'linux-arm64': 'libclap.so',
+    'darwin-arm64': 'libclap.dylib',
+    'win32-x64': 'clap.dll',
+}
+
+
+def validate_runtime(metadata, archive):
+    target = metadata['name'].removeprefix('@gorse/clap-cpp-')
+    if target not in TARGETS:
+        raise ValueError(f'Unknown runtime target: {target}')
+    os_name, cpu = target.split('-')
+    if metadata.get('os') != [os_name] or metadata.get('cpu') != [cpu]:
+        raise ValueError(f'Incorrect platform constraints: {target}')
+    if metadata.get('libc') != (['glibc'] if os_name == 'linux' else None):
+        raise ValueError(f'Incorrect libc constraint: {target}')
+    required = ['LICENSE', f'runtime/clap_cpp/{TARGETS[target]}']
+    required.extend(f'runtime/clap_cpp/licenses/{name}.txt'
+                    for name in ['clap', 'ggml', 'icu', 'json', 'miniaudio'])
+    with tarfile.open(archive) as contents:
+        for name in required:
+            try:
+                entry = contents.getmember(f'package/{name}')
+            except KeyError:
+                raise ValueError(f'Missing {name} in {archive}') from None
+            if not entry.isfile() or not entry.size:
+                raise ValueError(f'Empty or invalid {name} in {archive}')
+
 
 def manifest(archive):
     with tarfile.open(archive) as contents:
@@ -78,7 +107,7 @@ def registry(packages):
         thread.join()
 
 
-def verify(artifacts, prefix):
+def verify(artifacts, prefix, require_all=False):
     main = None
     packages = {}
     for archive in artifacts.glob('*.tgz'):
@@ -91,8 +120,11 @@ def verify(artifacts, prefix):
             if metadata['name'] in packages:
                 raise ValueError(f'Duplicate runtime package: {metadata["name"]}')
             packages[metadata['name']] = metadata, archive
+            validate_runtime(metadata, archive)
     if main is None:
         raise ValueError('Missing main clap-cpp tarball')
+    if require_all and set(packages) != {f'@gorse/clap-cpp-{target}' for target in TARGETS}:
+        raise ValueError('Expected all four platform runtime archives')
     host = subprocess.check_output(['node', '-p', 'process.platform + "-" + process.arch'], text=True).strip()
     expected = f'@gorse/clap-cpp-{host}'
     if expected not in packages:
@@ -124,5 +156,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifacts', type=Path, required=True)
     parser.add_argument('--prefix', type=Path, required=True)
+    parser.add_argument('--require-all', action='store_true')
     args = parser.parse_args()
-    verify(args.artifacts.resolve(), args.prefix.resolve())
+    verify(args.artifacts.resolve(), args.prefix.resolve(), args.require_all)

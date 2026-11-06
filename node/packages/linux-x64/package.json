@@ -1,0 +1,28 @@
+{
+  "name": "@gorse/clap-cpp-linux-x64",
+  "version": "0.1.0",
+  "description": "Prebuilt clap.cpp shared runtime for linux-x64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gorse-io/clap.cpp.git",
+    "directory": "node/packages/linux-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "runtime",
+    "LICENSE",
+    "README.md"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

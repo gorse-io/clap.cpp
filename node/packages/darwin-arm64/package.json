@@ -1,0 +1,25 @@
+{
+  "name": "@gorse/clap-cpp-darwin-arm64",
+  "version": "0.1.0",
+  "description": "Prebuilt clap.cpp shared runtime for darwin-arm64",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gorse-io/clap.cpp.git",
+    "directory": "node/packages/darwin-arm64"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "runtime",
+    "LICENSE",
+    "README.md"
+  ]
+}
