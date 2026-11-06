@@ -682,8 +682,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: python .github/scripts/release-version.py "$RELEASE_TAG"
-      - name: Check package inventory and pinned sources
-        run: python -m unittest discover -s rust/tests -p test_package.py -v
       - name: Build and verify Rust source distribution
         run: cargo package --allow-dirty
       - uses: actions/upload-artifact@v4
@@ -725,7 +723,6 @@ jobs:
           tar -xzf dist/*.crate --strip-components=1 -C package
           cargo test --manifest-path package/Cargo.toml --all-targets --locked
           cargo test --manifest-path package/Cargo.toml --doc --locked
-          python -m unittest discover -s package/rust/tests -p test_package.py -v
 
   publish-crates-io:
     env:

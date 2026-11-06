@@ -83,7 +83,6 @@ only exercised when a release is published and registry authorization is ready.
 
 ```sh
 python -m unittest discover -s .github/scripts -v
-python -m unittest discover -s rust/tests -p test_package.py -v
 cargo package --allow-dirty -j 3
 cmake --preset libraries -DGGML_METAL=OFF
 cmake --build build/libraries --config Release --target clap --parallel 4

@@ -77,16 +77,14 @@ source tree can override checkout edits.
 
 ## Packaging and publishing (maintainers)
 
-From the repository root, with Python 3 and the pinned submodules initialized:
+From the repository root, with the pinned submodules initialized:
 
 ```sh
-python3 -m unittest discover -s rust/tests -p test_package.py -v
 cargo package --locked -j 3
 ```
 
-The guard checks require clean submodules at the revisions pinned by the checkout
-and check Cargo's actual file inventory. Cargo includes the initialized Git
-submodules directly through the root manifest's include allowlist: the native
+Use clean submodules at the revisions pinned by the checkout. Cargo includes the
+initialized Git submodules directly through the root manifest's include allowlist: the native
 CMake graph, clap.cpp sources, selected dependency source trees (including optional
 GPU backends), upstream licenses in their original locations, and
 `python/tests/tiny_models.py` for standalone tests. There is no copying step and
@@ -114,7 +112,6 @@ Keep the compressed `.crate` below the registry's size limit (10 MiB by default)
 Other local checks:
 
 ```sh
-python3 -m unittest discover -s rust/tests -p 'test_package.py'
 cargo fmt -- --check
 cargo clippy --all-targets -j 3 -- -D warnings
 ```

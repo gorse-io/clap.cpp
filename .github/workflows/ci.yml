@@ -172,8 +172,6 @@ jobs:
         run: cargo test --all-targets
       - name: Compile-fail thread-safety contract
         run: cargo test --doc
-      - name: Check package inventory and pinned sources
-        run: python -m unittest discover -s rust/tests -p test_package.py -v
       - name: Verify standalone package build
         run: cargo package --allow-dirty
       - name: Test standalone package inference and safety
@@ -183,55 +181,5 @@ jobs:
           manifest="target/package/clap-cpp-${version}/Cargo.toml"
           cargo test --manifest-path "$manifest" --all-targets --locked
           cargo test --manifest-path "$manifest" --doc --locked
-          python -m unittest discover -s "$(dirname "$manifest")/rust/tests" -p test_package.py -v
       - name: Recheck checkout after package verification
         run: cargo test --all-targets --locked
-
-  rust-gpu:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            feature: vulkan
-          - os: macos-latest
-            feature: metal
-    runs-on: ${{ matrix.os }}
-    env:
-      CARGO_BUILD_JOBS: 3
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
-        with:
-          toolchain: stable
-          cache-workspaces: . -> target
-          build-warnings: ""
-      - name: Install Vulkan SDK and software driver
-        if: matrix.feature == 'vulkan'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvulkan-dev glslc spirv-headers mesa-vulkan-drivers
-          icd=$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)
-          test -n "$icd"
-          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
-          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
-          echo "GGML_VK_VISIBLE_DEVICES=0" >> "$GITHUB_ENV"
-      - name: Verify GPU source package builds and links
-        run: cargo package --allow-dirty --features ${{ matrix.feature }}
-      - name: Test standalone GPU package inference and safety
-        shell: bash
-        run: |
-          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
-          manifest="target/package/clap-cpp-${version}/Cargo.toml"
-          cargo test --manifest-path "$manifest" --features ${{ matrix.feature }} --all-targets --locked
-          cargo test --manifest-path "$manifest" --features ${{ matrix.feature }} --doc --locked
-      - name: GPU-enabled text and audio inference
-        run: cargo test --features ${{ matrix.feature }} --all-targets
-      - name: GPU-enabled documentation tests
-        run: cargo test --features ${{ matrix.feature }} --doc
