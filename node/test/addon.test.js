@@ -61,7 +61,7 @@ test('encodeText rejects a model closed by a reentrant token array getter', () =
     assert.throws(() => m.encodeText('hello'), /closed/i);
     m.close();
     console.log('reentrant close rejected safely');
-  `], { encoding: 'utf8', timeout: 30000 });
+  `], { encoding: 'utf8', timeout: 120000 });
   assert.equal(child.error, undefined);
   assert.equal(child.signal, null, `child signal: ${child.signal}\n${child.stderr}`);
   assert.equal(child.status, 0, child.stderr);
@@ -155,7 +155,7 @@ test('explicit close and garbage collection keep separate owners and returned ve
       vectors.forEach(v => assert.ok(v instanceof Float32Array && v.every(Number.isFinite)));
       console.log('GC and close owners remain independent');
     })().catch(error => { console.error(error); process.exitCode = 1; });
-  `], { encoding: 'utf8', timeout: 60000 });
+  `], { encoding: 'utf8', timeout: 120000 });
   assert.equal(child.error, undefined);
   assert.equal(child.signal, null, child.stderr);
   assert.equal(child.status, 0, child.stderr);

@@ -26,14 +26,17 @@ class ReleaseVersionTest(unittest.TestCase):
             (root / "node").mkdir()
             cargo = root / "Cargo.toml"
             cargo.write_text('[package]\nname = "clap-cpp"\nversion = "0.1.0"\n')
-            (root / "node/package.json").write_text('{"name":"clap-cpp","version":"0.1.0"}')
-            lock = {"version": "0.1.0", "packages": {"": {"version": "0.1.0"}, "node_modules/example": {"version": "2.0.0"}}}
+            optional = {"@gorse/clap-cpp-linux-x64": "0.1.0"}
+            (root / "node/package.json").write_text(json.dumps({"name": "clap-cpp", "version": "0.1.0", "optionalDependencies": optional}))
+            lock = {"version": "0.1.0", "packages": {"": {"version": "0.1.0", "optionalDependencies": optional}, "node_modules/example": {"version": "2.0.0"}}}
             (root / "node/package-lock.json").write_text(json.dumps(lock))
             self.assertEqual(release.update(root, "v1.2.3-rc.1"), "1.2.3-rc.1")
             self.assertIn('version = "1.2.3-rc.1"', cargo.read_text())
             manifest = json.loads((root / "node/package.json").read_text())
             lock = json.loads((root / "node/package-lock.json").read_text())
             self.assertEqual(manifest["version"], "1.2.3-rc.1")
+            self.assertEqual(manifest["optionalDependencies"], {"@gorse/clap-cpp-linux-x64": manifest["version"]})
+            self.assertEqual(lock["packages"][""]["optionalDependencies"], manifest["optionalDependencies"])
             self.assertEqual(lock["version"], manifest["version"])
             self.assertEqual(lock["packages"][""]["version"], manifest["version"])
             self.assertEqual(lock["packages"]["node_modules/example"]["version"], "2.0.0")

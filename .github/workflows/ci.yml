@@ -230,20 +230,22 @@ jobs:
         with:
           runtime: ${{ matrix.runtime }}
       - name: Install JavaScript dependencies
-        run: npm ci
+        run: npm ci --omit=optional
+      - name: Stage and pack main and host runtime packages
+        run: |
+          python ../.github/scripts/pack-node.py --target "${{ matrix.runtime }}"
+          mkdir -p artifacts
+          for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
+          npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-*.tgz
       - name: Generate tiny models and test bindings
         run: |
           npm run test:fixtures
           npm test
           npm run test:types
           npm run test:packaging
-      - name: Pack prebuilt distribution
+      - name: Install and test platform distribution
         run: |
-          mkdir -p artifacts
-          npm pack --pack-destination artifacts
-      - name: Install and test prebuilt distribution
-        run: |
-          npm install --prefix installed ./artifacts/*.tgz
+          python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
           CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
           cd installed/node_modules/clap-cpp
           npm run test:fixtures

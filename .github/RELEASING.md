@@ -10,10 +10,15 @@ dist-tag; stable releases use `latest`. A release marked as a GitHub prerelease
 also uses `next`, even if its version has no prerelease suffix.
 
 Rust ships portable CPU native sources and compiles on installation. Node ships
-one universal npm tarball containing externally compiled shared libraries for
-Linux x64/ARM64, macOS ARM64 and Windows x64; npm never builds clap.cpp. The Node
-release first builds each runtime on its matching runner, collects the runtimes
-and licenses, then tests the same tarball on all four platforms before publishing.
+a small `clap-cpp` wrapper plus four separate optional packages:
+`@gorse/clap-cpp-linux-x64`, `@gorse/clap-cpp-linux-arm64`,
+`@gorse/clap-cpp-darwin-arm64`, and `@gorse/clap-cpp-win32-x64`.
+The wrapper pins their versions exactly. npm uses each package's `os`/`cpu`
+(and Linux `libc: glibc`) constraints to install only the matching runtime.
+No clap.cpp install hook compiles or downloads binaries. The release builds
+shared libraries externally, stages packages with `.github/scripts/pack-node.py`,
+and tests actual npm selection against a temporary local registry on all four
+platforms before publishing. All native packages publish before the wrapper.
 The macOS runtime enables embedded Metal; Linux and Windows are CPU-only.
 
 Rust source archives are tested on the same platform matrix. Cargo repackages
@@ -36,12 +41,15 @@ publishers for you.
 - **npm:** configure a GitHub trusted publisher for repository
   `gorse-io/clap.cpp`, workflow `release.yml`, environment `npm`.
   Alternatively, set environment/repository secret `NPM_TOKEN` to a granular
-  publish token authorized for `clap-cpp`, with the permissions/2FA bypass
+  publish token authorized for `clap-cpp` and all four `@gorse/clap-cpp-*`
+  runtime packages, with the permissions/2FA bypass
   required for unattended publication. npm 11 is used for OIDC support;
   publications include provenance. Enable **direct publishing** for this trusted
   publisher because the workflow runs `npm publish`, not staged publication.
   A first publication may require a token
-  before the package's trusted publisher can be configured.
+  before each package's trusted publisher can be configured. Configure the
+  trusted publisher on all five packages, and ensure the publishing identity
+  has permission to create/publish the scoped packages in the `@gorse` organization.
 
 Check ownership and name availability before the first release. Neither registry
 is contacted with a publish command by ordinary PR CI. Actual publication is
@@ -59,14 +67,16 @@ cmake --install build/node-runtime --config Release --component runtime --prefix
 cp LICENSE node/LICENSE
 cp python/tests/tiny_models.py node/test/tiny_models.py
 cd node
-npm ci
+npm ci --omit=optional
+python ../.github/scripts/pack-node.py --target linux-x64
+mkdir -p artifacts
+for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
+npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-*.tgz
 npm run test:fixtures
 npm test
 npm run test:types
 npm run test:packaging
-mkdir -p artifacts
-npm pack --pack-destination artifacts
-npm install --prefix installed ./artifacts/*.tgz
+python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
 cd installed/node_modules/clap-cpp
 npm run test:fixtures
 npm test
@@ -74,9 +84,10 @@ npm test
 
 The checkout must contain the pinned initialized submodules. The repository-root
 Rust package includes original native sources and upstream licenses directly.
-Node packaging includes only staged prebuilt runtimes and licenses, not native
-sources or build scripts. Do not commit generated runtimes, fixture copies or
+Node platform packages include only staged prebuilt runtimes and licenses, not
+native sources or build scripts. The main package contains no shared libraries. Do not commit generated runtimes, fixture copies or
 archives. See `node/README.md` for the other platform presets; release packaging
-requires all four runtimes and `CLAP_CPP_REQUIRE_ALL_RUNTIMES=1`.
+requires all four runtimes (omit `--target` when staging). Registry selection
+tests use a local test registry with real tarballs, not a live npm publication.
 CMake and a C++20 compiler are needed only for the separate native build; Python
 is needed for the maintainer tests, not npm installation.

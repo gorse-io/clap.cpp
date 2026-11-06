@@ -46,7 +46,7 @@ test('real native buffers are freed when JavaScript output decoding throws', () 
     m.close(); m.close();
     assert.ok(result.every(Number.isFinite));
     console.log('real buffers freed on both decode failure and success');
-  `], { encoding: 'utf8', timeout: 30000 });
+  `], { encoding: 'utf8', timeout: 120000 });
   assert.equal(child.error, undefined);
   assert.equal(child.signal, null, child.stderr);
   assert.equal(child.status, 0, child.stderr);

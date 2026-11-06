@@ -39,8 +39,13 @@ def update(root, tag):
         path = root / name
         data = json.loads(path.read_text())
         data["version"] = version
+        package = data
         if name.endswith("package-lock.json"):
-            data["packages"][""]["version"] = version
+            package = data["packages"][""]
+            package["version"] = version
+        for dependency in package.get("optionalDependencies", {}):
+            if dependency.startswith("@gorse/clap-cpp-"):
+                package["optionalDependencies"][dependency] = version
         files[path] = json.dumps(data, indent=2) + "\n"
     manifest.write_text(text)
     for path, content in files.items():
