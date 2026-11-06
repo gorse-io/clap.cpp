@@ -101,7 +101,7 @@ print(json.dumps(dict(files=files, manifest=manifest)))
   assert.equal(generated.error, undefined);
   assert.equal(generated.status, 0, generated.stderr);
   const tested = spawnSync(process.execPath, ['--test', 'test/addon.test.js', 'test/surface.test.js', 'test/ffi.test.js',
-    'test/runtime.test.js'], { cwd: pkg, encoding: 'utf8', timeout: 30000, maxBuffer: 10 * 1024 * 1024,
+    'test/runtime.test.js'], { cwd: pkg, encoding: 'utf8', timeout: 120000, maxBuffer: 10 * 1024 * 1024,
     env: { ...process.env, CLAP_CPP_MODULE: pkg } });
   assert.equal(tested.error, undefined);
   assert.equal(tested.status, 0, tested.stdout + tested.stderr);

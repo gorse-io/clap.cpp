@@ -14,7 +14,7 @@ const platforms = {
 };
 
 function fixture(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clap-runtime-test-'));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'clap-runtime-test-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.copyFileSync(entry, path.join(dir, 'index.js'));
   return dir;
