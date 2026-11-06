@@ -76,8 +76,7 @@ npm ci --force --ignore-scripts
 npm test
 mkdir -p artifacts
 npm pack --workspace packages/linux-x64 --include-workspace-root --pack-destination artifacts
-python3 ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
-CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
+python3 ../.github/scripts/validate-node-packages.py --artifacts artifacts
 ```
 
 For macOS, use `darwin-arm64` and configure with
@@ -100,12 +99,14 @@ together. Publish all native packages before publishing `clap-cpp` at the same
 version. Maintainer library builds need CMake 3.20+ and a C++20 compiler;
 npm consumers do not.
 
-`.github/scripts/test-node-install.py` checks runtime payloads, dependency licenses
-and platform constraints, then serves the tarballs through a temporary local
-registry and verifies that npm downloads only the host runtime and loads it.
-Pass `--require-all` to require all four platform archives. Release CI runs the
-checkout's tests against the installed package using `CLAP_CPP_MODULE` on each
-platform; tests and audio fixtures are not included in published packages.
+`.github/scripts/validate-node-packages.py` checks runtime payloads, dependency
+licenses, platform constraints and matching versions without installing the
+archives. It also verifies that the main package contains only the binding,
+type declarations, README, license and package manifest. Pass `--require-all`
+to require all four platform archives.
+
+CI runs the CLAP inference test directly against the checkout and its platform
+workspace. Tests and audio fixtures are not included in published packages.
 The CLAP test downloads
 `larger_clap_general-q4_k_m.gguf` from Hugging Face into the repository root.
 It compares `dog.wav` with dog and vacuum-cleaner descriptions, using the same

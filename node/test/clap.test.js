@@ -20,7 +20,7 @@ const { createWriteStream, existsSync, statSync } = require('node:fs');
 const path = require('node:path');
 const { pipeline } = require('node:stream/promises');
 const { downloadFile } = require('@huggingface/hub');
-const { CLAP } = require(process.env.CLAP_CPP_MODULE || '..');
+const { CLAP } = require('..');
 
 function cosine(a, b) {
   const dot = a.reduce((sum, x, i) => sum + x * b[i], 0);

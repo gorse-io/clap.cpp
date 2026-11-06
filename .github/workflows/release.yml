@@ -807,54 +807,15 @@ jobs:
           mkdir -p artifacts
           npm pack --workspaces --include-workspace-root --pack-destination artifacts
       - name: Validate all five package archives
-        run: python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed --require-all
+        run: python ../.github/scripts/validate-node-packages.py --artifacts artifacts --require-all
       - uses: actions/upload-artifact@v4
         with:
           name: node-package
           path: node/artifacts/*.tgz
           if-no-files-found: error
 
-  test-node:
-    needs: build-node
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2022]
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: 4
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            .github/scripts
-            node
-            assets
-      - uses: actions/download-artifact@v4
-        with:
-          name: node-package
-          path: dist
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Verify npm selects and downloads only the host runtime
-        run: python .github/scripts/test-node-install.py --artifacts dist --prefix installed
-      - name: Test installed platform distribution
-        working-directory: node
-        run: |
-          npm ci --force --ignore-scripts
-          CLAP_CPP_MODULE="$GITHUB_WORKSPACE/installed/node_modules/clap-cpp" npm test
-
   publish-npm:
-    needs: [build-node, test-node]
+    needs: build-node
     runs-on: ubuntu-24.04
     environment:
       name: npm

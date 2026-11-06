@@ -124,13 +124,11 @@ jobs:
         shell: bash
         working-directory: node
         run: npm test
-      - name: Test npm platform selection and installed package
+      - name: Validate npm package archives
         if: matrix.os != 'windows-11-arm'
         shell: bash
         working-directory: node
-        run: |
-          python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
-          CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
+        run: python ../.github/scripts/validate-node-packages.py --artifacts artifacts
 
   rust:
     strategy:

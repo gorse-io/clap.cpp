@@ -27,10 +27,10 @@ The `libraries-<target>` artifacts contain `clap_cpp/` with the shared library,
 licenses and any runtime companions. Python CPU wheels and Node optional packages
 consume the same external build, independently. Node downloads these artifacts to
 `node/runtime/`, copies them into the tracked `node/packages/<target>/` workspaces,
-and packs with `npm pack --workspaces --include-workspace-root`. It tests actual
-npm selection against a temporary local registry on all four
-platforms before publishing. No Python wheel extraction is involved. All native
-packages publish before the wrapper.
+and packs with `npm pack --workspaces --include-workspace-root`. The release
+validates archive contents, platform constraints and versions before publishing.
+Node inference tests run against the checkout and its platform workspace in CI.
+No Python wheel extraction is involved. All native packages publish before the wrapper.
 
 Python publishes canonical wrapper-only source archives including `stage_runtime.py`;
 they contain neither native sources nor compiled libraries. CPU wheel jobs extract
@@ -105,8 +105,7 @@ npm ci --force --ignore-scripts
 npm test
 mkdir -p artifacts
 npm pack --workspace packages/linux-x64 --include-workspace-root --pack-destination artifacts
-python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
-CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
+python ../.github/scripts/validate-node-packages.py --artifacts artifacts
 ```
 
 The checkout must contain the pinned initialized submodules. The repository-root
@@ -116,7 +115,6 @@ native sources or build scripts. The main package contains no shared libraries. 
 archives. See `node/README.md` for external runtime staging and platform packages;
 release packaging requires all four runtimes and uses `npm pack --workspaces
 --include-workspace-root`. Archive validation uses `--require-all`.
-Registry selection tests use a local test registry with real tarballs, not a live
-npm publication. CMake and a C++20 compiler are needed for the separate native
+CMake and a C++20 compiler are needed for the separate native
 runtime build, not Python wheel packaging; Python is needed for maintainer tests,
 not npm installation.
