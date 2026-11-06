@@ -26,10 +26,11 @@ retains embedded Metal; Linux and Windows are CPU-only.
 The `libraries-<target>` artifacts contain `clap_cpp/` with the shared library,
 licenses and any runtime companions. Python CPU wheels and Node optional packages
 consume the same external build, independently. Node downloads these artifacts to
-`node/runtime/<target>/`, stages packages with `.github/scripts/pack-node.py`,
-and tests actual npm selection against a temporary local registry on all four
-platforms before publishing. No Python wheel extraction is involved. All native
-packages publish before the wrapper.
+`node/runtime/`, copies them into the tracked `node/packages/<target>/` workspaces,
+and packs with `npm pack --workspaces --include-workspace-root`. The release
+validates archive contents, platform constraints and versions before publishing.
+Node inference tests run against the checkout and its platform workspace in CI.
+No Python wheel extraction is involved. All native packages publish before the wrapper.
 
 Python publishes canonical wrapper-only source archives including `stage_runtime.py`;
 they contain neither native sources nor compiled libraries. CPU wheel jobs extract
@@ -93,22 +94,18 @@ tar -xzf sdists/clap_cpp-*.tar.gz --strip-components=1 -C python-dist
 python python-dist/stage_runtime.py python-dist libraries/linux-x64
 python -m build python-dist --wheel --outdir wheels
 # Host builds above are not a substitute for the release's manylinux Docker build/repair.
-mkdir -p node/runtime/linux-x64
-cp -R libraries/linux-x64/. node/runtime/linux-x64/
+mkdir -p node/packages/linux-x64/runtime
+cp -R libraries/linux-x64/. node/packages/linux-x64/runtime/
 cd node
-npm ci --ignore-scripts
-python ../.github/scripts/pack-node.py --target linux-x64
+cp ../LICENSE LICENSE
+cp ../LICENSE packages/linux-x64/LICENSE
+cp ../LICENSE packages/linux-x64/runtime/clap_cpp/licenses/clap.txt
+# --force permits linking workspaces for other platforms in the checkout.
+npm ci --force --ignore-scripts
+npm test
 mkdir -p artifacts
-for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
-npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-*.tgz
-npm run test:fixtures
-npm test
-npm run test:types
-npm run test:packaging
-python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
-cd installed/node_modules/clap-cpp
-npm run test:fixtures
-npm test
+npm pack --workspace packages/linux-x64 --include-workspace-root --pack-destination artifacts
+python ../.github/scripts/validate-node-packages.py --artifacts artifacts
 ```
 
 The checkout must contain the pinned initialized submodules. The repository-root
@@ -116,8 +113,8 @@ Rust package includes original native sources and upstream licenses directly.
 Node platform packages include only staged prebuilt runtimes and licenses, not
 native sources or build scripts. The main package contains no shared libraries. Do not commit generated runtimes, fixture copies or
 archives. See `node/README.md` for external runtime staging and platform packages;
-release packaging requires all four runtimes (omit `--target` when staging).
-Registry selection tests use a local test registry with real tarballs, not a live
-npm publication. CMake and a C++20 compiler are needed for the separate native
+release packaging requires all four runtimes and uses `npm pack --workspaces
+--include-workspace-root`. Archive validation uses `--require-all`.
+CMake and a C++20 compiler are needed for the separate native
 runtime build, not Python wheel packaging; Python is needed for maintainer tests,
 not npm installation.

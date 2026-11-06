@@ -10,7 +10,7 @@ npm install clap-cpp
 ```
 
 Requires Node.js 22+. The `clap-cpp` package contains JavaScript, TypeScript
-declarations and tests, not native runtimes. npm selects a platform package from
+declarations, README and license, not native runtimes or tests. npm selects a platform package from
 its exact-version `optionalDependencies`:
 
 | Operating system | Architecture | Optional native package |
@@ -57,58 +57,61 @@ using the repository-root CMake graph. Python and npm package the same artifact;
 neither language's packaging step compiles C++. Ordinary CI runs the C++, Python
 and Node tests together in one platform matrix job.
 
+The four platform packages are defined in `node/packages/<target>/package.json`
+and registered by the root `workspaces` field. Their manifests are tracked in Git;
+compiled runtimes and copied licenses are staged before packing.
+
 For example, on a Linux x64 host, run these commands from the repository root:
 
 ```sh
 git submodule update --init --recursive
 cmake --preset libraries
 cmake --build build/libraries --target clap --parallel 4
-cmake --install build/libraries --component runtime --prefix "$PWD/libraries/linux-x64"
-python3 .github/scripts/pack-node.py --runtime-root libraries --output node/dist --target linux-x64
+cmake --install build/libraries --component runtime --prefix "$PWD/node/packages/linux-x64/runtime"
 cd node
-npm ci --ignore-scripts
-mkdir -p artifacts
-for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
-npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-linux-x64-*.tgz
-npm run test:fixtures
+cp ../LICENSE LICENSE
+cp ../LICENSE packages/linux-x64/LICENSE
+cp ../LICENSE packages/linux-x64/runtime/clap_cpp/licenses/clap.txt
+npm ci --force --ignore-scripts
 npm test
-npm run test:types
-npm run test:packaging
+mkdir -p artifacts
+npm pack --workspace packages/linux-x64 --include-workspace-root --pack-destination artifacts
+python3 ../.github/scripts/validate-node-packages.py --artifacts artifacts
 ```
 
-For macOS, configure with `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON` as the
-shared CI action does. Windows builds use a Visual Studio developer environment.
-The common install puts the C library and dependency notices under `clap_cpp/`;
-that namespace does not require Python. Python wheel staging and npm native
-package staging each copy these same native bytes into their own distribution.
+For macOS, use `darwin-arm64` and configure with
+`-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`. Windows builds use a Visual Studio
+developer environment and the `win32-x64` workspace. The common install puts the
+C library and dependency notices under `runtime/clap_cpp/` in each workspace.
+An existing `libraries/<target>/` artifact can also be copied into that directory.
 
-The external `.github/scripts/pack-node.py` stages the main package in
-`node/dist/clap-cpp` and each native package in
-`node/dist/clap-cpp-<platform>-<arch>`. Omit `--target` to require all four runtime
-directories; stage packages again after source changes. Publish all native
-packages first, then publish `clap-cpp` at the same version. Maintainer library
-builds need CMake 3.20+ and a C++20 compiler; npm consumers do not.
-Keep Koffi's optional prebuilt dependencies enabled, even in maintainer installs;
+Maintainer installs use `--force` because npm otherwise rejects workspaces for
+other operating systems or architectures. This links the local packages without
+requiring them to exist on the npm registry. Consumers use ordinary
+`npm install clap-cpp`; the published optional dependencies retain their platform
+constraints. Keep Koffi's optional prebuilt dependencies enabled;
 `--omit=optional` would also remove its platform binaries.
 
-Packaging tests inspect real main and native tarballs, install both explicitly
-outside the checkout, generate fixtures using the installed
-`test/tiny_models.py`, and run installed runtime tests. They require Python 3
-(override the interpreter with `PYTHON`). Stage packages again after source
-changes. `CLAP_CPP_PACKAGE_DIR` and `CLAP_CPP_NATIVE_PACKAGE_DIR` can override the
-staged main and host-native directories. In an installed package, the defaults
-are the installed main package and its resolved native dependency, so repacking
-does not require the checkout's staging script.
+For a release, stage all four runtimes and licenses, then run
+`npm pack --workspaces --include-workspace-root --pack-destination artifacts`.
+The release version script updates the root, workspace manifests and lockfile
+together. Publish all native packages before publishing `clap-cpp` at the same
+version. Maintainer library builds need CMake 3.20+ and a C++20 compiler;
+npm consumers do not.
 
-By default packaging tests require the host native package. Set
-`CLAP_CPP_REQUIRE_ALL_RUNTIMES=1` for release validation to inspect all four
-native packages and their licenses; each runtime still needs matching-host
-inference testing. Local explicit-tarball installation does **not** prove registry
-selection. `.github/scripts/test-node-install.py` instead serves the actual
-platform tarballs through a temporary local scoped registry and asserts that npm
-downloads only the host runtime; release CI runs it against all four real native
-packages. This is not a publication to the public npm registry. Tests and fixture
-generation are maintainer operations only; npm consumers do not need Python.
+`.github/scripts/validate-node-packages.py` checks runtime payloads, dependency
+licenses, platform constraints and matching versions without installing the
+archives. It also verifies that the main package contains only the binding,
+type declarations, README, license and package manifest. Pass `--require-all`
+to require all four platform archives.
+
+CI runs the CLAP inference test directly against the checkout and its platform
+workspace. Tests and audio fixtures are not included in published packages.
+The CLAP test downloads
+`larger_clap_general-q4_k_m.gguf` from Hugging Face into the repository root.
+It compares `dog.wav` with dog and vacuum-cleaner descriptions, using the same
+softmax scores and thresholds as `rust/tests/clap.rs`.
+No test publishes to the public npm registry.
 
 ## Usage
 

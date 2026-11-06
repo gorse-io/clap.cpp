@@ -1,29 +1,17 @@
 # clap.cpp Rust bindings
 
 [![crates.io](https://img.shields.io/crates/v/clap-cpp)](https://crates.io/crates/clap-cpp)
-[![crates.io downloads](https://img.shields.io/crates/dm/clap-cpp)](https://crates.io/crates/clap-cpp)
+[![Crates.io Total Downloads](https://img.shields.io/crates/d/clap-cpp)](https://crates.io/crates/clap-cpp)
+[![docs.rs](https://img.shields.io/docsrs/clap-cpp)](https://docs.rs/clap-cpp)
+
 
 ## Install
+
+Rust bindings require CMake 3.20 or newer and a C++20 compiler (MSVC on Windows).
 
 ```sh
 cargo add clap-cpp
 ```
-
-Requires CMake 3.20 or newer and a C++20 compiler (MSVC on Windows). The
-published crate bundles clap.cpp, ggml, JSON, ICU Unicode/regex,
-and miniaudio sources. Default builds enable Metal for macOS targets and remain
-CPU-only on Linux and Windows. macOS builds require the Apple SDK and Metal
-compiler. Default Linux and Windows builds need no GPU SDK. Builds do not download
-dependencies or require Git, Python, shared ICU libraries, or the parent repository.
-Cross-compiling is not currently supported. Python 3 is required only for
-integration-test fixture generation and maintainer checks.
-
-Rust declares the public C API directly with `unsafe extern "C"` and wraps model
-handles and returned buffers in Rust RAII owners. There is no C++ Rust bridge or
-separate `rust/native/CMakeLists.txt` build graph. Both checkout and packaged
-builds configure the root `CMakeLists.txt` in core-only mode, without CLI or test
-dependencies, and link the static clap/ggml/ICU archives. CMake supplies the
-resolved transitive SDK link dependencies for enabled GPU features.
 
 ## GPU features
 
@@ -31,8 +19,7 @@ Enable an optional backend when adding the dependency (Metal is already enabled
 by default on macOS):
 
 ```sh
-cargo add clap-cpp --features cuda
-# Or: --features vulkan, --features rocm, --features metal
+cargo add clap-cpp --features cuda|vulkan|rocm|metal
 ```
 
 | Feature | Native backend | Build requirements |

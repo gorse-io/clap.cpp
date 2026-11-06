@@ -791,73 +791,31 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: python ../.github/scripts/release-version.py "$RELEASE_TAG"
-      - name: Arrange external runtime artifacts by npm target
+      - name: Copy external runtimes into platform workspaces
         run: |
           set -euo pipefail
+          cp ../LICENSE LICENSE
           for target in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
-            mv "runtime/libraries-$target" "runtime/$target"
+            package="packages/$target"
+            mkdir -p "$package/runtime"
+            cp -R "runtime/libraries-$target/." "$package/runtime/"
+            cp ../LICENSE "$package/LICENSE"
+            cp ../LICENSE "$package/runtime/clap_cpp/licenses/clap.txt"
           done
-      - name: Pack main and all optional runtime packages
+      - name: Pack main and all optional runtime workspaces
         run: |
-          python ../.github/scripts/pack-node.py
           mkdir -p artifacts
-          for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
+          npm pack --workspaces --include-workspace-root --pack-destination artifacts
       - name: Validate all five package archives
-        env:
-          CLAP_CPP_REQUIRE_ALL_RUNTIMES: '1'
-        run: |
-          npm ci --ignore-scripts
-          npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-linux-x64-*.tgz
-          npm run test:packaging
+        run: python ../.github/scripts/validate-node-packages.py --artifacts artifacts --require-all
       - uses: actions/upload-artifact@v4
         with:
           name: node-package
           path: node/artifacts/*.tgz
           if-no-files-found: error
 
-  test-node:
-    needs: build-node
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2022]
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: 4
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: .github/scripts
-      - uses: actions/download-artifact@v4
-        with:
-          name: node-package
-          path: dist
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install numerical oracle dependency
-        run: python -m pip install numpy
-      - name: Verify npm selects and downloads only the host runtime
-        run: python .github/scripts/test-node-install.py --artifacts dist --prefix installed
-      - name: Test installed platform distribution
-        run: |
-          cd installed/node_modules/clap-cpp
-          npm install --include=dev --ignore-scripts
-          npm run test:fixtures
-          npm test
-          npm run test:types
-          npm run test:packaging
-
   publish-npm:
-    needs: [build-node, test-node]
+    needs: build-node
     runs-on: ubuntu-24.04
     environment:
       name: npm

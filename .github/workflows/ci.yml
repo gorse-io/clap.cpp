@@ -111,30 +111,24 @@ jobs:
         shell: bash
         working-directory: node
         run: |
-          npm ci --ignore-scripts
-          python ../.github/scripts/pack-node.py --runtime-root ../libraries --target "${{ matrix.runtime }}"
-          mkdir -p artifacts
-          for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
-          npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-*.tgz
+          npm ci --force --ignore-scripts
+          cp ../LICENSE LICENSE
+          package="packages/${{ matrix.runtime }}"
+          mkdir -p "$package/runtime" artifacts
+          cp -R "../libraries/${{ matrix.runtime }}/." "$package/runtime/"
+          cp ../LICENSE "$package/LICENSE"
+          cp ../LICENSE "$package/runtime/clap_cpp/licenses/clap.txt"
+          npm pack --workspace "$package" --include-workspace-root --pack-destination artifacts
       - name: Test Node
         if: matrix.os != 'windows-11-arm'
         shell: bash
         working-directory: node
-        run: |
-          npm run test:fixtures
-          npm test
-          npm run test:types
-          npm run test:packaging
-      - name: Test npm platform selection and installed package
+        run: npm test
+      - name: Validate npm package archives
         if: matrix.os != 'windows-11-arm'
         shell: bash
         working-directory: node
-        run: |
-          python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
-          CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
-          cd installed/node_modules/clap-cpp
-          npm run test:fixtures
-          npm test
+        run: python ../.github/scripts/validate-node-packages.py --artifacts artifacts
 
   rust:
     strategy:

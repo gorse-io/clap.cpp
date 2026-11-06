@@ -35,14 +35,18 @@ def update(root, tag):
     if count != 1:
         raise ValueError("Expected exactly one Rust package version")
     files = {}
-    for name in ("node/package.json", "node/package-lock.json"):
-        path = root / name
+    paths = [root / "node/package.json", root / "node/package-lock.json"]
+    paths.extend(sorted((root / "node/packages").glob("*/package.json")))
+    for path in paths:
         data = json.loads(path.read_text())
         data["version"] = version
         package = data
-        if name.endswith("package-lock.json"):
+        if path.name == "package-lock.json":
             package = data["packages"][""]
             package["version"] = version
+            for location, workspace in data["packages"].items():
+                if location.startswith("packages/"):
+                    workspace["version"] = version
         for dependency in package.get("optionalDependencies", {}):
             if dependency.startswith("@gorse/clap-cpp-"):
                 package["optionalDependencies"][dependency] = version
