@@ -32,6 +32,7 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 | [Python](python) | ✅ | ✅ | ✅ | `pip3 install clap-cpp` |
 | [Rust](rust) | ✅ | ✅ | ✅ | `cargo install clap-cpp` |
 | [Node.js](node) | ✅ | ❌ | ❌ | `npm install clap-cpp` |
+| [Java](java) | ✅ | ❌ | ❌ | [Build with Maven](java#prerequisites-and-build) |
 
 ## Usage
 
