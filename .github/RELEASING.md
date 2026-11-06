@@ -15,13 +15,35 @@ a small `clap-cpp` wrapper plus four separate optional packages:
 `@gorse/clap-cpp-darwin-arm64`, and `@gorse/clap-cpp-win32-x64`.
 The wrapper pins their versions exactly. npm uses each package's `os`/`cpu`
 (and Linux `libc: glibc`) constraints to install only the matching runtime.
-No clap.cpp install hook compiles or downloads binaries. The release reuses the shared libraries from the existing repaired/tested
-Python CPU wheels, preserving native bytes and library-relative companion paths.
-It extracts runtimes with `.github/scripts/extract-python-runtime.py`, stages
-packages with `.github/scripts/pack-node.py`,
+No clap.cpp install hook compiles or downloads binaries. The `build-libraries`
+release matrix compiles one external shared runtime per target: Linux x64/arm64,
+macOS arm64 and Windows x64. Linux compilation runs inside the matching-architecture
+`manylinux_2_28` Docker image; other platforms use the local `build-libraries`
+composite action. The common `libraries` CMake preset keeps dependencies static
+and position-independent and disables host-specific CPU instructions. macOS
+retains embedded Metal; Linux and Windows are CPU-only.
+
+The `libraries-<target>` artifacts contain `clap_cpp/` with the shared library,
+licenses and any runtime companions. Python CPU wheels and Node optional packages
+consume the same external build, independently. Node downloads these artifacts to
+`node/runtime/<target>/`, stages packages with `.github/scripts/pack-node.py`,
 and tests actual npm selection against a temporary local registry on all four
-platforms before publishing. All native packages publish before the wrapper.
-The macOS runtime enables embedded Metal; Linux and Windows are CPU-only.
+platforms before publishing. No Python wheel extraction is involved. All native
+packages publish before the wrapper.
+
+Python publishes canonical wrapper-only source archives including `stage_runtime.py`;
+they contain neither native sources nor compiled libraries. CPU wheel jobs extract
+the canonical base archive, download the matching runtime and stage it with
+`python stage_runtime.py PROJECT_DIR RUNTIME_DIR`. cibuildwheel packages without
+CMake (`wheel.cmake=false`) and runs installed-wheel tests for Python 3.9, 3.10,
+3.11, 3.12, 3.13 and 3.14. ABI-independent `py3-none` wheels are reused across
+these interpreters; Linux wheels retain auditwheel-repaired manylinux tags.
+GPU jobs recursively check out native sources and compile before packaging the
+canonical backend wrapper archive, staging with `--backend cuda|rocm|vulkan`.
+CUDA toolkit/architecture flags, ROCm targets and system-runtime exclusions, and
+Vulkan loader exclusions remain backend-specific. Their existing auditwheel
+policies remain: CUDA/ROCm manylinux_2_35, Vulkan manylinux_2_39; GPU execution is
+not tested by these jobs.
 
 Rust source archives are tested on the same platform matrix. Cargo repackages
 the extracted crate before upload: the publisher verifies that all files,
@@ -63,8 +85,17 @@ only exercised when a release is published and registry authorization is ready.
 python -m unittest discover -s .github/scripts -v
 python -m unittest discover -s rust/tests -p test_package.py -v
 cargo package --allow-dirty -j 3
-python -m build python --outdir wheels
-python .github/scripts/extract-python-runtime.py --wheels wheels --output node/runtime --target linux-x64
+cmake --preset libraries -DGGML_METAL=OFF
+cmake --build build/libraries --config Release --target clap --parallel 4
+cmake --install build/libraries --config Release --component runtime --prefix "$PWD/libraries/linux-x64"
+python -m build python --sdist --outdir sdists
+mkdir python-dist
+tar -xzf sdists/clap_cpp-*.tar.gz --strip-components=1 -C python-dist
+python python-dist/stage_runtime.py python-dist libraries/linux-x64
+python -m build python-dist --wheel --outdir wheels
+# Host builds above are not a substitute for the release's manylinux Docker build/repair.
+mkdir -p node/runtime/linux-x64
+cp -R libraries/linux-x64/. node/runtime/linux-x64/
 cd node
 npm ci --ignore-scripts
 python ../.github/scripts/pack-node.py --target linux-x64
@@ -85,8 +116,9 @@ The checkout must contain the pinned initialized submodules. The repository-root
 Rust package includes original native sources and upstream licenses directly.
 Node platform packages include only staged prebuilt runtimes and licenses, not
 native sources or build scripts. The main package contains no shared libraries. Do not commit generated runtimes, fixture copies or
-archives. See `node/README.md` for wheel reuse and platform packages; release packaging
-requires all four runtimes (omit `--target` when staging). Registry selection
-tests use a local test registry with real tarballs, not a live npm publication.
-CMake and a C++20 compiler are needed only for the Python wheel build; Python
-is needed for the maintainer tests, not npm installation.
+archives. See `node/README.md` for external runtime staging and platform packages;
+release packaging requires all four runtimes (omit `--target` when staging).
+Registry selection tests use a local test registry with real tarballs, not a live
+npm publication. CMake and a C++20 compiler are needed for the separate native
+runtime build, not Python wheel packaging; Python is needed for maintainer tests,
+not npm installation.

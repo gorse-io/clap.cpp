@@ -1,5 +1,7 @@
 /build/
 /build-*/
+/libraries/
+/python-dist/
 /CMakeUserPresets.json
 /.cache/
 /compile_commands.json

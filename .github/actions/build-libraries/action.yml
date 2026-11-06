@@ -1,0 +1,44 @@
+name: Build libraries
+description: Build the shared C runtime once for C++, Python and Node
+inputs:
+  target:
+    description: Runtime platform-architecture directory
+    required: true
+  cmake-args:
+    description: Additional native build settings
+    default: ''
+  targets:
+    description: CMake targets (all also builds CLI and native tests)
+    default: clap
+runs:
+  using: composite
+  steps:
+    - uses: ilammy/msvc-dev-cmd@v1
+      if: runner.os == 'Windows'
+      with:
+        arch: ${{ endsWith(inputs.target, '-arm64') && 'arm64' || 'amd64' }}
+    - name: Configure libraries
+      shell: bash
+      env:
+        METAL: ${{ runner.os == 'macOS' && 'ON' || 'OFF' }}
+        CMAKE_ARGS: ${{ inputs.cmake-args }}
+      run: |
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          # Keep the shared DLL beside the native test and CLI executables.
+          cmake --preset libraries -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$GITHUB_WORKSPACE/build/libraries" \
+            -DGGML_METAL="$METAL" -DGGML_METAL_EMBED_LIBRARY="$METAL" $CMAKE_ARGS
+        else
+          cmake --preset libraries -DGGML_METAL="$METAL" -DGGML_METAL_EMBED_LIBRARY="$METAL" $CMAKE_ARGS
+        fi
+    - name: build-libraries
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: cmake --build build/libraries --config Release --target $TARGETS --parallel 4
+    - name: Stage shared runtime
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        cmake --install build/libraries --config Release --component runtime --prefix "$GITHUB_WORKSPACE/libraries/$TARGET"
+        cp LICENSE "libraries/$TARGET/clap_cpp/licenses/clap.txt"

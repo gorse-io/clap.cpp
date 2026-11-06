@@ -99,7 +99,9 @@ test('real main and native tarballs install and run outside the checkout', { tim
     /\.(node|so|dylib|dll|tgz)$/.test(p) || p.includes('/.git/') || p.startsWith('test/fixtures/')),
   'main package has no runtimes, build scripts, native sources or generated test artifacts');
   for (const filename of ['index.js', 'index.d.ts', 'package.json', 'README.md', ...files.filter(p => p.startsWith('test/'))]) {
-    assert.deepEqual(fs.readFileSync(path.join(source, filename)), fs.readFileSync(path.join(root, filename)),
+    const original = checkout && filename === 'test/tiny_models.py'
+      ? path.join(root, '..', 'python/tests/tiny_models.py') : path.join(root, filename);
+    assert.deepEqual(fs.readFileSync(path.join(source, filename)), fs.readFileSync(original),
       `staged source must match checkout: ${filename}`);
   }
   const targets = process.env.CLAP_CPP_REQUIRE_ALL_RUNTIMES === '1' ? Object.keys(platforms) : [host];
@@ -133,7 +135,9 @@ test('real main and native tarballs install and run outside the checkout', { tim
     assert.throws(() => new binding.CLAP('missing-model.gguf'), /.+/);
   `]);
   for (const filename of ['index.js', 'index.d.ts', 'package.json', 'test/generate-fixtures.py', 'test/tiny_models.py']) {
-    assert.deepEqual(fs.readFileSync(path.join(pkg, filename)), fs.readFileSync(path.join(root, filename)));
+    const original = checkout && filename === 'test/tiny_models.py'
+      ? path.join(root, '..', 'python/tests/tiny_models.py') : path.join(root, filename);
+    assert.deepEqual(fs.readFileSync(path.join(pkg, filename)), fs.readFileSync(original));
   }
   run(python, ['test/generate-fixtures.py'], { cwd: pkg });
   run(process.execPath, ['--test', 'test/addon.test.js', 'test/surface.test.js', 'test/ffi.test.js',

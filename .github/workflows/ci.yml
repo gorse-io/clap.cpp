@@ -37,12 +37,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
+        include:
+          - os: ubuntu-latest
+            runtime: linux-x64
+          - os: ubuntu-24.04-arm
+            runtime: linux-arm64
+          - os: macos-latest
+            runtime: darwin-arm64
+          - os: windows-latest
+            runtime: win32-x64
+          - os: windows-11-arm
+            runtime: win32-arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - uses: actions/setup-python@v5
+        if: matrix.os != 'windows-11-arm'
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        if: matrix.os != 'windows-11-arm'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: node/package-lock.json
       - name: Install FFmpeg for test fixtures
         if: matrix.os != 'windows-11-arm'
         uses: AnimMouse/setup-ffmpeg@v1
@@ -58,14 +78,63 @@ jobs:
           }
           7z x $archive "-o$destination" -y
           (Get-ChildItem $destination -Filter ffmpeg.exe -Recurse).DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.os == 'windows-11-arm' && '-T ClangCL' || '' }}
-      - name: Build
-        run: cmake --build build --config Release --parallel
-      - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
-      - name: Install
-        run: cmake --install build --config Release --prefix "${{ runner.temp }}/clap-install"
+      - name: build-libraries
+        uses: ./.github/actions/build-libraries
+        with:
+          target: ${{ matrix.runtime }}
+          targets: all
+          cmake-args: >-
+            -DBUILD_TESTING=ON -DCLAP_BUILD_CLI=ON
+            ${{ matrix.os == 'windows-11-arm' && '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl' || '' }}
+      - name: Test C++
+        run: ctest --test-dir build/libraries -C Release --output-on-failure
+      - name: Test native installation
+        run: cmake --install build/libraries --config Release --prefix "${{ runner.temp }}/clap-install"
+      - name: Install Python packaging and test dependencies
+        if: matrix.os != 'windows-11-arm'
+        run: python -m pip install build "scikit-build-core>=1.1.2" packaging pytest "mypy>=1.8" "typing_extensions>=4.2"
+      - name: Package Python with the shared runtime
+        if: matrix.os != 'windows-11-arm'
+        shell: bash
+        run: |
+          python -m build python --sdist --outdir python-dist
+          mkdir -p build/python-package
+          tar -xzf python-dist/*.tar.gz --strip-components=1 -C build/python-package
+          python python/stage_runtime.py build/python-package "libraries/${{ matrix.runtime }}"
+          python -m build build/python-package --wheel --outdir python-dist
+          python -m pip install --no-deps --no-index --find-links python-dist clap-cpp
+      - name: Test Python
+        if: matrix.os != 'windows-11-arm'
+        run: python -m pytest python/tests -v
+      - name: Package Node with the shared runtime
+        if: matrix.os != 'windows-11-arm'
+        shell: bash
+        working-directory: node
+        run: |
+          npm ci --ignore-scripts
+          python ../.github/scripts/pack-node.py --runtime-root ../libraries --target "${{ matrix.runtime }}"
+          mkdir -p artifacts
+          for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
+          npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-*.tgz
+      - name: Test Node
+        if: matrix.os != 'windows-11-arm'
+        shell: bash
+        working-directory: node
+        run: |
+          npm run test:fixtures
+          npm test
+          npm run test:types
+          npm run test:packaging
+      - name: Test npm platform selection and installed package
+        if: matrix.os != 'windows-11-arm'
+        shell: bash
+        working-directory: node
+        run: |
+          python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
+          CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
+          cd installed/node_modules/clap-cpp
+          npm run test:fixtures
+          npm test
 
   rust:
     strategy:
@@ -166,94 +235,3 @@ jobs:
         run: cargo test --features ${{ matrix.feature }} --all-targets
       - name: GPU-enabled documentation tests
         run: cargo test --features ${{ matrix.feature }} --doc
-
-  python:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: 4
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install build and test dependencies
-        run: python -m pip install build "scikit-build-core>=1.0" pytest "mypy>=1.8" "typing_extensions>=4.2"
-      # build's default path builds the wheel FROM the sdist, exercising both.
-      - name: Build source distribution and default-backend wheel
-        run: python -m build python --outdir dist
-      - name: Install wheel
-        run: python -m pip install --no-deps --no-index --find-links dist clap-cpp
-      - name: Test installed default-backend bindings
-        run: python -m pytest python/tests -v
-      - uses: actions/upload-artifact@v4
-        with:
-          name: python-wheel-${{ matrix.os }}
-          path: dist/*.whl
-          if-no-files-found: error
-
-  node:
-    needs: python
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            runtime: linux-x64
-          - os: ubuntu-24.04-arm
-            runtime: linux-arm64
-          - os: macos-latest
-            runtime: darwin-arm64
-          - os: windows-latest
-            runtime: win32-x64
-    runs-on: ${{ matrix.os }}
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: 4
-    defaults:
-      run:
-        working-directory: node
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: python-wheel-${{ matrix.os }}
-          path: node/python-wheels
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: node/package-lock.json
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install test and wheel-inspection dependencies
-        run: python -m pip install numpy packaging
-      - name: Reuse the tested Python wheel runtime
-        run: python ../.github/scripts/extract-python-runtime.py --wheels python-wheels --output runtime --target "${{ matrix.runtime }}"
-      - name: Install JavaScript dependencies
-        run: npm ci --ignore-scripts
-      - name: Stage and pack main and host runtime packages
-        run: |
-          python ../.github/scripts/pack-node.py --target "${{ matrix.runtime }}"
-          mkdir -p artifacts
-          for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
-          npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-*.tgz
-      - name: Generate tiny models and test bindings
-        run: |
-          npm run test:fixtures
-          npm test
-          npm run test:types
-          npm run test:packaging
-      - name: Install and test platform distribution
-        run: |
-          python ../.github/scripts/test-node-install.py --artifacts artifacts --prefix installed
-          CLAP_CPP_MODULE="$PWD/installed/node_modules/clap-cpp" npm test
-          cd installed/node_modules/clap-cpp
-          npm run test:fixtures
-          npm test

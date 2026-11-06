@@ -2,7 +2,6 @@ node_modules/
 installed/
 build/
 runtime/
-python-wheels/
 dist/
 artifacts/
 LICENSE

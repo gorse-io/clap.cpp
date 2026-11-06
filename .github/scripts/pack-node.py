@@ -51,7 +51,7 @@ def stage(runtime_root, output, targets, root=ROOT):
         package = output / f'clap-cpp-{target}'
         package.mkdir()
         runtime = package / 'runtime'
-        # Retain wheel repair's $ORIGIN-relative companion directories verbatim.
+        # Retain the shared runtime's library-relative companion directories.
         shutil.copytree(runtime_root / target, runtime)
         shutil.copy2(root / 'LICENSE', runtime / 'clap_cpp/licenses/clap.txt')
         shutil.copy2(root / 'LICENSE', package / 'LICENSE')

@@ -43,8 +43,9 @@ GPU wheels do not bundle drivers. ROCm libraries must be discoverable through
 `ldconfig` or `LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64`; keep rocBLAS's data
 installed in the matching ROCm prefix. No Windows GPU wheels or separate macOS
 GPU wheels are built by this workflow; Metal is included in the base macOS wheel.
-On other targets pip can build from a source archive,
-but this requires the corresponding GPU SDK and compiler.
+Source archives contain wrappers and packaging helpers only. They require an
+externally built runtime to be staged before building a wheel; pip does not
+compile a native library or install a GPU SDK.
 
 GPU acceleration currently uses the native runtime's cached dense matrix
 multiplication path for CLAP. Architectures requiring storage-only precision
@@ -79,81 +80,105 @@ with CLAP("model.gguf", threads=4) as model:
     print(model.projection_dimension, model.audio_sample_rate)
 ```
 
-## Build from source
+## Package an external runtime
 
-Build and install from a recursive checkout:
+Python packaging is a separate, package-only step. Build the native libraries
+first using the repository-root `libraries` CMake preset (or download a matching
+runtime artifact). Python never invokes CMake, Ninja or a compiler. The native
+build is responsible for portable ISA flags, static dependencies, Metal/GPU
+configuration and platform deployment targets.
 
-```sh
-git clone --recursive https://github.com/gorse-io/clap.cpp.git
-cd clap.cpp
-python -m pip install ./python
+For a runtime artifact with this layout:
+
+```text
+libraries/linux-x64/
+  clap_cpp/
+    libclap.so       # libclap.dylib on macOS, clap.dll on Windows
+    licenses/...
+    companions/...  # optional package-local binaries/data/notices
 ```
 
-Requires Python 3.9+, a C++20 compiler and CMake 3.20+. The build backend installs
-CMake/Ninja if necessary. Python packaging invokes the repository-root CMake
-entrypoint in core-only mode; there is no separate `python/CMakeLists.txt`.
-That mode skips CLI/HTTP dependencies and test-fixture discovery. The base package
-has no runtime Python dependencies; PyTorch, FFmpeg, a separate `clap` executable
-and GPU drivers are not required.
-The package-local shared library statically links ggml and bundled ICU.
-Building it does not require Python development headers or pybind11. The base package
-enables Metal by default on macOS and embeds its shader library; other GPU
-backends and OpenMP remain disabled. To build without Metal on macOS, use
-`python -m pip install ./python -Ccmake.define.GGML_METAL=OFF`.
-x86 wheels use baseline instructions rather
-than the build machine's instruction set. No pretrained weights are downloaded
-automatically.
-
-Build an optional backend project separately, with its GPU SDK installed:
+stage it into the wrapper project and build a platform wheel:
 
 ```sh
-python python/prepare_backend.py cuda ./build-python-cuda
-python -m pip install ./build-python-cuda
-python -m pip install ./python
+python -m pip install build 'scikit-build-core>=1.1.2'
+python python/stage_runtime.py python libraries/linux-x64
+python -m build --wheel python
+python -m pip install python/dist/clap_cpp-*.whl
 ```
 
-Replace `cuda` with `rocm` or `vulkan` as needed. The helper also works inside
-the unpacked base source distribution. Extra CMake options can be passed with
-pip's `-Ccmake.define.NAME=VALUE`, for example CUDA/HIP architecture lists when
-building on a machine without a GPU. GPU backend selection and wheel package
-names must match for CUDA, ROCm and Vulkan; Metal is part of the base macOS project.
+`stage_runtime.py PROJECT_DIR RUNTIME_DIR [--backend cuda|rocm|vulkan]`
+copies `RUNTIME_DIR/clap_cpp/` contents into the project's Python namespace,
+preserving relative paths **within that namespace**. For example,
+`clap_cpp/companions/libfoo.so` becomes `clap_cpp_cuda/companions/libfoo.so` for
+`--backend cuda`. The common runtime artifact must contain only the `clap_cpp/`
+namespace. Sibling payloads such as `clap_cpp.libs/` or a sibling `licenses/`
+directory are rejected before any files are copied: moving them beneath the
+package would break loader paths such as `$ORIGIN/../clap_cpp.libs`. Such artifacts
+need separate loader-aware wheel packaging; the staging helper does not silently
+relocate them. Keep native dependency notices inside `clap_cpp/licenses/`.
+It adds the project's root MIT license as `licenses/clap-cpp.txt`, preserves
+package-local native dependency notices, rejects missing runtimes and wrapper-source collisions,
+and replaces an earlier staged payload without retaining stale dependencies.
+Only stage trusted runtime artifacts matching the wheel's target platform; the
+helper does not cross-compile, inspect binary architecture or repair Linux tags.
+The native runtime's own loader paths must resolve any companion libraries.
+
+The backend guards wheel construction, failing with an actionable staging command
+if the host-platform runtime or staged license is missing. It delegates packaging
+to scikit-build-core with `wheel.cmake=false`, `wheel.platlib=true` and
+`wheel.py-api="py3"`. A local Linux build is tagged `py3-none-linux_<arch>`;
+release wheels still need normal platform portability checks/repair. Metadata
+preparation and sdist creation do not require a native runtime.
+
+### Optional backend projects
+
+Generate a wrapper-only project, then stage the independently compiled backend
+runtime (the native artifact still uses its common `clap_cpp/` namespace):
+
+```sh
+python python/prepare_backend.py cuda build/python-cuda
+python python/stage_runtime.py build/python-cuda libraries/linux-x64-cuda --backend cuda
+python -m build --wheel build/python-cuda
+```
+
+Replace `cuda` with `rocm` or `vulkan`. The helper preserves the base version,
+wrapper and typing files; no native sources or CMake settings are copied. The
+staging helper and build guard are included in each backend source distribution.
+The public selector continues to use `clap_cpp_cuda`, `clap_cpp_rocm` and
+`clap_cpp_vulkan` without changing the base package or its public APIs.
 
 ## Development and source distributions
 
 ```sh
-python -m pip install './python[test]' build
+python -m build --sdist python
+# Unpack the archive, then explicitly stage its external runtime:
+tar -xf python/dist/clap_cpp-0.1.0.tar.gz -C build
+python build/clap_cpp-0.1.0/stage_runtime.py build/clap_cpp-0.1.0 libraries/linux-x64
+python -m build --wheel build/clap_cpp-0.1.0
+python -m pip install 'build/clap_cpp-0.1.0/dist/'*.whl
+python -m pip install pytest mypy typing_extensions build 'scikit-build-core>=1.1.2'
 python -m pytest python/tests
-python -m build python
 ```
 
-The source distribution includes the pinned native sources and third-party
-licenses; a wheel can be rebuilt from that archive without a Git checkout or
-CMake-time downloads. Build dependencies must still be available from the Python
-package index or a local wheelhouse.
+Source distributions contain wrapper/typing files, tests, `LICENSE` and packaging
+helpers, not native C++ snapshots, staged binaries or native build definitions.
+An unstaged sdist intentionally cannot build a wheel: plain `python -m build
+python` creates an sdist then fails to build its unstaged wheel. Use the explicit
+`--sdist`, unpack, stage, `--wheel` sequence above. Backend projects can also be
+generated from the extracted CPU sdist before staging their runtimes. No NumPy,
+Python development headers or pybind11 are required.
 
 ## Releases
 
-`.github/workflows/release.yml` runs when a GitHub Release is published.
-It normalizes the release tag into the package version and all three exact extra
-dependencies, then builds one canonical CPU source distribution. CPU wheels are
-built and tested from that archive using the existing cibuildwheel platform matrix.
-The GPU source distributions are generated from the same CPU archive, and GPU
-wheels are built from those source distributions with sccache for C, C++, CUDA
-and HIP compilation. Each GPU backend/platform builds one Python-ABI-independent
-wheel rather than rebuilding for every CPython version. GPU wheels are not
-runtime-tested by this workflow.
-Cache storage reuses the repository's
-`SCCACHE_BUCKET`, `SCCACHE_ENDPOINT`, `SCCACHE_REGION` variables and
-`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` secrets. Linux wheels are repaired
-with auditwheel; system GPU libraries remain external as listed above. All
-wheels and source distributions are attached to that release.
+Release packaging consumes independently built native runtime artifacts, stages
+each into the extracted wrapper source project, builds `py3-none` platform wheels,
+and validates/repairs them before publication. GPU driver and external runtime
+requirements remain those listed above; packaging is not a GPU runtime test.
 
-Stable releases also publish the four distributions to PyPI using OIDC. Before
-releasing, configure a PyPI trusted publisher (owner `gorse-io`, repository
-`clap.cpp`, workflow `release.yml`, environment `pypi`) for **each** of
-`clap-cpp`, `clap-cpp-cuda`, `clap-cpp-rocm` and `clap-cpp-vulkan`, and configure
-any required GitHub `pypi` environment approvals. Prereleases only attach assets.
-The release workflow updates the version in `python/pyproject.toml` and all three
-exact extra dependencies together from the normalized release tag. The backend
-helper copies that version into each backend distribution. One publisher uploads
-the verified CPU and GPU artifacts; existing PyPI versions cannot be overwritten.
+Stable releases publish the four distributions using PyPI OIDC. Configure a PyPI
+trusted publisher (owner `gorse-io`, repository `clap.cpp`, workflow `release.yml`,
+environment `pypi`) for **each** of `clap-cpp`, `clap-cpp-cuda`, `clap-cpp-rocm` and
+`clap-cpp-vulkan`, and any required GitHub `pypi` environment approvals.
+Prereleases only attach assets. Normalize the release version and the three exact
+extra pins together; `prepare_backend.py` copies that version to each backend.
