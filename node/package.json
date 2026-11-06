@@ -16,29 +16,28 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "scripts",
-    "native",
-    "native-tests",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_LICENSES",
     "test/*.test.js",
     "test/generate-fixtures.py",
+    "test/tiny_models.py",
     "test/types.ts",
     "test/tsconfig.json"
   ],
   "scripts": {
-    "install": "node scripts/build.js",
-    "build": "node scripts/build.js",
-    "rebuild": "node scripts/build.js --rebuild",
     "test:fixtures": "python3 test/generate-fixtures.py",
-    "test": "node --test test/addon.test.js test/surface.test.js test/ffi.test.js test/build.test.js",
+    "test": "node --test test/addon.test.js test/surface.test.js test/ffi.test.js test/runtime.test.js",
     "test:packaging": "node --test test/packaging.test.js",
-    "test:types": "tsc -p test/tsconfig.json",
-    "prepack": "node scripts/vendor.js"
+    "test:types": "tsc -p test/tsconfig.json"
   },
   "dependencies": {
     "koffi": "^3.3.6"
+  },
+  "optionalDependencies": {
+    "@gorse/clap-cpp-linux-x64": "0.1.0",
+    "@gorse/clap-cpp-linux-arm64": "0.1.0",
+    "@gorse/clap-cpp-darwin-arm64": "0.1.0",
+    "@gorse/clap-cpp-win32-x64": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

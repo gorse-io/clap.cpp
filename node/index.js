@@ -1,13 +1,35 @@
 'use strict';
-const koffi = require('koffi');
 const path = require('node:path');
 const { types } = require('node:util');
 
-// Load only this installation's runtime. Never search PATH or the system linker
-// path for a possibly incompatible copy of clap.
-const libraryName = { win32: 'clap.dll', darwin: 'libclap.dylib', linux: 'libclap.so' }[process.platform];
-if (!libraryName) throw new Error(`Unsupported platform: ${process.platform}`);
-const lib = koffi.load(path.join(__dirname, 'build', 'runtime', libraryName));
+// Resolve only the matching optional npm package. Never search PATH, the
+// system linker path, or a legacy package-local runtime.
+const target = `${process.platform}-${process.arch}`;
+const libraryName = {
+  'linux-x64': 'libclap.so',
+  'linux-arm64': 'libclap.so',
+  'darwin-arm64': 'libclap.dylib',
+  'win32-x64': 'clap.dll',
+}[target];
+if (!libraryName) throw new Error(`Unsupported platform or architecture: ${target}`);
+const packageName = `@gorse/clap-cpp-${target}`;
+const { version } = require('./package.json');
+let nativeManifestPath;
+try {
+  nativeManifestPath = require.resolve(`${packageName}/package.json`);
+} catch (error) {
+  throw new Error(`Missing optional native package ${packageName}@${version} for ${target}. Reinstall clap-cpp with optional dependencies enabled (npm install --include=optional); do not use --omit=optional or --no-optional.`, { cause: error });
+}
+const nativeManifest = require(nativeManifestPath);
+if (nativeManifest.version !== version) {
+  throw new Error(`Native package version mismatch: clap-cpp@${version} requires ${packageName}@${version}, but found ${nativeManifest.version}. Reinstall matching package versions.`);
+}
+const runtime = path.join(path.dirname(nativeManifestPath), 'runtime', 'clap_cpp', libraryName);
+if (!require('node:fs').existsSync(runtime)) {
+  throw new Error(`Missing prebuilt clap runtime in ${packageName}@${version}: ${runtime}. Reinstall the optional native package; no source-build or system-library fallback is available.`);
+}
+const koffi = require('koffi');
+const lib = koffi.load(runtime);
 
 // Anonymous types keep independently installed copies from colliding in Koffi's
 // named type registry. Enums are C int; struct layout uses the platform C ABI.

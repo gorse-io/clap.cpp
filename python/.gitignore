@@ -1,0 +1,10 @@
+# Everything except wrapper sources is an externally staged wheel input.
+clap_cpp/*
+!clap_cpp/__init__.py
+!clap_cpp/clap.py
+!clap_cpp/clap.pyi
+!clap_cpp/py.typed
+__pycache__/
+.pytest_cache/
+dist/
+build/

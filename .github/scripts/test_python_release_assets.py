@@ -6,6 +6,7 @@ passing these unit tests is not cross-platform build or release validation.
 """
 import io
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -52,14 +53,34 @@ class PythonReleaseAssetsTest(unittest.TestCase):
             for platform in PLATFORMS if distribution == "clap_cpp" else PLATFORMS[:1]:
                 unit_wheel(self.artifacts, distribution, platform)
             source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
-            with tarfile.open(source, "w:gz") as archive:
-                data = b"# UNIT FIXTURE pinned sources\n"
-                entry = tarfile.TarInfo(f"{distribution}-0.1.0/native/ggml/CMakeLists.txt")
-                entry.size = len(data)
-                archive.addfile(entry, io.BytesIO(data))
+            self.unit_sdist(source, distribution)
         (self.artifacts / MANIFEST).write_text("UNIT-FIXTURE-SONAME.so\n")
 
+    def unit_sdist(self, source, distribution, omitted=None, extra=()):
+        """Write wrapper-only UNIT FIXTURE source archives for the real heredoc."""
+        with tarfile.open(source, "w:gz") as archive:
+            for name in ("pyproject.toml", "stage_runtime.py", f"{distribution}/clap.py", *extra):
+                if name == omitted:
+                    continue
+                data = b"# UNIT FIXTURE wrapper packaging input\n"
+                entry = tarfile.TarInfo(f"{distribution}-0.1.0/{name}")
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+
+    def test_unit_fixture_sdist_requires_wrapper_metadata_and_helper(self):
+        for required in ("pyproject.toml", "stage_runtime.py", "clap_cpp/clap.py"):
+            with self.subTest(required=required):
+                self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", omitted=required)
+                self.assert_rejected("Sdist missing wrapper or staging helper")
+
+    def test_unit_fixture_sdist_rejects_native_graph_and_binaries(self):
+        for native in ("native/ggml/CMakeLists.txt", "clap_cpp/libclap.so", "clap_cpp/clap.dll", "clap_cpp/libclap.dylib"):
+            with self.subTest(native=native):
+                self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", extra=(native,))
+                self.assert_rejected("Sdist contains native sources or compiled runtime")
+
     def run_validator(self):
+        shutil.rmtree(self.root / "dist", ignore_errors=True)
         return subprocess.run([sys.executable, "-c", validator_source()], cwd=self.root, capture_output=True, text=True)
 
     def replace_cpu(self, **kwargs):

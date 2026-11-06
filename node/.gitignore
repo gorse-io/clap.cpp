@@ -1,10 +1,11 @@
 node_modules/
 installed/
 build/
-native/
-native-tests/
+runtime/
+dist/
+artifacts/
 LICENSE
-THIRD_PARTY_LICENSES/
 *.tgz
 test/*.log
 test/fixtures/
+test/tiny_models.py

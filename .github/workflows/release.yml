@@ -64,18 +64,74 @@ jobs:
         name: python-sdists
         path: dist/*.tar.gz
         if-no-files-found: error
-  build-python-wheels:
-    needs: build-python-sdist
+  build-libraries:
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os:
-        - ubuntu-24.04
-        - ubuntu-24.04-arm
-        - macos-15
-        - windows-2022
+        include:
+        - os: ubuntu-24.04
+          target: linux-x64
+          manylinux-arch: x86_64
+        - os: ubuntu-24.04-arm
+          target: linux-arm64
+          manylinux-arch: aarch64
+        - os: macos-15
+          target: darwin-arm64
+        - os: windows-2022
+          target: win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Compile Linux runtime at the manylinux_2_28 glibc floor
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        TARGET: ${{ matrix.target }}
+        MANYLINUX_ARCH: ${{ matrix.manylinux-arch }}
+      run: |
+        set -euo pipefail
+        docker run --rm -v "$PWD:/project" -w /project \
+          -e TARGET quay.io/pypa/manylinux_2_28_"$MANYLINUX_ARCH" \
+          bash -euxo pipefail -c '
+            export PATH=/opt/python/cp311-cp311/bin:$PATH
+            python -m pip install ninja
+            cmake --preset libraries -DGGML_METAL=OFF
+            cmake --build build/libraries --config Release --target clap --parallel 4
+            cmake --install build/libraries --config Release --component runtime --prefix "/project/libraries/$TARGET"
+            cp LICENSE "libraries/$TARGET/clap_cpp/licenses/clap.txt"
+          '
+    - name: Compile host shared runtime
+      if: runner.os != 'Linux'
+      uses: ./.github/actions/build-libraries
+      with:
+        target: ${{ matrix.target }}
+        cmake-args: ${{ runner.os == 'macOS' && '-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0' || '' }}
+    - uses: actions/upload-artifact@v4
+      with:
+        name: libraries-${{ matrix.target }}
+        path: libraries/${{ matrix.target }}/
+        if-no-files-found: error
+
+  build-python-wheels:
+    needs: [build-python-sdist, build-libraries]
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-24.04
+          target: linux-x64
+        - os: ubuntu-24.04-arm
+          target: linux-arm64
+        - os: macos-15
+          target: darwin-arm64
+        - os: windows-2022
+          target: win32-x64
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/download-artifact@v4
@@ -87,7 +143,11 @@ jobs:
       run: |
         mkdir python-dist
         tar -xzf sdist/clap_cpp-[0-9]*.tar.gz --strip-components=1 -C python-dist
-    - name: Build and test CPU wheels from source distribution
+    - uses: actions/download-artifact@v4
+      with:
+        name: libraries-${{ matrix.target }}
+        path: python-dist/external-runtime
+    - name: Package and test CPU wheels from canonical wrapper sdist and shared runtime
       uses: pypa/cibuildwheel@v4.3.4
       with:
         package-dir: python-dist
@@ -96,8 +156,12 @@ jobs:
         CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*
         CIBW_SKIP: '*-musllinux_* *-win32'
         CIBW_ARCHS: native
-        CIBW_ENVIRONMENT: CMAKE_BUILD_PARALLEL_LEVEL=4
-        CIBW_TEST_REQUIRES: pytest scikit-build-core>=1.0 mypy>=1.8 typing_extensions>=4.2
+        CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+        CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+        CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
+        # before-build only copies runtime files; wheel.cmake=false in the sdist.
+        CIBW_BEFORE_BUILD: python {package}/stage_runtime.py {package} {package}/external-runtime
+        CIBW_TEST_REQUIRES: pytest scikit-build-core>=1.1.2 mypy>=1.8 typing_extensions>=4.2
         CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
     - uses: actions/upload-artifact@v4
       with:
@@ -130,6 +194,9 @@ jobs:
       run:
         shell: bash
     steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     - uses: actions/download-artifact@v4
       with:
         name: python-sdists
@@ -158,13 +225,19 @@ jobs:
       run: |
         set -euo pipefail
         python -m pip install build ninja 'auditwheel>=6.4,<7' patchelf
-    - name: Build CUDA wheel
+    - name: Compile external CUDA shared runtime
       run: |
         set -euo pipefail
-        python -m build --wheel "$RUNNER_TEMP/clap-cuda" --outdir raw \
-          -Ccmake.define.GGML_CUDA=ON \
-          -Ccmake.define.GGML_STATIC=ON \
-          '-Ccmake.define.CMAKE_CUDA_ARCHITECTURES=50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real'
+        cmake --preset libraries -B build/python-cuda $CMAKE_ARGS \
+          -DGGML_CUDA=ON -DGGML_STATIC=ON \
+          '-DCMAKE_CUDA_ARCHITECTURES=50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real'
+        cmake --build build/python-cuda --config Release --target clap --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
+        cmake --install build/python-cuda --config Release --component runtime --prefix "$PWD/libraries/cuda"
+    - name: Stage runtime and package canonical CUDA wrapper sdist
+      run: |
+        set -euo pipefail
+        python "$RUNNER_TEMP/clap-cuda/stage_runtime.py" "$RUNNER_TEMP/clap-cuda" "libraries/cuda" --backend cuda
+        python -m build --wheel "$RUNNER_TEMP/clap-cuda" --outdir raw
     - name: Repair CUDA wheel
       run: |
         set -euo pipefail
@@ -204,6 +277,9 @@ jobs:
       run:
         shell: bash
     steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     - uses: actions/download-artifact@v4
       with:
         name: python-sdists
@@ -230,11 +306,18 @@ jobs:
       run: |
         set -euo pipefail
         python -m pip install build ninja 'auditwheel>=6.4,<7' patchelf
-    - name: Build Vulkan wheel
+    - name: Compile external VULKAN shared runtime
       run: |
         set -euo pipefail
-        python -m build --wheel "$RUNNER_TEMP/clap-vulkan" --outdir raw \
-          -Ccmake.define.GGML_VULKAN=ON
+        cmake --preset libraries -B build/python-vulkan $CMAKE_ARGS \
+          -DGGML_VULKAN=ON
+        cmake --build build/python-vulkan --config Release --target clap --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
+        cmake --install build/python-vulkan --config Release --component runtime --prefix "$PWD/libraries/vulkan"
+    - name: Stage runtime and package canonical VULKAN wrapper sdist
+      run: |
+        set -euo pipefail
+        python "$RUNNER_TEMP/clap-vulkan/stage_runtime.py" "$RUNNER_TEMP/clap-vulkan" "libraries/vulkan" --backend vulkan
+        python -m build --wheel "$RUNNER_TEMP/clap-vulkan" --outdir raw
     - name: Repair Vulkan wheel (Ubuntu 24.04 glibc floor)
       run: |
         set -euo pipefail
@@ -276,6 +359,9 @@ jobs:
       run:
         shell: bash
     steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     - uses: actions/download-artifact@v4
       with:
         name: python-sdists
@@ -314,15 +400,22 @@ jobs:
       run: |
         set -euo pipefail
         python -m pip install build ninja 'auditwheel>=6.4,<7' patchelf
-    - name: Build ROCm wheel
+    - name: Compile external ROCM shared runtime
       run: |
         set -euo pipefail
-        python -m build --wheel "$RUNNER_TEMP/clap-rocm" --outdir raw \
-          -Ccmake.define.GGML_HIP=ON \
-          -Ccmake.define.CMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
-          '-Ccmake.define.CMAKE_HIP_ARCHITECTURES=gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201' \
-          -Ccmake.define.CMAKE_INSTALL_RPATH=/opt/rocm/lib \
-          -Ccmake.define.GGML_HIP_RCCL=OFF -Ccmake.define.GGML_STATIC=OFF
+        cmake --preset libraries -B build/python-rocm $CMAKE_ARGS \
+          -DGGML_HIP=ON \
+          -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+          '-DCMAKE_HIP_ARCHITECTURES=gfx908;gfx90a;gfx942;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201' \
+          -DCMAKE_INSTALL_RPATH=/opt/rocm/lib \
+          -DGGML_HIP_RCCL=OFF -DGGML_STATIC=OFF
+        cmake --build build/python-rocm --config Release --target clap --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
+        cmake --install build/python-rocm --config Release --component runtime --prefix "$PWD/libraries/rocm"
+    - name: Stage runtime and package canonical ROCM wrapper sdist
+      run: |
+        set -euo pipefail
+        python "$RUNNER_TEMP/clap-rocm/stage_runtime.py" "$RUNNER_TEMP/clap-rocm" "libraries/rocm" --backend rocm
+        python -m build --wheel "$RUNNER_TEMP/clap-rocm" --outdir raw
     - name: Repair ROCm wheel, retaining system ROCm runtime
       run: |
         set -euo pipefail
@@ -445,8 +538,13 @@ jobs:
             names[name] += 1
             versions.add(version)
             with tarfile.open(source) as archive:
-                if not any('/native/ggml/CMakeLists.txt' in entry.name for entry in archive):
-                    raise SystemExit(f'Sdist missing pinned native sources: {source.name}')
+                entries = {entry.name.split('/', 1)[1] for entry in archive if '/' in entry.name and entry.isfile()}
+                package = name.replace('-', '_')
+                required = {'pyproject.toml', 'stage_runtime.py', f'{package}/clap.py'}
+                if not required <= entries:
+                    raise SystemExit(f'Sdist missing wrapper or staging helper: {source.name}: {required - entries}')
+                if any(entry.startswith('native/') or entry.endswith(('.so', '.dylib', '.dll', '.pyd')) for entry in entries):
+                    raise SystemExit(f'Sdist contains native sources or compiled runtime: {source.name}')
             if (dist / source.name).exists():
                 raise SystemExit(f'Duplicate release asset: {source.name}')
             shutil.copy2(source, dist)
@@ -476,8 +574,10 @@ jobs:
         ROCm GPU targets: gfx908,gfx90a,gfx942,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201.
         Linux wheels are auditwheel-repaired manylinux wheels; the external
         GPU runtimes above remain deliberate exceptions, not portability promises.
-        Source archives include pinned native sources; GPU source builds need
-        the corresponding vendor toolkit. CPU wheels pass installed-wheel tests; GPU execution is not tested here.
+        Source archives contain wrappers and stage_runtime.py, not native sources.
+        Compile native runtimes separately from a recursive checkout, then stage
+        them before packaging; Python wheel builds do not run CMake.
+        CPU wheels pass installed-wheel tests on Python 3.9-3.14; GPU execution is not tested here.
         ''')
         (dist / 'PYTHON-SHA256SUMS.txt').write_text(''.join(
             f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
@@ -670,6 +770,7 @@ jobs:
         run: cargo publish --manifest-path "$RUNNER_TEMP/package/Cargo.toml" --locked --no-verify
 
   build-node:
+    needs: build-libraries
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -681,8 +782,11 @@ jobs:
         working-directory: node
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          submodules: recursive
+          pattern: libraries-*
+          path: node/runtime
+          merge-multiple: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -694,10 +798,24 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: python ../.github/scripts/release-version.py "$RELEASE_TAG"
-      - name: Pack source distribution
+      - name: Arrange external runtime artifacts by npm target
         run: |
+          set -euo pipefail
+          for target in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
+            mv "runtime/libraries-$target" "runtime/$target"
+          done
+      - name: Pack main and all optional runtime packages
+        run: |
+          python ../.github/scripts/pack-node.py
           mkdir -p artifacts
-          npm pack --pack-destination artifacts
+          for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
+      - name: Validate all five package archives
+        env:
+          CLAP_CPP_REQUIRE_ALL_RUNTIMES: '1'
+        run: |
+          npm ci --ignore-scripts
+          npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-linux-x64-*.tgz
+          npm run test:packaging
       - uses: actions/upload-artifact@v4
         with:
           name: node-package
@@ -719,6 +837,9 @@ jobs:
       run:
         shell: bash
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
       - uses: actions/download-artifact@v4
         with:
           name: node-package
@@ -731,9 +852,10 @@ jobs:
           python-version: '3.11'
       - name: Install numerical oracle dependency
         run: python -m pip install numpy
-      - name: Install and test source distribution
+      - name: Verify npm selects and downloads only the host runtime
+        run: python .github/scripts/test-node-install.py --artifacts dist --prefix installed
+      - name: Test installed platform distribution
         run: |
-          npm install --prefix installed ./dist/*.tgz
           cd installed/node_modules/clap-cpp
           npm install --include=dev --ignore-scripts
           npm run test:fixtures
@@ -764,7 +886,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TAG: ${{ github.event.release.prerelease && 'next' || needs.build-node.outputs.npm-tag }}
-        run: npm publish ./dist/*.tgz --provenance --access public --tag "$NPM_TAG"
+        run: |
+          # All runtime packages must be available before publishing the wrapper.
+          for package in ./dist/gorse-clap-cpp-*.tgz; do
+            npm publish "$package" --provenance --access public --tag "$NPM_TAG"
+          done
+          npm publish ./dist/clap-cpp-*.tgz --provenance --access public --tag "$NPM_TAG"
 
   build-cpu:
     strategy:

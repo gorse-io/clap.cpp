@@ -1,8 +1,13 @@
-"""The Python distributions share the repository's native build entrypoint."""
+"""Package-only wheels consume an explicitly staged external C API runtime."""
 
 import importlib.util
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
+import tarfile
+import zipfile
 
 import pytest
 
@@ -13,113 +18,212 @@ except ImportError:
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+RUNTIME_NAME = "clap.dll" if sys.platform == "win32" else (
+    "libclap.dylib" if sys.platform == "darwin" else "libclap.so"
+)
 
 
 def metadata(path=PROJECT):
     return tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))
 
 
-def test_root_source_manifest():
-    config = metadata()["tool"]["scikit-build"]
-    manifest = config["sdist"]["force-include"]
-    assert manifest["../CMakeLists.txt"] == "native/CMakeLists.txt"
-    for directory in ("include", "src", "cmake", "ggml"):
-        assert manifest[f"../{directory}"] == f"native/{directory}"
-    assert not (PROJECT / "CMakeLists.txt").exists()
-    assert config["install"]["components"] == ["runtime"]
-    assert config["wheel"]["py-api"] == "py3"
-    assert not config.get("build", {}).get("targets")
-    defines = config["cmake"]["define"]
-    for key in ("CLAP_BUILD_CLI", "BUILD_TESTING", "GGML_NATIVE", "GGML_OPENMP",
-                "GGML_METAL", "GGML_CUDA", "GGML_HIP", "GGML_VULKAN", "GGML_AVX2"):
-        assert defines[key] == "OFF"
-    for key in ("BUILD_SHARED_LIBS", "CLAP_STATIC_DEPENDENCIES"):
-        assert defines[key] == "ON"
-    assert defines["CMAKE_INSTALL_LIBDIR"] == defines["CMAKE_INSTALL_BINDIR"] == "clap_cpp"
-    assert not any(key.startswith("CLAP_PYTHON") for key in defines)
-
-
-def test_supported_checkout_and_sdist_source_dirs(tmp_path, monkeypatch):
-    reader = pytest.importorskip("scikit_build_core.settings.skbuild_read_settings")
-    monkeypatch.chdir(tmp_path)
-    for from_sdist, expected in ((False, ".."), (True, "native")):
-        if from_sdist:
-            (tmp_path / "PKG-INFO").write_text("Metadata-Version: 2.1\n")
-        for state in ("wheel", "editable", "sdist"):
-            settings = reader.SettingsReader(metadata(), {}, state=state).settings
-            assert str(settings.cmake.source_dir) == expected
-
-
-@pytest.mark.parametrize("platform_name", ["darwin", "linux", "win32"])
-@pytest.mark.parametrize("from_sdist", [False, True])
-def test_platform_default_metal(tmp_path, monkeypatch, platform_name, from_sdist):
-    reader = pytest.importorskip("scikit_build_core.settings.skbuild_read_settings")
-    overrides = pytest.importorskip("scikit_build_core.settings.skbuild_overrides")
-    monkeypatch.chdir(tmp_path)
-    if from_sdist:
-        (tmp_path / "PKG-INFO").write_text("Metadata-Version: 2.1\n")
-    monkeypatch.setattr(overrides.sys, "platform", platform_name)
-    settings = reader.SettingsReader(metadata(), {}, state="wheel").settings
-    expected = "ON" if platform_name == "darwin" else "OFF"
-    assert settings.cmake.define["GGML_METAL"] == expected
-    assert settings.cmake.define["GGML_METAL_EMBED_LIBRARY"] == expected
-    assert settings.cmake.define["GGML_CPU"] == "ON"
-    assert settings.cmake.define["CLAP_BUILD_CLI"] == "OFF"
-    assert settings.cmake.define["CMAKE_INSTALL_LIBDIR"] == "clap_cpp"
-    assert str(settings.cmake.source_dir) == ("native" if from_sdist else "..")
-    settings = reader.SettingsReader(
-        metadata(), {"cmake.define.GGML_METAL": "OFF"}, state="wheel"
-    ).settings
-    assert settings.cmake.define["GGML_METAL"] == "OFF"
-
-
-@pytest.mark.parametrize("from_sdist", [False, True])
-@pytest.mark.parametrize("backend,flag", [("cuda", "CUDA"), ("rocm", "HIP"), ("vulkan", "VULKAN")])
-def test_backend_projects_share_root_manifest(tmp_path, from_sdist, backend, flag):
-    # Tiny source snapshot keeps these packaging regressions independent of
-    # submodules, compilers, native runtimes and GPU toolkits.
-    source = tmp_path / "checkout" / "python"
-    source.mkdir(parents=True)
-    shutil.copy2(PROJECT / "prepare_backend.py", source)
-    shutil.copy2(PROJECT / "pyproject.toml", source)
-    (source / "README.md").write_text("test package\n")
-    manifest = metadata()["tool"]["scikit-build"]["sdist"]["force-include"]
-    expected = {}
-    for original, target in manifest.items():
-        path = source / (target if from_sdist else original)
-        if Path(target).suffix or Path(target).name == "LICENSE":
-            path.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            path.mkdir(parents=True, exist_ok=True)
-            path /= "fixture.txt"
-        path.write_text(f"pinned {target}\n")
-        expected[str(Path(target) / "fixture.txt") if path.name == "fixture.txt" else target] = path.read_bytes()
-    (source / "clap_cpp").mkdir()
-    for name in ("clap.py", "clap.pyi", "py.typed"):
-        (source / "clap_cpp" / name).write_text(f"# {name}\n")
-    spec = importlib.util.spec_from_file_location("backend_generator", source / "prepare_backend.py")
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
-    generator = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(generator)
-    destination = tmp_path / "backend"
-    generator.prepare(backend, destination)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def copy_project(destination):
+    shutil.copytree(PROJECT, destination, ignore=shutil.ignore_patterns(
+        "__pycache__", ".pytest_cache", "dist", "build", "*.so", "*.dylib", "*.dll", "licenses"
+    ))
+    return destination
+
+
+def build(project, out, kind, env=None):
+    return subprocess.run(
+        [sys.executable, "-m", "build", "--no-isolation", f"--{kind}", "--outdir", str(out), str(project)],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+    )
+
+
+def test_package_only_settings(tmp_path, monkeypatch):
+    from scikit_build_core.settings.skbuild_read_settings import SettingsReader
+
+    monkeypatch.chdir(tmp_path)
+    config = metadata()
+    assert config["build-system"]["build-backend"] == "_build_backend"
+    assert config["build-system"]["backend-path"] == ["."]
+    assert "cmake" not in config["tool"]["scikit-build"]
+    assert "force-include" not in config["tool"]["scikit-build"]["sdist"]
+    for state in ("wheel", "editable", "sdist"):
+        reader = SettingsReader(config, {}, state=state)
+        reader.validate_may_exit()
+        settings = reader.settings
+        assert settings.wheel.cmake is False
+        assert settings.wheel.platlib is True
+        assert settings.wheel.py_api == "py3"
+        assert settings.sdist.cmake is False
+
+
+@pytest.mark.parametrize("backend", ["cuda", "rocm", "vulkan"])
+def test_backend_projects_wrapper_only(tmp_path, backend):
+    destination = tmp_path / backend
+    load("generator", PROJECT / "prepare_backend.py").prepare(backend, destination)
     config = metadata(destination)
     assert config["project"]["name"] == f"clap-cpp-{backend}"
     assert config["project"]["version"] == metadata()["project"]["version"]
     assert config["project"]["dependencies"] == []
-    build = config["tool"]["scikit-build"]
-    assert build["cmake"]["source-dir"] == "native"
-    assert build["install"]["components"] == ["runtime"]
-    assert build["wheel"]["py-api"] == "py3"
-    assert build["sdist"]["inclusion-mode"] == "manual"
-    assert "force-include" not in build["sdist"]
-    defines = build["cmake"]["define"]
-    expected_defines = metadata()["tool"]["scikit-build"]["cmake"]["define"].copy()
-    expected_defines.update({f"GGML_{flag}": "ON", "CMAKE_INSTALL_LIBDIR": f"clap_cpp_{backend}",
-                             "CMAKE_INSTALL_BINDIR": f"clap_cpp_{backend}"})
-    assert defines == expected_defines
-    assert not (destination / "CMakeLists.txt").exists()
-    for target, content in expected.items():
-        assert (destination / target).read_bytes() == content
+    settings = config["tool"]["scikit-build"]
+    assert settings["wheel"] == dict(packages=[f"clap_cpp_{backend}"], **{
+        "py-api": "py3", "cmake": False, "platlib": True,
+        "force-include": {f"clap_cpp_{backend}": f"clap_cpp_{backend}"},
+    })
+    assert "cmake" not in settings
+    assert not (destination / "native").exists()
+    assert not list(destination.rglob("CMakeLists.txt"))
+    for name in ("stage_runtime.py", "_build_backend.py", "LICENSE"):
+        assert (destination / name).read_bytes() == (PROJECT / name).read_bytes()
     for name in ("clap.py", "clap.pyi", "py.typed"):
-        assert (destination / f"clap_cpp_{backend}" / name).read_bytes() == (source / "clap_cpp" / name).read_bytes()
+        assert (destination / f"clap_cpp_{backend}" / name).read_bytes() == (PROJECT / "clap_cpp" / name).read_bytes()
+    result = build(destination, tmp_path / "missing-wheel", "wheel")
+    assert result.returncode != 0 and "stage_runtime.py" in result.stdout
+    result = build(destination, tmp_path / "dist", "sdist")
+    assert result.returncode == 0, result.stdout
+    with tarfile.open(next((tmp_path / "dist").glob("*.tar.gz"))) as archive:
+        names = archive.getnames()
+        assert any(n.endswith("/stage_runtime.py") for n in names)
+        assert any(n.endswith("/_build_backend.py") for n in names)
+        assert not any("/native/" in n or n.endswith((".so", ".dll", ".dylib")) for n in names)
+        archive.extractall(tmp_path / "extracted", filter="data")
+    source = next((tmp_path / "extracted").iterdir())
+    native = "clap.dll" if sys.platform == "win32" else ("libclap.dylib" if sys.platform == "darwin" else "libclap.so")
+    runtime = tmp_path / "runtime" / "clap_cpp"
+    runtime.mkdir(parents=True)
+    (runtime / native).write_bytes(b"backend packaging fixture, not executable")
+    load("backend_stage", source / "stage_runtime.py").stage(source, runtime.parent, backend)
+    result = build(source, tmp_path / "staged-wheel", "wheel")
+    assert result.returncode == 0, result.stdout
+    wheel = next((tmp_path / "staged-wheel").glob("*.whl"))
+    assert "-py3-none-" in wheel.name and not wheel.name.endswith("-any.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        assert archive.read(f"clap_cpp_{backend}/{native}") == (runtime / native).read_bytes()
+        assert f"clap_cpp_{backend}/licenses/clap-cpp.txt" in archive.namelist()
+
+
+@pytest.mark.parametrize("backend", [None, "cuda", "rocm", "vulkan"])
+def test_stage_runtime(tmp_path, backend):
+    stage = load("stage", PROJECT / "stage_runtime.py")
+    project = tmp_path / "project"
+    if backend:
+        load("generator", PROJECT / "prepare_backend.py").prepare(backend, project)
+    else:
+        copy_project(project)
+    runtime = tmp_path / "runtime"
+    (runtime / "clap_cpp" / "licenses").mkdir(parents=True)
+    (runtime / "clap_cpp" / "libclap.so").write_bytes(b"unit-test runtime, not executable")
+    (runtime / "clap_cpp" / "licenses" / "icu.txt").write_text("ICU notice")
+    (runtime / "clap_cpp" / "licenses" / "other.txt").write_text("companion notice")
+    (runtime / "clap_cpp" / "companions").mkdir()
+    (runtime / "clap_cpp" / "companions" / "libdependency.so.1").write_bytes(b"test companion")
+    stage.stage(project, runtime, backend=backend)
+    package = project / (f"clap_cpp_{backend}" if backend else "clap_cpp")
+    assert (package / "libclap.so").read_bytes() == (runtime / "clap_cpp" / "libclap.so").read_bytes()
+    assert (package / "licenses" / "icu.txt").read_text() == "ICU notice"
+    assert (package / "licenses" / "other.txt").read_text() == "companion notice"
+    assert (package / "companions" / "libdependency.so.1").exists()
+    assert (package / "licenses" / "clap-cpp.txt").read_bytes() == (PROJECT / "LICENSE").read_bytes()
+    assert (package / "clap.py").read_bytes() == (PROJECT / "clap_cpp" / "clap.py").read_bytes()
+
+
+@pytest.mark.parametrize("sibling", ["clap_cpp.libs", "licenses"])
+def test_stage_rejects_sibling_directories_without_relocation(tmp_path, sibling):
+    project = copy_project(tmp_path / "project")
+    runtime = tmp_path / "runtime"
+    (runtime / "clap_cpp").mkdir(parents=True)
+    (runtime / "clap_cpp" / RUNTIME_NAME).write_bytes(b"packaging fixture")
+    (runtime / sibling).mkdir()
+    (runtime / sibling / "companion.so").write_bytes(b"sibling payload")
+    with pytest.raises(ValueError, match="sibling"):
+        load("stage", PROJECT / "stage_runtime.py").stage(project, runtime)
+    assert not (project / "clap_cpp" / RUNTIME_NAME).exists()
+    assert not (project / "clap_cpp" / sibling).exists()
+    assert not (project / sibling).exists()
+
+
+def test_missing_runtime_and_wrapper_collision(tmp_path):
+    stage = load("stage", PROJECT / "stage_runtime.py")
+    project = copy_project(tmp_path / "project")
+    with pytest.raises((ValueError, FileNotFoundError), match="runtime"):
+        stage.stage(project, tmp_path / "absent")
+    runtime = tmp_path / "runtime"
+    (runtime / "clap_cpp").mkdir(parents=True)
+    with pytest.raises((ValueError, FileNotFoundError), match="runtime"):
+        stage.stage(project, runtime)
+    (runtime / "clap_cpp" / "libclap.so").write_bytes(b"test")
+    (runtime / "clap_cpp" / "clap.py").write_text("overwrite")
+    with pytest.raises(ValueError, match="wrapper"):
+        stage.stage(project, runtime)
+    assert not (project / "clap_cpp" / "libclap.so").exists()
+
+
+def test_missing_and_staged_wheel_sdist_contract(tmp_path):
+    project = copy_project(tmp_path / "project")
+    out = tmp_path / "dist"
+    # Any attempt to execute CMake/Ninja fails and leaves visible evidence.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    marker = tmp_path / "compiler-called"
+    for tool in ("cmake", "ninja", "cc", "c++"):
+        executable = tools / tool
+        executable.write_text(f'#!/bin/sh\nprintf called > "{marker}"\nexit 91\n')
+        executable.chmod(0o755)
+    env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ.get("PATH", ""))
+    result = subprocess.run(
+        [sys.executable, "-c", "import _build_backend as b; "
+         "assert b.get_requires_for_build_wheel() == []; "
+         "assert b.get_requires_for_build_sdist() == []; "
+         "b.prepare_metadata_for_build_wheel('metadata')"],
+        cwd=project, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    assert result.returncode == 0, result.stdout
+    assert list((project / "metadata").glob("*.dist-info/METADATA"))
+    result = build(project, out, "wheel", env)
+    assert result.returncode != 0
+    assert "stage_runtime.py" in result.stdout
+    assert not list(out.glob("*.whl"))
+    runtime = tmp_path / "runtime" / "clap_cpp"
+    runtime.mkdir(parents=True)
+    (runtime / RUNTIME_NAME).write_bytes(b"unit packaging payload only, not inference")
+    load("stage", PROJECT / "stage_runtime.py").stage(project, runtime.parent)
+    result = build(project, out, "wheel", env)
+    assert result.returncode == 0, result.stdout
+    wheel = next(out.glob("*.whl"))
+    assert "-py3-none-" in wheel.name and not wheel.name.endswith("-any.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        wheel_metadata = archive.read(next(n for n in archive.namelist() if n.endswith(".dist-info/WHEEL"))).decode()
+        assert "Root-Is-Purelib: false" in wheel_metadata
+        assert archive.read(f"clap_cpp/{RUNTIME_NAME}") == (runtime / RUNTIME_NAME).read_bytes()
+        assert "clap_cpp/clap.pyi" in archive.namelist()
+        assert "clap_cpp/py.typed" in archive.namelist()
+        assert "clap_cpp/licenses/clap-cpp.txt" in archive.namelist()
+    result = build(project, out, "sdist", env)
+    assert result.returncode == 0, result.stdout
+    extracted = tmp_path / "extracted"
+    with tarfile.open(next(out.glob("*.tar.gz"))) as archive:
+        names = archive.getnames()
+        assert len(names) == len(set(names))
+        assert not any("/native/" in n or n.endswith((".so", ".dylib", ".dll", ".cpp")) for n in names)
+        for name in ("stage_runtime.py", "prepare_backend.py", "_build_backend.py", "LICENSE", "clap_cpp/clap.pyi", "clap_cpp/py.typed"):
+            assert any(n.endswith("/" + name) for n in names)
+        archive.extractall(extracted, filter="data")
+    source = next(extracted.iterdir())
+    result = build(source, tmp_path / "from-sdist", "wheel", env)
+    assert result.returncode != 0 and "stage_runtime.py" in result.stdout
+    load("sdist_stage", source / "stage_runtime.py").stage(source, runtime.parent)
+    result = build(source, tmp_path / "from-sdist", "wheel", env)
+    assert result.returncode == 0, result.stdout
+    load("sdist_backend", source / "prepare_backend.py").prepare("cuda", tmp_path / "cuda")
+    assert not marker.exists()
