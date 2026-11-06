@@ -59,9 +59,12 @@ function checkNative(packed, target, version) {
   assert.deepEqual(manifest.cpu, [cpu]);
   assert.deepEqual(manifest.libc, osName === 'linux' ? ['glibc'] : undefined);
   for (const hook of lifecycle) assert.equal(manifest.scripts?.[hook], undefined);
-  const expected = ['package.json', 'README.md', 'LICENSE', `runtime/${platforms[target]}`,
-    ...['clap', 'ggml', 'icu', 'json', 'miniaudio'].map(name => `runtime/licenses/${name}.txt`)];
-  assert.deepEqual([...files].sort(), expected.sort(), `native package contents for ${target}`);
+  const expected = ['package.json', 'README.md', 'LICENSE', `runtime/clap_cpp/${platforms[target]}`,
+    ...['clap', 'ggml', 'icu', 'json', 'miniaudio'].map(name => `runtime/clap_cpp/licenses/${name}.txt`)];
+  for (const filename of expected) assert.ok(files.includes(filename), `missing ${target}: ${filename}`);
+  // Wheel-repair companion libraries retain their original relative layout.
+  assert.ok(files.every(filename => expected.includes(filename) || filename.startsWith('runtime/')));
+  assert.ok(!files.some(filename => /\.(py|pyi|pyc)$/.test(filename)), 'no Python dependency in native npm packages');
 }
 
 test('manifest declares exact-version optional packages and no native build hooks', () => {

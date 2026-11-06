@@ -25,7 +25,7 @@ function fixture(t, version = manifest.version) {
 }
 function load(dir, target, { missing = false, binary = true } = {}) {
   const [platform, arch] = target.split('-');
-  const runtime = path.join(dir, 'native/runtime', platforms[target] || 'unused');
+  const runtime = path.join(dir, 'native/runtime/clap_cpp', platforms[target] || 'unused');
   // Mock only resolution/existence at the selection boundary. No fake binary is
   // created or loaded; real ABI and inference are exercised by packaging tests.
   return spawnSync(process.execPath, ['-e', `
@@ -62,7 +62,7 @@ for (const target of Object.keys(platforms)) {
     const result = load(dir, target);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /selected runtime/);
-    assert.equal(result.stdout.trim(), path.join(dir, 'native/runtime', platforms[target]));
+    assert.equal(result.stdout.trim(), path.join(dir, 'native/runtime/clap_cpp', platforms[target]));
   });
 }
 
@@ -101,6 +101,6 @@ test('missing native library reports its exact path without falling back', t => 
   const result = load(dir, 'linux-x64', { binary: false });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Missing prebuilt clap runtime/);
-  assert.ok(result.stderr.includes(path.join(dir, 'native/runtime/libclap.so')));
+  assert.ok(result.stderr.includes(path.join(dir, 'native/runtime/clap_cpp/libclap.so')));
   assert.equal(result.stdout, '');
 });

@@ -24,7 +24,7 @@ const nativeManifest = require(nativeManifestPath);
 if (nativeManifest.version !== version) {
   throw new Error(`Native package version mismatch: clap-cpp@${version} requires ${packageName}@${version}, but found ${nativeManifest.version}. Reinstall matching package versions.`);
 }
-const runtime = path.join(path.dirname(nativeManifestPath), 'runtime', libraryName);
+const runtime = path.join(path.dirname(nativeManifestPath), 'runtime', 'clap_cpp', libraryName);
 if (!require('node:fs').existsSync(runtime)) {
   throw new Error(`Missing prebuilt clap runtime in ${packageName}@${version}: ${runtime}. Reinstall the optional native package; no source-build or system-library fallback is available.`);
 }

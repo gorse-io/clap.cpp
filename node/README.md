@@ -25,12 +25,11 @@ Keep optional dependencies enabled; do not install with `--omit=optional` or
 Linux native manifests declare `libc: ["glibc"]` as well as `os` and `cpu`;
 other native manifests declare their matching `os` and `cpu`.
 
-Linux release builds use Ubuntu 22.04 and require glibc and the system C++
-runtime (`libstdc++`); musl-based distributions such as Alpine are not supported.
-There is no musl binary or source-build fallback. The macOS deployment target is
-explicitly set to 15.0, rather than inheriting the build runner's default.
-Cross-platform release tests run on the declared build platforms; they do not
-establish compatibility with older Linux distributions.
+Linux release runtimes are reused from the repaired Python CPU manylinux wheels
+and require glibc plus the system C++ runtime (`libstdc++`). The original wheel
+platform tags record the libc floor; musl-based distributions such as Alpine are
+not supported. macOS uses the Python wheel's deployment target. Cross-platform
+checks do not establish compatibility with older operating systems.
 
 Consumers do not need CMake, a C++ compiler, a Git checkout, Python, or FFmpeg.
 There are no clap-cpp install, build, rebuild, or prepack hooks, and the npm
@@ -48,52 +47,51 @@ embedded shader library; Linux and Windows runtimes are CPU-only. OpenMP, other
 GPU backends and host-specific CPU instruction flags are disabled for
 portability. The wrapper resolves the matching native package's `package.json`
 with `require.resolve`, checks its version, then loads only that package's
-`runtime/libclap.so`, `runtime/libclap.dylib`, or `runtime/clap.dll`. Native packages
-contain only their manifest, README, root LICENSE, library and dependency notices
-in `runtime/licenses/`.
+`runtime/clap_cpp/libclap.so`, `runtime/clap_cpp/libclap.dylib`, or
+`runtime/clap_cpp/clap.dll`. Native packages preserve the wheel's native layout,
+including any repair-generated companion libraries and dependency license
+notices. They do not include Python code or require Python at runtime.
 
 ## Building and packaging from a checkout
 
-Native builds are a separate maintainer step, using the repository-root CMake
-graph, CMake 3.20+ and a C++20 compiler. Initialize the pinned submodules first.
+The native library is built **once**, by Python's existing wheel build using the
+repository-root CMake graph. Node CI downloads its tested Python wheel; release
+packaging reuses the already repaired/tested CPU wheels on all four platforms.
+There is no separate Node native build graph, preset or compiler invocation.
+
 For example, on a Linux x64 host, run these commands from the repository root:
 
 ```sh
 git submodule update --init --recursive
-cmake --preset node-linux-x64 -B build/node-linux-x64
-cmake --build build/node-linux-x64 --config Release --target clap --parallel 4
-cmake --install build/node-linux-x64 --config Release --component runtime \
-  --prefix "$PWD/node/runtime/linux-x64"
-cp LICENSE node/LICENSE
-cp python/tests/tiny_models.py node/test/tiny_models.py
+python3 -m pip install build packaging
+python3 -m build python --outdir wheels
+python3 .github/scripts/extract-python-runtime.py --wheels wheels --output node/runtime --target linux-x64
 python3 .github/scripts/pack-node.py --runtime-root node/runtime --output node/dist --target linux-x64
 cd node
-npm ci --omit=optional
+npm ci --ignore-scripts
 mkdir -p artifacts
-(cd dist/clap-cpp-linux-x64 && npm pack --pack-destination ../../artifacts)
-(cd dist/clap-cpp && npm pack --pack-destination ../../artifacts)
-# Install the actual host runtime locally without changing manifest/lock versions.
-npm install --no-save --package-lock=false ./artifacts/gorse-clap-cpp-linux-x64-0.1.0.tgz
+for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
+npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-linux-x64-*.tgz
 npm run test:fixtures
 npm test
 npm run test:types
 npm run test:packaging
 ```
 
-The root `node-linux-x64`, `node-linux-arm64`, `node-darwin-arm64`, and
-`node-win32-x64` presets carry the complete shared-library, static-dependency and
-portability settings, including a flat CMake install layout. Build each runtime
-on its matching host/toolchain, then collect the four installed directories into
-`node/runtime/`. The external `.github/scripts/pack-node.py` stages the main
-package in `node/dist/clap-cpp` and each native package in
-`node/dist/clap-cpp-<platform>-<arch>`. Omit `--target` to require and stage all
-four targets; repeat `--target` to select a subset. Pack each staged directory
-with npm, publish the native packages first, then publish `clap-cpp` at the same
-version. The example tarball filename uses the current `0.1.0` version; adjust it
-when the main package version changes. Linux presets select
-native ARM64/x64 hosts; they do not configure cross-compilers. On Windows, use
-PowerShell `Copy-Item` instead of `cp` and an absolute install prefix. No npm step
-builds or vendors the core library.
+The external extractor copies native bytes and notices from each `py3-none`
+CPU wheel without recompiling, preserving library-relative dependency paths.
+Python's wrappers/metadata are not shipped in the native npm packages. Both pip
+and npm distributions carry their own copy of the **same compiled artifact**;
+npm does not locate or depend on a Python installation.
+
+The external `.github/scripts/pack-node.py` stages the main package in
+`node/dist/clap-cpp` and each native package in
+`node/dist/clap-cpp-<platform>-<arch>`. Omit `--target` in extraction and staging
+to require all four targets; stage packages again after source changes. Publish
+all native packages first, then publish `clap-cpp` at the same version. Maintainer
+wheel builds need Python, CMake 3.20+ and a C++20 compiler; npm consumers do not.
+Keep Koffi's optional prebuilt dependencies enabled, even in maintainer installs;
+`--omit=optional` would also remove its platform binaries.
 
 Packaging tests inspect real main and native tarballs, install both explicitly
 outside the checkout, generate fixtures using the installed

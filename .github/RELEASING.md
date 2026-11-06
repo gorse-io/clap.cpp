@@ -15,8 +15,10 @@ a small `clap-cpp` wrapper plus four separate optional packages:
 `@gorse/clap-cpp-darwin-arm64`, and `@gorse/clap-cpp-win32-x64`.
 The wrapper pins their versions exactly. npm uses each package's `os`/`cpu`
 (and Linux `libc: glibc`) constraints to install only the matching runtime.
-No clap.cpp install hook compiles or downloads binaries. The release builds
-shared libraries externally, stages packages with `.github/scripts/pack-node.py`,
+No clap.cpp install hook compiles or downloads binaries. The release reuses the shared libraries from the existing repaired/tested
+Python CPU wheels, preserving native bytes and library-relative companion paths.
+It extracts runtimes with `.github/scripts/extract-python-runtime.py`, stages
+packages with `.github/scripts/pack-node.py`,
 and tests actual npm selection against a temporary local registry on all four
 platforms before publishing. All native packages publish before the wrapper.
 The macOS runtime enables embedded Metal; Linux and Windows are CPU-only.
@@ -61,13 +63,10 @@ only exercised when a release is published and registry authorization is ready.
 python -m unittest discover -s .github/scripts -v
 python -m unittest discover -s rust/tests -p test_package.py -v
 cargo package --allow-dirty -j 3
-cmake --preset node-linux-x64
-cmake --build build/node-runtime --config Release --target clap --parallel 4
-cmake --install build/node-runtime --config Release --component runtime --prefix "$PWD/node/runtime/linux-x64"
-cp LICENSE node/LICENSE
-cp python/tests/tiny_models.py node/test/tiny_models.py
+python -m build python --outdir wheels
+python .github/scripts/extract-python-runtime.py --wheels wheels --output node/runtime --target linux-x64
 cd node
-npm ci --omit=optional
+npm ci --ignore-scripts
 python ../.github/scripts/pack-node.py --target linux-x64
 mkdir -p artifacts
 for package in dist/*; do npm pack "./$package" --pack-destination artifacts; done
@@ -86,8 +85,8 @@ The checkout must contain the pinned initialized submodules. The repository-root
 Rust package includes original native sources and upstream licenses directly.
 Node platform packages include only staged prebuilt runtimes and licenses, not
 native sources or build scripts. The main package contains no shared libraries. Do not commit generated runtimes, fixture copies or
-archives. See `node/README.md` for the other platform presets; release packaging
+archives. See `node/README.md` for wheel reuse and platform packages; release packaging
 requires all four runtimes (omit `--target` when staging). Registry selection
 tests use a local test registry with real tarballs, not a live npm publication.
-CMake and a C++20 compiler are needed only for the separate native build; Python
+CMake and a C++20 compiler are needed only for the Python wheel build; Python
 is needed for the maintainer tests, not npm installation.

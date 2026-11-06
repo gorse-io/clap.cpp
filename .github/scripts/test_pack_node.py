@@ -31,7 +31,7 @@ class NodePackageTest(unittest.TestCase):
             (root / 'python/tests/tiny_models.py').write_text('unit fixture generator')
             runtimes = root / 'runtimes'
             for target, library in PACK.TARGETS.items():
-                runtime = runtimes / target
+                runtime = runtimes / target / 'clap_cpp'
                 (runtime / 'licenses').mkdir(parents=True)
                 (runtime / library).write_bytes(b'non-executable unit fixture')
                 for name in ['ggml', 'icu', 'json', 'miniaudio']:
@@ -54,10 +54,10 @@ class NodePackageTest(unittest.TestCase):
                 self.assertEqual(metadata['cpu'], [arch])
                 self.assertEqual(metadata['version'], main['version'])
                 self.assertEqual(metadata.get('libc'), ['glibc'] if os_name == 'linux' else None)
-                self.assertTrue((package / f'runtime/{library}').is_file())
+                self.assertTrue((package / f'runtime/clap_cpp/{library}').is_file())
                 self.assertFalse((package / 'index.js').exists())
             # An incomplete input must fail before replacing reviewed output.
-            (runtimes / 'linux-x64/libclap.so').unlink()
+            (runtimes / 'linux-x64/clap_cpp/libclap.so').unlink()
             with self.assertRaisesRegex(ValueError, 'Missing linux-x64 runtime input'):
                 PACK.stage(runtimes, output, ['linux-x64'], root)
             self.assertTrue((output / 'clap-cpp/package.json').is_file())

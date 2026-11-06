@@ -22,7 +22,7 @@ def stage(runtime_root, output, targets, root=ROOT):
     }
     # Validate the complete requested input before replacing any staged package.
     for target in targets:
-        runtime = runtime_root / target
+        runtime = runtime_root / target / 'clap_cpp'
         for name in [TARGETS[target], *[f'licenses/{name}.txt' for name in
                                       ['ggml', 'icu', 'json', 'miniaudio']]]:
             if not (runtime / name).is_file():
@@ -51,10 +51,9 @@ def stage(runtime_root, output, targets, root=ROOT):
         package = output / f'clap-cpp-{target}'
         package.mkdir()
         runtime = package / 'runtime'
-        runtime.mkdir()
-        shutil.copy2(runtime_root / target / TARGETS[target], runtime / TARGETS[target])
-        shutil.copytree(runtime_root / target / 'licenses', runtime / 'licenses')
-        shutil.copy2(root / 'LICENSE', runtime / 'licenses/clap.txt')
+        # Retain wheel repair's $ORIGIN-relative companion directories verbatim.
+        shutil.copytree(runtime_root / target, runtime)
+        shutil.copy2(root / 'LICENSE', runtime / 'clap_cpp/licenses/clap.txt')
         shutil.copy2(root / 'LICENSE', package / 'LICENSE')
         (package / 'README.md').write_text(
             f'# @gorse/clap-cpp-{target}\n\n'

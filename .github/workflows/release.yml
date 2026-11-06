@@ -669,37 +669,8 @@ jobs:
         # Cargo.toml.orig and VCS metadata, not the normalized manifest or sources.
         run: cargo publish --manifest-path "$RUNNER_TEMP/package/Cargo.toml" --locked --no-verify
 
-  build-node-runtime:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            runtime: linux-x64
-          - os: ubuntu-22.04-arm
-            runtime: linux-arm64
-          - os: macos-15
-            runtime: darwin-arm64
-          - os: windows-2022
-            runtime: win32-x64
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: ./.github/actions/node-runtime
-        with:
-          runtime: ${{ matrix.runtime }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: node-runtime-${{ matrix.runtime }}
-          path: node/runtime
-          if-no-files-found: error
-
   build-node:
-    needs: build-node-runtime
+    needs: build-python-wheels
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -713,8 +684,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: node-runtime-*
-          path: node/runtime
+          pattern: python-wheels-*
+          path: node/python-wheels
           merge-multiple: true
       - uses: actions/setup-node@v4
         with:
@@ -727,6 +698,12 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: python ../.github/scripts/release-version.py "$RELEASE_TAG"
+      - name: Extract the tested Python CPU wheel runtimes
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python -m pip install packaging
+          python ../.github/scripts/extract-python-runtime.py --wheels python-wheels --output runtime --version "$RELEASE_TAG"
       - name: Pack main and all optional runtime packages
         run: |
           python ../.github/scripts/pack-node.py
@@ -736,7 +713,7 @@ jobs:
         env:
           CLAP_CPP_REQUIRE_ALL_RUNTIMES: '1'
         run: |
-          npm ci --omit=optional
+          npm ci --ignore-scripts
           npm install --no-save --package-lock=false --ignore-scripts ./artifacts/gorse-clap-cpp-linux-x64-*.tgz
           npm run test:packaging
       - uses: actions/upload-artifact@v4
