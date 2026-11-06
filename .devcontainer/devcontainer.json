@@ -1,0 +1,10 @@
+{
+  "name": "clap.cpp",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {}
+  },
+  "postCreateCommand": "git submodule update --init --recursive"
+}
