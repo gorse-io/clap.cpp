@@ -58,34 +58,6 @@ clap serve --model model.gguf --host 127.0.0.1 --port 8080
 
 The model is loaded once at startup. Its API identifier is the GGUF **filename**
 (`model.gguf` in this example), not its full path or a Hugging Face repository ID.
-
-HTTP handlers validate JSON and decode audio before submitting owned inputs to
-an inference FIFO. One dedicated worker owns the model, including tokenization
-and destruction. All inputs in one HTTP request run together, in input order;
-this is request scheduling, **not** true model batching or parallel inference.
-
-`--queue-capacity N` sets the maximum number of **waiting inference requests**
-(default: `64`, positive integer), excluding the one running request. A full or
-stopping queue returns HTTP **503** with the existing JSON `error` shape and
-`type: "server_error"`; callers can retry with backoff. This limit is not an HTTP
-connection limit or a byte budget: HTTP parsing/decoding and the HTTP library's
-connection backlog are separate, and each request may contain up to 1024 inputs
-within the existing 32 MiB body limit.
-
-Fatal transport failures (such as TCP resets) are checked while preparing inputs
-and waiting (every 25 ms). A TCP FIN alone is **not** cancellation: it cannot
-portably distinguish a client that closed completely from one that only closed
-its write side and is still reading the response. Gracefully disconnected
-requests may therefore finish inference. Explicitly abandoning a scheduler
-waiter removes queued work immediately; detected fatal transport failures do
-the same. Running work stops between inputs (or after the current C API call),
-not inside a model operation. SIGINT/SIGTERM
-request orderly shutdown: stop accepting connections, reject new inference,
-cancel queued requests, let any current model call finish, and join the worker
-before destroying the model on its owner thread. Shutdown can therefore take as
-long as an in-flight model call and HTTP handler cleanup. Forced process kills
-(including Windows `TerminateProcess`) cannot run this cleanup.
-
 Send an OpenAI-compatible text embeddings request:
 
 ```sh
