@@ -15,7 +15,8 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 int cmd_server(const std::string &host, int port, const std::string &model_path, int threads,
-               const std::string &device = {});
+               const std::string &device = {}, std::size_t queue_capacity = 64);
