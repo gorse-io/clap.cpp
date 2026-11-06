@@ -1,7 +1,7 @@
+# Generated from pyproject.toml.j2; render for cpu, cuda, rocm or vulkan.
 [build-system]
 requires = ["scikit-build-core>=1.1.2"]
-build-backend = "_build_backend"
-backend-path = ["."]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "clap-cpp"
@@ -20,19 +20,21 @@ rocm = ["clap-cpp-rocm==0.1.0"]
 vulkan = ["clap-cpp-vulkan==0.1.0"]
 
 [tool.scikit-build]
-minimum-version = "build-system.requires"
-wheel.packages = ["clap_cpp"]
-# Wheel payload includes the staged runtime despite the wrapper-only sdist list.
-wheel.force-include = { clap_cpp = "clap_cpp" }
-# Package an externally built C ABI runtime, never configure or compile it here.
+minimum-version = "1.1.2"
 wheel.cmake = false
 wheel.platlib = true
 wheel.py-api = "py3"
+wheel.packages = []
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**", "**/*.j2"]
 sdist.cmake = false
-# Explicit wrapper-only inventory also excludes staged binaries and their notices.
+sdist.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**", "**/*.j2"]
 sdist.inclusion-mode = "explicit"
-sdist.include = ["pyproject.toml", "README.md", "LICENSE", "_build_backend.py", "stage_runtime.py", "prepare_backend.py", "clap_cpp/*.py", "clap_cpp/*.pyi", "clap_cpp/py.typed", "tests/**"]
-sdist.exclude = ["**/__pycache__/**", "**/.pytest_cache/**"]
+# Never ship staged binaries, companion data or runtime notices in source archives.
+sdist.include = ["/pyproject.toml", "/README.md", "/LICENSE", "/clap_cpp/*.py", "/clap_cpp/*.pyi", "/clap_cpp/py.typed"]
+
+[tool.scikit-build.wheel.force-include]
+# Include Git-ignored external payloads without broadening the source archive.
+"clap_cpp" = "clap_cpp"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

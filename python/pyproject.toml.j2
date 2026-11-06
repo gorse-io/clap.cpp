@@ -1,0 +1,44 @@
+{% set backend = backend | default('cpu') -%}
+{% set version = version | default('0.1.0') -%}
+{% set package = 'clap_cpp' ~ ('_' ~ backend if backend != 'cpu' else '') -%}
+# Generated from pyproject.toml.j2; render for cpu, cuda, rocm or vulkan.
+[build-system]
+requires = ["scikit-build-core>=1.1.2"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "{{ package | replace('_', '-') }}"
+version = "{{ version }}"
+description = "{{ 'Python bindings for clap.cpp audio and text embeddings' if backend == 'cpu' else backend | upper ~ ' backend for clap-cpp' }}"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+{% if backend == 'cpu' %}
+[project.optional-dependencies]
+test = ["pytest>=7", "mypy>=1.8", "typing_extensions>=4.2"]
+cuda = ["clap-cpp-cuda=={{ version }}"]
+rocm = ["clap-cpp-rocm=={{ version }}"]
+vulkan = ["clap-cpp-vulkan=={{ version }}"]
+{% endif %}
+[tool.scikit-build]
+minimum-version = "1.1.2"
+wheel.cmake = false
+wheel.platlib = true
+wheel.py-api = "py3"
+wheel.packages = []
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**", "**/*.j2"]
+sdist.cmake = false
+sdist.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**", "**/*.j2"]
+sdist.inclusion-mode = "explicit"
+# Never ship staged binaries, companion data or runtime notices in source archives.
+sdist.include = ["/pyproject.toml", "/README.md", "/LICENSE", "/{{ package }}/*.py", "/{{ package }}/*.pyi", "/{{ package }}/py.typed"]
+
+[tool.scikit-build.wheel.force-include]
+# Include Git-ignored external payloads without broadening the source archive.
+"{{ package }}" = "{{ package }}"
+{% if backend == 'cpu' %}
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+{% endif %}

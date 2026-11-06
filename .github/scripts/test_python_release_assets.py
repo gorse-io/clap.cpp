@@ -38,7 +38,15 @@ def unit_wheel(root, distribution="clap_cpp", platform=PLATFORMS[0], interpreter
             archive.writestr(f"{distribution}/clap.cpython-311-x86_64-linux-gnu.so", b"UNIT FIXTURE, NOT NATIVE CODE")
         else:
             directory = "wrong_package" if payload == "wrong-package" else distribution
-            archive.writestr(f"{directory}/{native}", b"UNIT FIXTURE, NOT NATIVE CODE")
+            archive.writestr(f"{directory}/{native}", (b"" if payload == "empty" else b"invalid" if payload == "invalid" else
+                             (b"MZ" if platform == "win_amd64" else b"\xcf\xfa\xed\xfe" if platform.startswith("macosx_") else b"\x7fELF")
+                             + b"UNIT FIXTURE, NOT NATIVE CODE"))
+        if payload != "missing-notice":
+            archive.writestr(f"{distribution}/licenses/clap-cpp.txt", "" if payload == "empty-notice" else "UNIT FIXTURE notice")
+        if payload == "tests":
+            archive.writestr(f"{distribution}/tests/test_leaked.py", "# TEST FIXTURE")
+        if payload == "template":
+            archive.writestr(f"{distribution}/unused.j2", "UNIT FIXTURE template")
     return path
 
 
@@ -59,7 +67,8 @@ class PythonReleaseAssetsTest(unittest.TestCase):
     def unit_sdist(self, source, distribution, omitted=None, extra=()):
         """Write wrapper-only UNIT FIXTURE source archives for the real heredoc."""
         with tarfile.open(source, "w:gz") as archive:
-            for name in ("pyproject.toml", "stage_runtime.py", f"{distribution}/clap.py", *extra):
+            for name in ("pyproject.toml", "README.md", "LICENSE",
+                         *(f"{distribution}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed")), *extra):
                 if name == omitted:
                     continue
                 data = b"# UNIT FIXTURE wrapper packaging input\n"
@@ -67,17 +76,46 @@ class PythonReleaseAssetsTest(unittest.TestCase):
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
 
-    def test_unit_fixture_sdist_requires_wrapper_metadata_and_helper(self):
-        for required in ("pyproject.toml", "stage_runtime.py", "clap_cpp/clap.py"):
-            with self.subTest(required=required):
-                self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", omitted=required)
-                self.assert_rejected("Sdist missing wrapper or staging helper")
+    def test_unit_fixture_sdist_requires_wrapper_and_rendered_metadata(self):
+        for distribution in DISTRIBUTIONS:
+            for required in ("pyproject.toml", "README.md", "LICENSE",
+                             *(f"{distribution}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed"))):
+                with self.subTest(distribution=distribution, required=required):
+                    source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
+                    self.unit_sdist(source, distribution, omitted=required)
+                    self.assert_rejected("Sdist missing wrapper or packaging input")
+                    self.unit_sdist(source, distribution)
 
     def test_unit_fixture_sdist_rejects_native_graph_and_binaries(self):
-        for native in ("native/ggml/CMakeLists.txt", "clap_cpp/libclap.so", "clap_cpp/clap.dll", "clap_cpp/libclap.dylib"):
+        for native in ("native/ggml/CMakeLists.txt", "CMakeLists.txt", "cmake/helpers.cmake", "src/clap.cpp",
+                       "clap_cpp/libclap.so", "clap_cpp/clap.dll", "clap_cpp/libclap.dylib"):
             with self.subTest(native=native):
                 self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", extra=(native,))
                 self.assert_rejected("Sdist contains native sources or compiled runtime")
+
+    def test_published_archives_reject_tests(self):
+        for distribution in DISTRIBUTIONS:
+            with self.subTest(distribution=distribution):
+                source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
+                self.unit_sdist(source, distribution, extra=("tests/test_leaked.py",))
+                self.assert_rejected("Sdist contains tests")
+                self.unit_sdist(source, distribution)
+                unit_wheel(self.artifacts, distribution=distribution, payload="tests")
+                self.assert_rejected("Wheel contains tests")
+                unit_wheel(self.artifacts, distribution=distribution)
+
+    def test_published_archives_reject_jinja_templates(self):
+        for distribution in DISTRIBUTIONS:
+            for template in ("pyproject.toml.j2", f"{distribution}/unused.j2"):
+                with self.subTest(distribution=distribution, template=template):
+                    source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
+                    self.unit_sdist(source, distribution, extra=(template,))
+                    self.assert_rejected("Sdist contains Jinja template")
+                    self.unit_sdist(source, distribution)
+            with self.subTest(distribution=distribution, archive="wheel"):
+                unit_wheel(self.artifacts, distribution=distribution, payload="template")
+                self.assert_rejected("Wheel contains Jinja template")
+                unit_wheel(self.artifacts, distribution=distribution)
 
     def run_validator(self):
         shutil.rmtree(self.root / "dist", ignore_errors=True)
@@ -113,6 +151,18 @@ class PythonReleaseAssetsTest(unittest.TestCase):
         self.replace_cpu(payload="extension")
         self.assert_rejected("package-local native library")
 
+    def test_unit_fixture_empty_or_invalid_native_rejected(self):
+        for payload in ("empty", "invalid"):
+            with self.subTest(payload=payload):
+                self.replace_cpu(payload=payload)
+                self.assert_rejected("Invalid package-local native library")
+
+    def test_unit_fixture_runtime_notice_required(self):
+        for payload in ("missing-notice", "empty-notice"):
+            with self.subTest(payload=payload):
+                self.replace_cpu(payload=payload)
+                self.assert_rejected("Missing runtime notices")
+
     def test_unit_fixture_missing_wrapper_rejected(self):
         self.replace_cpu(payload="missing-wrapper")
         self.assert_rejected("ctypes wrapper")
@@ -145,6 +195,46 @@ class PythonReleaseAssetsTest(unittest.TestCase):
             directory.mkdir()
             (directory / MANIFEST).write_text("UNIT-FIXTURE-SONAME.so\n")
         self.assert_rejected("ROCm exclusion manifest")
+
+    def test_actions_runtime_gates_reject_invalid_staging(self):
+        # Execute all five real Actions heredocs, not a test copy of the checks.
+        ci = WORKFLOW.with_name("ci.yml")
+        cases = [(ci, "Package Python with the shared runtime", "build/python-package/clap_cpp"),
+                 (WORKFLOW, "Copy external runtime into the CPU wrapper project", "python-dist/clap_cpp")]
+        cases += [(WORKFLOW, f"Stage runtime and package canonical {backend.upper()} wrapper sdist",
+                   f"runner/clap-{backend}/clap_cpp_{backend}") for backend in ("cuda", "vulkan", "rocm")]
+        native = "clap.dll" if sys.platform == "win32" else "libclap.dylib" if sys.platform == "darwin" else "libclap.so"
+        magic = b"MZ" if sys.platform == "win32" else b"\xcf\xfa\xed\xfe" if sys.platform == "darwin" else b"\x7fELF"
+        for workflow, step_name, path in cases:
+            step = workflow.read_text().split(f"- name: {step_name}\n", 1)[1]
+            block = step.split("python - <<'PY'\n", 1)[1]
+            source = textwrap.dedent(block.split("\n" + " " * (10 if workflow == ci else 8) + "PY\n", 1)[0])
+            package = self.root / path
+            package.mkdir(parents=True, exist_ok=True)
+            runtime = package / native
+            notice = package / "licenses/clap-cpp.txt"
+            notice.parent.mkdir(exist_ok=True)
+            for payload, license_text, error in ((None, "notice", "Missing staged external runtime"),
+                                                (b"", "notice", "Missing staged external runtime"),
+                                                (b"invalid", "notice", "Invalid staged external runtime"),
+                                                (magic, None, "Missing runtime notices"),
+                                                (magic, "  ", "Missing runtime notices"),
+                                                (magic + b"UNIT FIXTURE, NOT NATIVE CODE", "notice", None)):
+                with self.subTest(step=step_name, payload=payload, license_text=license_text):
+                    runtime.unlink(missing_ok=True)
+                    notice.unlink(missing_ok=True)
+                    if payload is not None:
+                        runtime.write_bytes(payload)
+                    if license_text is not None:
+                        notice.write_text(license_text)
+                    result = subprocess.run([sys.executable, "-c", source], cwd=self.root,
+                                            env=dict(os.environ, RUNNER_TEMP=str(self.root / "runner")),
+                                            capture_output=True, text=True)
+                    if error:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn(error, result.stderr)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
 
     @unittest.skipUnless(os.environ.get("CLAP_TEST_CPU_WHEEL"), "set CLAP_TEST_CPU_WHEEL for real built wheel inspection")
     def test_actual_built_cpu_payload_and_unrepaired_release_rejection(self):
