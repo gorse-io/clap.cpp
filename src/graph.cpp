@@ -325,9 +325,10 @@ ggml_tensor *Graph::matmul(ggml_tensor *weight, ggml_tensor *input, bool offload
 ggml_tensor *Graph::linear(ggml_tensor *x, const LayerWeights &weights) {
     const std::string name = ggml_get_name(weights.weight);
     ggml_tensor *w;
-    if (runtime.f32_activations && weights.weight->type != GGML_TYPE_F32) {
-        // Use canonical GGML CPU dequantization. Some GPU casts round decoded
-        // quantized weights through F16, violating the F32 activation contract.
+    if ((runtime.f32_activations || weights.weight->type == GGML_TYPE_BF16) && weights.weight->type != GGML_TYPE_F32) {
+        // BF16 native matmul also packs F32 activations to BF16. Decode the
+        // current operand in the graph instead of expanding the mapped model.
+        // Keep casts on CPU: some GPU casts round decoded weights through F16.
         w = weight(weights.weight);
         cpu_nodes.push_back(w);
     } else

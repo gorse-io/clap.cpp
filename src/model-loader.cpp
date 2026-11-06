@@ -146,13 +146,14 @@ void ModelLoader::load(const std::string &path, bool inference) {
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         auto *w = weight(gguf_get_tensor_name(gguf, i));
         const std::string tensor_name = gguf_get_tensor_name(gguf, i);
-        if ((bundled && tensor_name.rfind("mert.", 0) == 0) && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16)
-            throw std::runtime_error("CLAP: MERT supports F32/F16 weights only");
+        if ((bundled && tensor_name.rfind("mert.", 0) == 0) && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16 &&
+            w->type != GGML_TYPE_BF16)
+            throw std::runtime_error("CLAP: MERT supports F32/F16/BF16 weights only");
         if (encoder_architecture(arch) && ggml_is_quantized(w->type) && !encoder_quantizable(w, arch))
             throw std::runtime_error("CLAP: quantized non-dense/embedding tensor is unsupported: " + tensor_name);
-        if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_Q8_0 ||
-              w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K))
-            throw std::runtime_error("CLAP: only F32/F16/Q8_0/Q4_K/Q6_K weights supported");
+        if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_BF16 ||
+              w->type == GGML_TYPE_Q8_0 || w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K))
+            throw std::runtime_error("CLAP: only F32/F16/BF16/Q8_0/Q4_K/Q6_K weights supported");
         const size_t offset = gguf_get_tensor_offset(gguf, i);
         if (!(offset <= mapping_size - data_offset && ggml_nbytes(w) <= mapping_size - data_offset - offset))
             throw std::runtime_error("CLAP: truncated tensor data");
