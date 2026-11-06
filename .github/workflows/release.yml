@@ -20,7 +20,7 @@ jobs:
       with:
         python-version: '3.11'
     - name: Install packaging tools
-      run: python -m pip install build packaging twine
+      run: python -m pip install build jinja2 packaging twine
     - name: Set Python package version from release tag
       env:
         RELEASE_TAG: ${{ github.event.release.tag_name }}
@@ -28,21 +28,15 @@ jobs:
         python - <<'PY'
         import os
         from pathlib import Path
-        import tomllib
+        from jinja2 import Environment, StrictUndefined
         from packaging.version import Version
 
         version = str(Version(os.environ['RELEASE_TAG']))
-        path = Path('python/pyproject.toml')
-        text = path.read_text()
-        current = tomllib.loads(text)['project']['version']
-        old = f'version = "{current}"'
-        assert text.count(old) == 1, 'Expected exactly one package version'
-        text = text.replace(old, f'version = "{version}"')
-        for backend in ('cuda', 'rocm', 'vulkan'):
-            old_dependency = f'clap-cpp-{backend}=={current}'
-            assert text.count(old_dependency) == 1, f'Expected one exact {backend} dependency'
-            text = text.replace(old_dependency, f'clap-cpp-{backend}=={version}')
-        path.write_text(text)
+        source = Path('python')
+        template = Environment(undefined=StrictUndefined, keep_trailing_newline=True).from_string(
+            (source / 'pyproject.toml.j2').read_text(encoding='utf-8'))
+        (source / 'pyproject.toml').write_text(
+            template.render(backend='cpu', version=version), encoding='utf-8')
         PY
     - name: Build source distribution
       run: python -m build python --sdist --outdir dist
@@ -54,7 +48,23 @@ jobs:
         tar -xzf dist/clap_cpp-[0-9]*.tar.gz --strip-components=1 -C python-dist
         for backend in cuda rocm vulkan; do
           destination="$RUNNER_TEMP/clap-$backend"
-          python python-dist/prepare_backend.py "$backend" "$destination"
+          package="clap_cpp_$backend"
+          mkdir -p "$destination/$package"
+          cp python-dist/{README.md,LICENSE,hatch_build.py,pyproject.toml.j2} "$destination/"
+          cp python-dist/clap_cpp/{clap.py,clap.pyi,py.typed} "$destination/$package/"
+          printf '"""Native %s runtime; import clap_cpp for the public API."""\n' "$backend" > "$destination/$package/__init__.py"
+          BACKEND="$backend" DESTINATION="$destination" python - <<'PY'
+        import os
+        from pathlib import Path
+        import tomllib
+        from jinja2 import Environment, StrictUndefined
+        source = Path('python-dist')
+        version = tomllib.loads((source / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
+        template = Environment(undefined=StrictUndefined, keep_trailing_newline=True).from_string(
+            (source / 'pyproject.toml.j2').read_text(encoding='utf-8'))
+        (Path(os.environ['DESTINATION']) / 'pyproject.toml').write_text(
+            template.render(backend=os.environ['BACKEND'], version=version), encoding='utf-8')
+        PY
           python -m build --sdist "$destination" --outdir dist
         done
     - name: Check source distribution
@@ -147,6 +157,11 @@ jobs:
       with:
         name: libraries-${{ matrix.target }}
         path: python-dist/external-runtime
+    - name: Copy external runtime into the CPU wrapper project
+      shell: bash
+      run: |
+        cp -R python-dist/external-runtime/clap_cpp/. python-dist/clap_cpp/
+        cp python-dist/LICENSE python-dist/clap_cpp/licenses/clap-cpp.txt
     - name: Package and test CPU wheels from canonical wrapper sdist and shared runtime
       uses: pypa/cibuildwheel@v4.3.4
       with:
@@ -159,9 +174,7 @@ jobs:
         CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
         CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
         CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
-        # before-build only copies runtime files; wheel.cmake=false in the sdist.
-        CIBW_BEFORE_BUILD: python {package}/stage_runtime.py {package} {package}/external-runtime
-        CIBW_TEST_REQUIRES: pytest scikit-build-core>=1.1.2 mypy>=1.8 typing_extensions>=4.2
+        CIBW_TEST_REQUIRES: pytest build hatchling>=1.27 jinja2 packaging tomli mypy>=1.8 typing_extensions>=4.2
         CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
     - uses: actions/upload-artifact@v4
       with:
@@ -236,7 +249,8 @@ jobs:
     - name: Stage runtime and package canonical CUDA wrapper sdist
       run: |
         set -euo pipefail
-        python "$RUNNER_TEMP/clap-cuda/stage_runtime.py" "$RUNNER_TEMP/clap-cuda" "libraries/cuda" --backend cuda
+        cp -R "libraries/cuda/clap_cpp/." "$RUNNER_TEMP/clap-cuda/clap_cpp_cuda/"
+        cp "$RUNNER_TEMP/clap-cuda/LICENSE" "$RUNNER_TEMP/clap-cuda/clap_cpp_cuda/licenses/clap-cpp.txt"
         python -m build --wheel "$RUNNER_TEMP/clap-cuda" --outdir raw
     - name: Repair CUDA wheel
       run: |
@@ -316,7 +330,8 @@ jobs:
     - name: Stage runtime and package canonical VULKAN wrapper sdist
       run: |
         set -euo pipefail
-        python "$RUNNER_TEMP/clap-vulkan/stage_runtime.py" "$RUNNER_TEMP/clap-vulkan" "libraries/vulkan" --backend vulkan
+        cp -R "libraries/vulkan/clap_cpp/." "$RUNNER_TEMP/clap-vulkan/clap_cpp_vulkan/"
+        cp "$RUNNER_TEMP/clap-vulkan/LICENSE" "$RUNNER_TEMP/clap-vulkan/clap_cpp_vulkan/licenses/clap-cpp.txt"
         python -m build --wheel "$RUNNER_TEMP/clap-vulkan" --outdir raw
     - name: Repair Vulkan wheel (Ubuntu 24.04 glibc floor)
       run: |
@@ -414,7 +429,8 @@ jobs:
     - name: Stage runtime and package canonical ROCM wrapper sdist
       run: |
         set -euo pipefail
-        python "$RUNNER_TEMP/clap-rocm/stage_runtime.py" "$RUNNER_TEMP/clap-rocm" "libraries/rocm" --backend rocm
+        cp -R "libraries/rocm/clap_cpp/." "$RUNNER_TEMP/clap-rocm/clap_cpp_rocm/"
+        cp "$RUNNER_TEMP/clap-rocm/LICENSE" "$RUNNER_TEMP/clap-rocm/clap_cpp_rocm/licenses/clap-cpp.txt"
         python -m build --wheel "$RUNNER_TEMP/clap-rocm" --outdir raw
     - name: Repair ROCm wheel, retaining system ROCm runtime
       run: |
@@ -540,10 +556,14 @@ jobs:
             with tarfile.open(source) as archive:
                 entries = {entry.name.split('/', 1)[1] for entry in archive if '/' in entry.name and entry.isfile()}
                 package = name.replace('-', '_')
-                required = {'pyproject.toml', 'stage_runtime.py', f'{package}/clap.py'}
+                required = {'pyproject.toml', 'pyproject.toml.j2', 'hatch_build.py', 'README.md', 'LICENSE',
+                            f'{package}/__init__.py', f'{package}/clap.py', f'{package}/clap.pyi', f'{package}/py.typed'}
                 if not required <= entries:
-                    raise SystemExit(f'Sdist missing wrapper or staging helper: {source.name}: {required - entries}')
-                if any(entry.startswith('native/') or entry.endswith(('.so', '.dylib', '.dll', '.pyd')) for entry in entries):
+                    raise SystemExit(f'Sdist missing wrapper or packaging input: {source.name}: {required - entries}')
+                if any(entry.startswith(('native/', 'cmake/')) or
+                       pathlib.PurePosixPath(entry).name == 'CMakeLists.txt' or
+                       entry.endswith(('.so', '.dylib', '.dll', '.pyd', '.cpp', '.c', '.h'))
+                       for entry in entries):
                     raise SystemExit(f'Sdist contains native sources or compiled runtime: {source.name}')
             if (dist / source.name).exists():
                 raise SystemExit(f'Duplicate release asset: {source.name}')
@@ -574,7 +594,7 @@ jobs:
         ROCm GPU targets: gfx908,gfx90a,gfx942,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201.
         Linux wheels are auditwheel-repaired manylinux wheels; the external
         GPU runtimes above remain deliberate exceptions, not portability promises.
-        Source archives contain wrappers and stage_runtime.py, not native sources.
+        Source archives contain wrappers, a Jinja metadata template and a validation/tag hook, not native sources.
         Compile native runtimes separately from a recursive checkout, then stage
         them before packaging; Python wheel builds do not run CMake.
         CPU wheels pass installed-wheel tests on Python 3.9-3.14; GPU execution is not tested here.

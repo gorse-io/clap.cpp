@@ -92,7 +92,7 @@ jobs:
         run: cmake --install build/libraries --config Release --prefix "${{ runner.temp }}/clap-install"
       - name: Install Python packaging and test dependencies
         if: matrix.os != 'windows-11-arm'
-        run: python -m pip install build "scikit-build-core>=1.1.2" packaging pytest "mypy>=1.8" "typing_extensions>=4.2"
+        run: python -m pip install build "hatchling>=1.27" jinja2 packaging pytest "mypy>=1.8" "typing_extensions>=4.2"
       - name: Package Python with the shared runtime
         if: matrix.os != 'windows-11-arm'
         shell: bash
@@ -100,7 +100,8 @@ jobs:
           python -m build python --sdist --outdir python-dist
           mkdir -p build/python-package
           tar -xzf python-dist/*.tar.gz --strip-components=1 -C build/python-package
-          python python/stage_runtime.py build/python-package "libraries/${{ matrix.runtime }}"
+          cp -R "libraries/${{ matrix.runtime }}/clap_cpp/." build/python-package/clap_cpp/
+          cp build/python-package/LICENSE build/python-package/clap_cpp/licenses/clap-cpp.txt
           python -m build build/python-package --wheel --outdir python-dist
           python -m pip install --no-deps --no-index --find-links python-dist clap-cpp
       - name: Test Python

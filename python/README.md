@@ -101,52 +101,85 @@ libraries/linux-x64/
 stage it into the wrapper project and build a platform wheel:
 
 ```sh
-python -m pip install build 'scikit-build-core>=1.1.2'
-python python/stage_runtime.py python libraries/linux-x64
+python -m pip install build 'hatchling>=1.27'
+cp -R libraries/linux-x64/clap_cpp/. python/clap_cpp/
+cp python/LICENSE python/clap_cpp/licenses/clap-cpp.txt
 python -m build --wheel python
 python -m pip install python/dist/clap_cpp-*.whl
 ```
 
-`stage_runtime.py PROJECT_DIR RUNTIME_DIR [--backend cuda|rocm|vulkan]`
-copies `RUNTIME_DIR/clap_cpp/` contents into the project's Python namespace,
-preserving relative paths **within that namespace**. For example,
-`clap_cpp/companions/libfoo.so` becomes `clap_cpp_cuda/companions/libfoo.so` for
-`--backend cuda`. The common runtime artifact must contain only the `clap_cpp/`
-namespace. Sibling payloads such as `clap_cpp.libs/` or a sibling `licenses/`
-directory are rejected before any files are copied: moving them beneath the
-package would break loader paths such as `$ORIGIN/../clap_cpp.libs`. Such artifacts
-need separate loader-aware wheel packaging; the staging helper does not silently
-relocate them. Keep native dependency notices inside `clap_cpp/licenses/`.
-It adds the project's root MIT license as `licenses/clap-cpp.txt`, preserves
-package-local native dependency notices, rejects missing runtimes and wrapper-source collisions,
-and replaces an earlier staged payload without retaining stale dependencies.
-Only stage trusted runtime artifacts matching the wheel's target platform; the
-helper does not cross-compile, inspect binary architecture or repair Linux tags.
-The native runtime's own loader paths must resolve any companion libraries.
+Copy only trusted, matching-platform runtime artifacts. Preserve all relative
+paths and dependency notices beneath `clap_cpp/`; sibling library directories
+need separate loader-aware wheel repair, not relocation into the package.
+Start from a fresh wrapper project when switching runtimes so stale companion
+libraries cannot leak into the next wheel. Do not copy Python sources from a
+runtime artifact or overwrite the wrapper files.
 
-The backend guards wheel construction, failing with an actionable staging command
-if the host-platform runtime or staged license is missing. It delegates packaging
-to scikit-build-core with `wheel.cmake=false`, `wheel.platlib=true` and
-`wheel.py-api="py3"`. A local Linux build is tagged `py3-none-linux_<arch>`;
-release wheels still need normal platform portability checks/repair. Metadata
-preparation and sdist creation do not require a native runtime.
+Hatchling only assembles the copied files. Its thin `hatch_build.py` hook rejects
+missing/empty host-platform libraries or `licenses/clap-cpp.txt`, and sets
+non-pure `py3-none` platform tags. It never stages files, renders metadata or
+compiles code. A local Linux wheel has a `linux_<arch>` tag and still needs
+portability checks/repair before release. Metadata and wrapper-only source
+archives do not require a runtime. Editable installs also require a copied runtime;
+Hatchling's temporary editable wheel references the source directory and is not
+a distributable runtime wheel.
+
+On macOS, the wheel tag must match the staged runtime's architecture and minimum
+macOS deployment target, not just the Python interpreter's build configuration.
+A universal2 interpreter can report a universal2 platform even when the copied
+runtime is single-architecture. The hook rejects all universal2 tags, including
+explicit overrides; it does not verify native binary architectures. Set an
+explicit single-architecture `_PYTHON_HOST_PLATFORM` matching the staged runtime
+when building with such an interpreter. Supported macOS releases are ARM64; for
+an ARM64 runtime built with deployment target 11.0, use:
+
+```sh
+_PYTHON_HOST_PLATFORM=macosx-11.0-arm64 python -m build --wheel python
+```
+
+This only sets packaging metadata; it does not convert the runtime or change its
+deployment target. The release cibuildwheel ARM64 override follows the same rule.
 
 ### Optional backend projects
 
-Generate a wrapper-only project, then stage the independently compiled backend
-runtime (the native artifact still uses its common `clap_cpp/` namespace):
+`pyproject.toml.j2` is the shared CPU/CUDA/ROCm/Vulkan metadata template. The
+checked-in `pyproject.toml` is its CPU rendering for ordinary local builds.
+Render with `backend=cpu|cuda|rocm|vulkan` and one PEP 440 `version` (default
+`0.1.0`); CPU extras pin that exact version of each backend distribution.
+For example, using the canonical CPU sdist extracted into `python-dist`:
 
 ```sh
-python python/prepare_backend.py cuda build/python-cuda
-python python/stage_runtime.py build/python-cuda libraries/linux-x64-cuda --backend cuda
-python -m build --wheel build/python-cuda
+python -m pip install jinja2
+backend=cuda  # or rocm, vulkan
+project="build/python-$backend"
+package="clap_cpp_$backend"
+mkdir -p "$project/$package"
+cp python-dist/{README.md,LICENSE,hatch_build.py,pyproject.toml.j2} "$project/"
+cp python-dist/clap_cpp/{clap.py,clap.pyi,py.typed} "$project/$package/"
+printf '"""Native %s runtime; import clap_cpp for the public API."""\n' "$backend" > "$project/$package/__init__.py"
+BACKEND="$backend" PROJECT="$project" python - <<'PY'
+import os
+from pathlib import Path
+from jinja2 import Environment, StrictUndefined
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # install tomli on Python 3.9/3.10
+source = Path('python-dist')
+version = tomllib.loads((source / 'pyproject.toml').read_text())['project']['version']
+template = Environment(undefined=StrictUndefined, keep_trailing_newline=True).from_string(
+    (source / 'pyproject.toml.j2').read_text())
+(Path(os.environ['PROJECT']) / 'pyproject.toml').write_text(
+    template.render(backend=os.environ['BACKEND'], version=version))
+PY
+cp -R "libraries/linux-x64-$backend/clap_cpp/." "$project/$package/"
+cp "$project/LICENSE" "$project/$package/licenses/clap-cpp.txt"
+python -m build --wheel "$project"
 ```
 
-Replace `cuda` with `rocm` or `vulkan`. The helper preserves the base version,
-wrapper and typing files; no native sources or CMake settings are copied. The
-staging helper and build guard are included in each backend source distribution.
-The public selector continues to use `clap_cpp_cuda`, `clap_cpp_rocm` and
-`clap_cpp_vulkan` without changing the base package or its public APIs.
+The release workflow performs these copies and Jinja renders directly; no
+project-generation or staging script is needed. The selector still uses
+`clap_cpp_cuda`, `clap_cpp_rocm` and `clap_cpp_vulkan` with unchanged public APIs.
 
 ## Development and source distributions
 
@@ -154,10 +187,11 @@ The public selector continues to use `clap_cpp_cuda`, `clap_cpp_rocm` and
 python -m build --sdist python
 # Unpack the archive, then explicitly stage its external runtime:
 tar -xf python/dist/clap_cpp-0.1.0.tar.gz -C build
-python build/clap_cpp-0.1.0/stage_runtime.py build/clap_cpp-0.1.0 libraries/linux-x64
+cp -R libraries/linux-x64/clap_cpp/. build/clap_cpp-0.1.0/clap_cpp/
+cp build/clap_cpp-0.1.0/LICENSE build/clap_cpp-0.1.0/clap_cpp/licenses/clap-cpp.txt
 python -m build --wheel build/clap_cpp-0.1.0
 python -m pip install 'build/clap_cpp-0.1.0/dist/'*.whl
-python -m pip install pytest mypy typing_extensions build 'scikit-build-core>=1.1.2'
+python -m pip install pytest mypy typing_extensions build 'hatchling>=1.27' jinja2
 python -m pytest python/tests
 ```
 
@@ -181,4 +215,4 @@ trusted publisher (owner `gorse-io`, repository `clap.cpp`, workflow `release.ym
 environment `pypi`) for **each** of `clap-cpp`, `clap-cpp-cuda`, `clap-cpp-rocm` and
 `clap-cpp-vulkan`, and any required GitHub `pypi` environment approvals.
 Prereleases only attach assets. Normalize the release version and the three exact
-extra pins together; `prepare_backend.py` copies that version to each backend.
+extra pins together by rendering the shared Jinja template for each backend.

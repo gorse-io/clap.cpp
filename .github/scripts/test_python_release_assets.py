@@ -59,7 +59,8 @@ class PythonReleaseAssetsTest(unittest.TestCase):
     def unit_sdist(self, source, distribution, omitted=None, extra=()):
         """Write wrapper-only UNIT FIXTURE source archives for the real heredoc."""
         with tarfile.open(source, "w:gz") as archive:
-            for name in ("pyproject.toml", "stage_runtime.py", f"{distribution}/clap.py", *extra):
+            for name in ("pyproject.toml", "pyproject.toml.j2", "hatch_build.py", "README.md", "LICENSE",
+                         *(f"{distribution}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed")), *extra):
                 if name == omitted:
                     continue
                 data = b"# UNIT FIXTURE wrapper packaging input\n"
@@ -68,13 +69,18 @@ class PythonReleaseAssetsTest(unittest.TestCase):
                 archive.addfile(entry, io.BytesIO(data))
 
     def test_unit_fixture_sdist_requires_wrapper_metadata_and_helper(self):
-        for required in ("pyproject.toml", "stage_runtime.py", "clap_cpp/clap.py"):
-            with self.subTest(required=required):
-                self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", omitted=required)
-                self.assert_rejected("Sdist missing wrapper or staging helper")
+        for distribution in DISTRIBUTIONS:
+            for required in ("pyproject.toml", "pyproject.toml.j2", "hatch_build.py", "README.md", "LICENSE",
+                             *(f"{distribution}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed"))):
+                with self.subTest(distribution=distribution, required=required):
+                    source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
+                    self.unit_sdist(source, distribution, omitted=required)
+                    self.assert_rejected("Sdist missing wrapper or packaging input")
+                    self.unit_sdist(source, distribution)
 
     def test_unit_fixture_sdist_rejects_native_graph_and_binaries(self):
-        for native in ("native/ggml/CMakeLists.txt", "clap_cpp/libclap.so", "clap_cpp/clap.dll", "clap_cpp/libclap.dylib"):
+        for native in ("native/ggml/CMakeLists.txt", "CMakeLists.txt", "cmake/helpers.cmake", "src/clap.cpp",
+                       "clap_cpp/libclap.so", "clap_cpp/clap.dll", "clap_cpp/libclap.dylib"):
             with self.subTest(native=native):
                 self.unit_sdist(self.artifacts / "clap_cpp-0.1.0.tar.gz", "clap_cpp", extra=(native,))
                 self.assert_rejected("Sdist contains native sources or compiled runtime")

@@ -32,15 +32,18 @@ validates archive contents, platform constraints and versions before publishing.
 Node inference tests run against the checkout and its platform workspace in CI.
 No Python wheel extraction is involved. All native packages publish before the wrapper.
 
-Python publishes canonical wrapper-only source archives including `stage_runtime.py`;
-they contain neither native sources nor compiled libraries. CPU wheel jobs extract
-the canonical base archive, download the matching runtime and stage it with
-`python stage_runtime.py PROJECT_DIR RUNTIME_DIR`. cibuildwheel packages without
-CMake (`wheel.cmake=false`) and runs installed-wheel tests for Python 3.9, 3.10,
+Python publishes canonical wrapper-only source archives including the shared
+`pyproject.toml.j2` template and thin `hatch_build.py` validation/platform-tag hook;
+they contain neither native sources nor compiled libraries. Release jobs render
+the template with Jinja2 for CPU, CUDA, ROCm and Vulkan, preserving exact versions.
+CPU wheel jobs extract the base archive and directly copy the downloaded
+`clap_cpp/` runtime contents and license into its package. Hatchling never compiles
+native code; cibuildwheel runs installed-wheel tests for Python 3.9, 3.10,
 3.11, 3.12, 3.13 and 3.14. ABI-independent `py3-none` wheels are reused across
 these interpreters; Linux wheels retain auditwheel-repaired manylinux tags.
 GPU jobs recursively check out native sources and compile before packaging the
-canonical backend wrapper archive, staging with `--backend cuda|rocm|vulkan`.
+canonical backend wrapper archive, copying the external `clap_cpp/` runtime
+contents into `clap_cpp_cuda/`, `clap_cpp_rocm/` or `clap_cpp_vulkan/`.
 CUDA toolkit/architecture flags, ROCm targets and system-runtime exclusions, and
 Vulkan loader exclusions remain backend-specific. Their existing auditwheel
 policies remain: CUDA/ROCm manylinux_2_35, Vulkan manylinux_2_39; GPU execution is
@@ -91,7 +94,8 @@ cmake --install build/libraries --config Release --component runtime --prefix "$
 python -m build python --sdist --outdir sdists
 mkdir python-dist
 tar -xzf sdists/clap_cpp-*.tar.gz --strip-components=1 -C python-dist
-python python-dist/stage_runtime.py python-dist libraries/linux-x64
+cp -R libraries/linux-x64/clap_cpp/. python-dist/clap_cpp/
+cp python-dist/LICENSE python-dist/clap_cpp/licenses/clap-cpp.txt
 python -m build python-dist --wheel --outdir wheels
 # Host builds above are not a substitute for the release's manylinux Docker build/repair.
 mkdir -p node/packages/linux-x64/runtime
