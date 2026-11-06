@@ -5,18 +5,83 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <cerrno>
 #include <cmath>
+#include <csignal>
 #include <exception>
 #include <filesystem>
+#include <functional>
+#include <future>
 #include <iostream>
-#include <mutex>
 #include <memory>
 #include <stdexcept>
+#include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
 
 using nlohmann::json;
+
+// Signal handlers cannot lock or touch HTTP/model objects. A normal thread
+// performs shutdown; lock-free atomic stores are signal-safe.
+static_assert(std::atomic<bool>::is_always_lock_free);
+std::atomic<bool> stop_requested{false};
+void request_stop(int) { stop_requested.store(true, std::memory_order_relaxed); }
+
+class StopSignals {
+  public:
+    StopSignals() {
+        stop_requested = false;
+        interrupt_ = std::signal(SIGINT, request_stop);
+        terminate_ = std::signal(SIGTERM, request_stop);
+        if (interrupt_ == SIG_ERR || terminate_ == SIG_ERR) {
+            restore();
+            throw std::runtime_error("Failed to install server signal handlers");
+        }
+    }
+    ~StopSignals() { restore(); }
+    StopSignals(const StopSignals &) = delete;
+    StopSignals &operator=(const StopSignals &) = delete;
+
+  private:
+    using Handler = void (*)(int);
+    Handler interrupt_ = SIG_ERR;
+    Handler terminate_ = SIG_ERR;
+    void restore() {
+        if (interrupt_ != SIG_ERR)
+            std::signal(SIGINT, interrupt_);
+        if (terminate_ != SIG_ERR)
+            std::signal(SIGTERM, terminate_);
+    }
+};
+
+class ShutdownWatch {
+  public:
+    explicit ShutdownWatch(std::function<void()> stop)
+        : thread_([this, stop = std::move(stop)] {
+              while (!done_.load(std::memory_order_relaxed)) {
+                  if (stop_requested.load(std::memory_order_relaxed)) {
+                      stop();
+                      return;
+                  }
+                  std::this_thread::sleep_for(std::chrono::milliseconds(25));
+              }
+          }) {}
+    ~ShutdownWatch() {
+        done_.store(true, std::memory_order_relaxed);
+        thread_.join();
+    }
+    ShutdownWatch(const ShutdownWatch &) = delete;
+    ShutdownWatch &operator=(const ShutdownWatch &) = delete;
+
+  private:
+    std::atomic<bool> done_{false};
+    std::thread thread_;
+};
 
 const char *c_string(const std::string &value) {
     if (value.find('\0') != std::string::npos)
@@ -101,8 +166,91 @@ bool is_audio_input(const json &input) {
     return audio.contains("data") && audio["data"].is_string();
 }
 
-void embeddings(const httplib::Request &request, httplib::Response &response, CLAP *model,
-                const std::string &identifier, int dimensions, std::mutex &inference_mutex) {
+using PreparedInput = std::variant<std::string, clap::Audio>;
+struct InferenceResult {
+    std::vector<std::vector<float>> embeddings;
+    std::size_t tokens = 0;
+    bool usage_available = true;
+};
+using InferenceQueue = clap::server::Scheduler<InferenceResult>;
+
+// Only called on the dedicated owner thread. No HTTP request/response objects
+// cross this boundary; the complete request remains one atomic queue item.
+InferenceResult infer(CLAP *model, const std::vector<PreparedInput> &inputs, int dimensions,
+                      const std::atomic<bool> &cancelled) {
+    InferenceResult result;
+    result.embeddings.reserve(inputs.size());
+    for (std::size_t index = 0; index < inputs.size(); ++index) {
+        if (cancelled)
+            throw clap::server::Cancelled();
+        const auto *text = std::get_if<std::string>(&inputs[index]);
+        float *values = nullptr;
+        std::size_t count = 0;
+        if (text) {
+            check(clap_encode_text(model, c_string(*text), &values, &count));
+        } else {
+            const auto &audio = std::get<clap::Audio>(inputs[index]);
+            result.usage_available = false;
+            check(clap_encode_audio(model, audio.samples.data(), audio.samples.size(), audio.sample_rate, 0, &values,
+                                    &count));
+        }
+        auto embedding = take_buffer(values, count);
+        if (cancelled)
+            throw clap::server::Cancelled();
+        if (embedding.size() != static_cast<std::size_t>(dimensions))
+            throw std::runtime_error("Model returned an unexpected embedding dimension");
+        for (float value : embedding)
+            if (!std::isfinite(value))
+                throw std::runtime_error("Model returned a non-finite embedding");
+        result.embeddings.push_back(std::move(embedding));
+        // The public tokenize() default may truncate or be unsupported for
+        // smaller contexts. Omit usage rather than invent a token count.
+        if (!text)
+            continue;
+        try {
+            int *ids = nullptr;
+            std::size_t size = 0;
+            check(clap_tokenize(model, c_string(*text), 512, &ids, &size));
+            const auto owned_ids = take_buffer(ids, size);
+            if (owned_ids.size() >= 512)
+                result.usage_available = false;
+            else
+                result.tokens += owned_ids.size();
+        } catch (const std::exception &) {
+            result.usage_available = false;
+        }
+    }
+    return result;
+}
+
+// The pinned httplib callback polls then recv(MSG_PEEK)s, reporting both EOF
+// and socket errors as "closed". EOF alone is ambiguous: a client may have
+// shutdown(SHUT_WR) and still be waiting for its response. There is no public
+// request socket/error API, so only cancel on a freshly reported fatal socket
+// error from that callback. Do not send probe bytes or consume request data.
+// Recheck this adapter when updating httplib's callback implementation.
+bool connection_failed(const httplib::Request &request) {
+#ifdef _WIN32
+    const int previous = WSAGetLastError();
+    WSASetLastError(0);
+    const bool closed = request.is_connection_closed();
+    const int error = WSAGetLastError();
+    WSASetLastError(previous);
+    return closed && (error == WSAECONNRESET || error == WSAECONNABORTED || error == WSAENETRESET ||
+                      error == WSAENOTCONN || error == WSAENOTSOCK || error == WSAESHUTDOWN || error == WSAETIMEDOUT);
+#else
+    const int previous = errno;
+    errno = 0;
+    const bool closed = request.is_connection_closed();
+    const int error = errno;
+    errno = previous;
+    return closed && (error == ECONNRESET || error == ECONNABORTED || error == ENETRESET || error == ENOTCONN ||
+                      error == EBADF || error == ENOTSOCK || error == EPIPE || error == ETIMEDOUT);
+#endif
+}
+
+void embeddings(const httplib::Request &request, httplib::Response &response, InferenceQueue &queue, CLAP *model,
+                const std::string &identifier, int dimensions) {
     const auto body = json::parse(request.body, nullptr, false);
     if (!body.is_object() || !body.contains("input")) {
         invalid_request(response, "Expected a JSON object with an input field");
@@ -144,69 +292,48 @@ void embeddings(const httplib::Request &request, httplib::Response &response, CL
     }
 
     try {
-        auto data = json::array();
-        std::size_t tokens = 0;
-        bool usage_available = true;
-        {
-            // Vocabulary and inference both belong to the same non-thread-safe
-            // handle. Keep the complete batch atomic with respect to other calls.
-            const std::lock_guard<std::mutex> lock(inference_mutex);
-            for (std::size_t index = 0; index < inputs.size(); ++index) {
-                const auto &input = inputs[index];
-                std::vector<float> embedding;
-                if (input.is_string()) {
-                    float *values = nullptr;
-                    std::size_t count = 0;
-                    check(clap_encode_text(model, c_string(input.get_ref<const std::string &>()), &values, &count));
-                    embedding = take_buffer(values, count);
-                } else {
-                    clap::Audio audio;
-                    // Keep decoder errors separate from model inference errors.
-                    try {
-                        const auto bytes =
-                            decode_base64(input["content"][0]["input_audio"]["data"].get_ref<const std::string &>());
-                        audio = clap::decode_audio(bytes.data(), bytes.size());
-                    } catch (const std::exception &error) {
-                        invalid_request(response, error.what());
-                        return;
-                    }
-                    usage_available = false;
-                    float *values = nullptr;
-                    std::size_t count = 0;
-                    check(clap_encode_audio(model, audio.samples.data(), audio.samples.size(), audio.sample_rate, 0,
-                                            &values, &count));
-                    embedding = take_buffer(values, count);
-                }
-                if (embedding.size() != static_cast<std::size_t>(dimensions))
-                    throw std::runtime_error("Model returned an unexpected embedding dimension");
-                for (float value : embedding)
-                    if (!std::isfinite(value))
-                        throw std::runtime_error("Model returned a non-finite embedding");
-                data.push_back({{"object", "embedding"}, {"index", index}, {"embedding", embedding}});
-                // clap_encode_text chooses its architecture's full context.
-                // The public tokenize() default is 512 and can truncate or be
-                // unsupported for smaller contexts. Omit usage rather than
-                // report an inaccurate count in either situation.
-                if (!input.is_string())
-                    continue;
+        // Validation and decoding are HTTP-side work, independent of the model.
+        std::vector<PreparedInput> prepared;
+        prepared.reserve(inputs.size());
+        for (const auto &input : inputs) {
+            if (connection_failed(request))
+                return;
+            if (input.is_string()) {
+                prepared.emplace_back(input.get<std::string>());
+            } else {
                 try {
-                    int *values = nullptr;
-                    std::size_t count = 0;
-                    check(clap_tokenize(model, c_string(input.get_ref<const std::string &>()), 512, &values, &count));
-                    const auto ids = take_buffer(values, count);
-                    if (ids.size() >= 512)
-                        usage_available = false;
-                    else
-                        tokens += ids.size();
-                } catch (const std::exception &) {
-                    usage_available = false;
+                    const auto bytes =
+                        decode_base64(input["content"][0]["input_audio"]["data"].get_ref<const std::string &>());
+                    prepared.emplace_back(clap::decode_audio(bytes.data(), bytes.size()));
+                } catch (const std::exception &error) {
+                    invalid_request(response, error.what());
+                    return;
                 }
             }
         }
-        json result = {{"object", "list"}, {"data", data}, {"model", identifier}};
-        if (usage_available)
-            result["usage"] = {{"prompt_tokens", tokens}, {"total_tokens", tokens}};
+        auto ticket = queue.submit([model, inputs = std::move(prepared), dimensions](const auto &cancelled) {
+            return infer(model, inputs, dimensions, cancelled);
+        });
+        if (!ticket) {
+            error_response(response, 503, "server_error", "Inference queue is full or stopping; retry later");
+            return;
+        }
+        // Ticket destruction cancels on every exit path, including failures in
+        // waiting/response construction. Only the HTTP thread inspects its
+        // live request/socket; worker tasks never retain either by reference.
+        while (ticket.future().wait_for(std::chrono::milliseconds(25)) != std::future_status::ready)
+            if (connection_failed(request))
+                return;
+        const auto output = ticket.future().get();
+        auto data = json::array();
+        for (std::size_t index = 0; index < output.embeddings.size(); ++index)
+            data.push_back({{"object", "embedding"}, {"index", index}, {"embedding", output.embeddings[index]}});
+        json result = {{"object", "list"}, {"data", std::move(data)}, {"model", identifier}};
+        if (output.usage_available)
+            result["usage"] = {{"prompt_tokens", output.tokens}, {"total_tokens", output.tokens}};
         response.set_content(result.dump(), "application/json");
+    } catch (const clap::server::Cancelled &error) {
+        error_response(response, 503, "server_error", error.what());
     } catch (const std::exception &error) {
         error_response(response, 500, "server_error", error.what());
     } catch (...) {
@@ -216,26 +343,36 @@ void embeddings(const httplib::Request &request, httplib::Response &response, CL
 
 } // namespace
 
-int cmd_server(const std::string &host, int port, const std::string &model_path, int threads,
-               const std::string &device) {
+int cmd_server(const std::string &host, int port, const std::string &model_path, int threads, const std::string &device,
+               std::size_t queue_capacity) {
     try {
-        // Load once, before opening the listening socket. A bad model must fail
-        // startup rather than leave a live server that can never serve requests.
-        auto options = clap_default_options();
-        options.threads = threads;
-        options.device = c_string(device);
-        CLAP *handle = nullptr;
-        check(clap_create(c_string(model_path), &options, &handle));
-        const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
+        // Startup waits for the owner thread to load the model before opening
+        // the socket. The same worker also queries metadata and destroys it.
         const auto identifier = std::filesystem::path(model_path).filename().string();
-        const int dimensions = clap_projection_dimension(model.get());
-        if (dimensions <= 0)
-            throw std::runtime_error("Model projection dimension must be positive");
-        std::mutex inference_mutex;
+        StopSignals signals;
+        std::unique_ptr<CLAP, decltype(&clap_destroy)> model(nullptr, clap_destroy);
+        int dimensions = 0;
+        InferenceQueue queue(
+            queue_capacity,
+            [&] {
+                auto options = clap_default_options();
+                options.threads = threads;
+                options.device = c_string(device);
+                CLAP *handle = nullptr;
+                check(clap_create(c_string(model_path), &options, &handle));
+                model.reset(handle);
+                dimensions = clap_projection_dimension(model.get());
+                if (dimensions <= 0)
+                    throw std::runtime_error("Model projection dimension must be positive");
+            },
+            [&] { model.reset(); });
+        CLAP *const inference_model = model.get();
+        // Destroy HTTP handlers first, then stop/join inference, then release
+        // the enclosing model variable. Bind/listen failures use the same path.
         httplib::Server server;
         server.set_payload_max_length(32 * 1024 * 1024);
         server.Post("/v1/embeddings", [&](const httplib::Request &request, httplib::Response &response) {
-            embeddings(request, response, model.get(), identifier, dimensions, inference_mutex);
+            embeddings(request, response, queue, inference_model, identifier, dimensions);
         });
         server.set_exception_handler(
             [](const httplib::Request &, httplib::Response &response, std::exception_ptr exception) {
@@ -254,7 +391,12 @@ int cmd_server(const std::string &host, int port, const std::string &model_path,
             return 1;
         }
         std::cout << "Listening on " << host << ':' << port << " with model " << identifier << std::endl;
-        return server.listen_after_bind() ? 0 : 1;
+        ShutdownWatch shutdown([&] {
+            server.stop();
+            queue.stop();
+        });
+        const bool listened = server.listen_after_bind();
+        return listened || stop_requested.load(std::memory_order_relaxed) ? 0 : 1;
     } catch (const std::exception &error) {
         std::cerr << "Server startup failed: " << error.what() << '\n';
         return 1;
