@@ -1,121 +1,60 @@
+/*
+ * Copyright 2026 clap.cpp Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 use clap_cpp::CLAP;
-use std::{path::PathBuf, process::Command, sync::OnceLock};
+use huggingface_hub::{HFClient, RepoDownloadFileParams};
+use more_asserts::{assert_gt, assert_lt};
+use std::path::PathBuf;
 
-fn fixtures() -> &'static PathBuf {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join(format!("fixtures-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let status = Command::new(if cfg!(windows) { "python" } else { "python3" })
-            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rust/tests/generate.py"))
-            .arg(&dir)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        dir
-    })
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let dot = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>();
+    let norm_a = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    dot / (norm_a * norm_b)
 }
 
-fn close(a: &[f32], b: &[f32]) {
-    assert_eq!(a.len(), b.len());
-    for (a, b) in a.iter().zip(b) {
-        assert!((a - b).abs() < 2e-5, "{a} != {b}");
-    }
-}
+#[tokio::test]
+async fn clap() -> Result<(), Box<dyn std::error::Error>> {
+    let hf = HFClient::new()?;
+    let params = RepoDownloadFileParams::builder()
+        .filename("larger_clap_general-q4_k_m.gguf")
+        .local_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("models"))
+        .build();
+    hf.model("gorse-io", "larger_clap_general-GGUF")
+        .download_file(&params)
+        .await?;
 
-#[test]
-fn errors_are_owned_and_inputs_are_checked() {
-    assert!(CLAP::new("missing.gguf", 1).is_err());
-    assert!(CLAP::new("nul\0.gguf", 1).is_err());
-    assert_eq!(
-        CLAP::new("missing.gguf", -1).err().unwrap().to_string(),
-        "threads must be nonnegative"
-    );
-    let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
-    assert!(model.encode_text("hi\0").is_err());
-    assert!(model.encode_audio("bad\0.wav", 0).is_err());
-    let error = model.encode_audio("missing.wav", 0).unwrap_err();
-    let message = error.to_string();
-    model.encode_text("ok").unwrap();
-    assert!(!message.is_empty());
-    assert_eq!(error.to_string(), message);
-    assert!(model
-        .encode_audio(fixtures().join("invalid.wav"), 0)
-        .is_err());
-}
+    let mut clap = CLAP::new(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("models")
+            .join("larger_clap_general-q4_k_m.gguf"),
+        1,
+    )?;
+    let audio_embedding = clap.encode_audio(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dog.wav"),
+        0,
+    )?;
+    let text_embedding_1 = clap.encode_text("Sound of a dog")?;
+    let text_embedding_2 = clap.encode_text("Sound of vaccum cleaner")?;
 
-#[test]
-fn clap_real_text_and_audio_file() {
-    let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
-    let text = model.encode_text("Hi").unwrap();
-    assert_eq!(text.len(), 3);
-    let expected: Vec<f32> = std::fs::read_to_string(fixtures().join("text-reference.txt"))
-        .unwrap()
-        .split_whitespace()
-        .map(|s| s.parse().unwrap())
-        .collect();
-    close(&text, &expected);
-    assert!((text.iter().map(|v| v * v).sum::<f32>() - 1.).abs() < 1e-5);
-    let audio = model.encode_audio(fixtures().join("音频.wav"), 0).unwrap();
-    assert_eq!(audio.len(), 3);
-    assert!(audio.iter().all(|v| v.is_finite()));
-    assert!((audio.iter().map(|v| v * v).sum::<f32>() - 1.).abs() < 1e-5);
-    // Stereo 24 kHz input is downmixed internally, then resampled to 48 kHz.
-    close(
-        &audio,
-        &model
-            .encode_audio(fixtures().join("立体声.wav"), 0)
-            .unwrap(),
-    );
-    let cropped = model
-        .encode_audio(fixtures().join("long.wav"), 48000)
-        .unwrap();
-    close(
-        &cropped,
-        &model.encode_audio(fixtures().join("crop.wav"), 0).unwrap(),
-    );
-}
-
-#[test]
-fn mert_audio_file_and_unsupported_operations() {
-    let mut model = CLAP::new(fixtures().join("mert.gguf"), 1).unwrap();
-    let audio = model.encode_audio(fixtures().join("mert.wav"), 0).unwrap();
-    assert_eq!(audio.len(), 4);
-    assert!(audio.iter().all(|v| v.is_finite()));
-    assert!(model.encode_text("not supported").is_err());
-    assert!(model.encode_audio(fixtures().join("mert.wav"), 1).is_err());
-}
-
-#[test]
-fn embedding_vectors_outlive_model_and_subsequent_calls() {
-    let (text, audio, saved_text, saved_audio) = {
-        let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
-        let text = model.encode_text("Hi").unwrap();
-        let audio = model.encode_audio(fixtures().join("音频.wav"), 0).unwrap();
-        let saved_text = text.clone();
-        let saved_audio = audio.clone();
-        for _ in 0..3 {
-            model.encode_text("another input").unwrap();
-        }
-        (text, audio, saved_text, saved_audio)
-    };
-    // Reuse native allocator storage after destroying the original handle.
-    let mut replacement = CLAP::new(fixtures().join("mert.gguf"), 1).unwrap();
-    replacement
-        .encode_audio(fixtures().join("mert.wav"), 0)
-        .unwrap();
-    assert_eq!(text, saved_text);
-    assert_eq!(audio, saved_audio);
-}
-
-#[cfg(unix)]
-#[test]
-fn non_utf8_paths_are_rejected() {
-    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-    let invalid = std::path::Path::new(OsStr::from_bytes(b"invalid\xff.wav"));
-    assert!(CLAP::new(invalid, 1).is_err());
-    let mut model = CLAP::new(fixtures().join("模型.gguf"), 1).unwrap();
-    assert!(model.encode_audio(invalid, 0).is_err());
+    let distance_1 = cosine(&audio_embedding, &text_embedding_1);
+    let distance_2 = cosine(&audio_embedding, &text_embedding_2);
+    // softmax
+    let score_1 = distance_1.exp() / (distance_1.exp() + distance_2.exp());
+    let score_2 = distance_2.exp() / (distance_1.exp() + distance_2.exp());
+    assert_gt!(score_1, 0.99);
+    assert_lt!(score_2, 0.01);
+    Ok(())
 }

@@ -38,3 +38,8 @@ path = "rust/src/lib.rs"
 [[test]]
 name = "clap_test"
 path = "rust/tests/clap.rs"
+
+[dev-dependencies]
+huggingface-hub = { git = "https://github.com/huggingface/huggingface_hub_rust.git", features = ["xet"] }
+more-asserts = "0.3.1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
