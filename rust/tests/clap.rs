@@ -51,9 +51,17 @@ async fn clap() -> Result<(), Box<dyn std::error::Error>> {
 
     let distance_1 = cosine(&audio_embedding, &text_embedding_1);
     let distance_2 = cosine(&audio_embedding, &text_embedding_2);
-    // softmax
-    let score_1 = distance_1.exp() / (distance_1.exp() + distance_2.exp());
-    let score_2 = distance_2.exp() / (distance_1.exp() + distance_2.exp());
+    // softmax(cosine * exp(logit_scale_a)), as in Transformers ClapModel.
+    // logit_scale_a is the learned scalar from laion/larger_clap_general's
+    // pytorch_model.bin, not the configuration's initialization value.
+    let logit_scale = 3.654_927_5_f32.exp();
+    let logit_1 = distance_1 * logit_scale;
+    let logit_2 = distance_2 * logit_scale;
+    let max_logit = logit_1.max(logit_2);
+    let exp_1 = (logit_1 - max_logit).exp();
+    let exp_2 = (logit_2 - max_logit).exp();
+    let score_1 = exp_1 / (exp_1 + exp_2);
+    let score_2 = exp_2 / (exp_1 + exp_2);
     assert_gt!(score_1, 0.99);
     assert_lt!(score_2, 0.01);
     Ok(())
