@@ -50,7 +50,7 @@ jobs:
           destination="$RUNNER_TEMP/clap-$backend"
           package="clap_cpp_$backend"
           mkdir -p "$destination/$package"
-          cp python-dist/{README.md,LICENSE,hatch_build.py,pyproject.toml.j2} "$destination/"
+          cp python-dist/{README.md,LICENSE,pyproject.toml.j2} "$destination/"
           cp python-dist/clap_cpp/{clap.py,clap.pyi,py.typed} "$destination/$package/"
           printf '"""Native %s runtime; import clap_cpp for the public API."""\n' "$backend" > "$destination/$package/__init__.py"
           BACKEND="$backend" DESTINATION="$destination" python - <<'PY'
@@ -144,6 +144,9 @@ jobs:
           target: win32-x64
     runs-on: ${{ matrix.os }}
     steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
     - uses: actions/download-artifact@v4
       with:
         name: python-sdists
@@ -160,8 +163,29 @@ jobs:
     - name: Copy external runtime into the CPU wrapper project
       shell: bash
       run: |
+        set -euo pipefail
         cp -R python-dist/external-runtime/clap_cpp/. python-dist/clap_cpp/
         cp python-dist/LICENSE python-dist/clap_cpp/licenses/clap-cpp.txt
+        python - <<'PY'
+        from pathlib import Path
+        import sys
+        package = Path("python-dist/clap_cpp")
+        native = "clap.dll" if sys.platform == "win32" else ("libclap.dylib" if sys.platform == "darwin" else "libclap.so")
+        runtime = package / native
+        if not runtime.is_file() or not runtime.stat().st_size:
+            raise SystemExit(f"Missing staged external runtime: {runtime}")
+        magic = runtime.read_bytes()[:4]
+        if not (magic == b"\x7fELF" if sys.platform.startswith("linux") else
+                magic[:2] == b"MZ" if sys.platform == "win32" else
+                magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")):
+            raise SystemExit(f"Invalid staged external runtime: {runtime}")
+        notice = package / "licenses" / "clap-cpp.txt"
+        if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
+            raise SystemExit(f"Missing runtime notices: {notice}")
+        PY
+    - name: Supply installed-wheel tests from the exact release checkout
+      shell: bash
+      run: cp -R python/tests python-dist/tests
     - name: Package and test CPU wheels from canonical wrapper sdist and shared runtime
       uses: pypa/cibuildwheel@v4.3.4
       with:
@@ -174,7 +198,7 @@ jobs:
         CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
         CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
         CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
-        CIBW_TEST_REQUIRES: pytest build hatchling>=1.27 jinja2 packaging tomli mypy>=1.8 typing_extensions>=4.2
+        CIBW_TEST_REQUIRES: pytest build scikit-build-core>=1.1.2 jinja2 packaging tomli mypy>=1.8 typing_extensions>=4.2
         CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
     - uses: actions/upload-artifact@v4
       with:
@@ -251,6 +275,23 @@ jobs:
         set -euo pipefail
         cp -R "libraries/cuda/clap_cpp/." "$RUNNER_TEMP/clap-cuda/clap_cpp_cuda/"
         cp "$RUNNER_TEMP/clap-cuda/LICENSE" "$RUNNER_TEMP/clap-cuda/clap_cpp_cuda/licenses/clap-cpp.txt"
+        python - <<'PY'
+        from pathlib import Path
+        import sys
+        package = Path(__import__("os").environ["RUNNER_TEMP"]) / "clap-cuda" / "clap_cpp_cuda"
+        native = "clap.dll" if sys.platform == "win32" else ("libclap.dylib" if sys.platform == "darwin" else "libclap.so")
+        runtime = package / native
+        if not runtime.is_file() or not runtime.stat().st_size:
+            raise SystemExit(f"Missing staged external runtime: {runtime}")
+        magic = runtime.read_bytes()[:4]
+        if not (magic == b"\x7fELF" if sys.platform.startswith("linux") else
+                magic[:2] == b"MZ" if sys.platform == "win32" else
+                magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")):
+            raise SystemExit(f"Invalid staged external runtime: {runtime}")
+        notice = package / "licenses" / "clap-cpp.txt"
+        if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
+            raise SystemExit(f"Missing runtime notices: {notice}")
+        PY
         python -m build --wheel "$RUNNER_TEMP/clap-cuda" --outdir raw
     - name: Repair CUDA wheel
       run: |
@@ -332,6 +373,23 @@ jobs:
         set -euo pipefail
         cp -R "libraries/vulkan/clap_cpp/." "$RUNNER_TEMP/clap-vulkan/clap_cpp_vulkan/"
         cp "$RUNNER_TEMP/clap-vulkan/LICENSE" "$RUNNER_TEMP/clap-vulkan/clap_cpp_vulkan/licenses/clap-cpp.txt"
+        python - <<'PY'
+        from pathlib import Path
+        import sys
+        package = Path(__import__("os").environ["RUNNER_TEMP"]) / "clap-vulkan" / "clap_cpp_vulkan"
+        native = "clap.dll" if sys.platform == "win32" else ("libclap.dylib" if sys.platform == "darwin" else "libclap.so")
+        runtime = package / native
+        if not runtime.is_file() or not runtime.stat().st_size:
+            raise SystemExit(f"Missing staged external runtime: {runtime}")
+        magic = runtime.read_bytes()[:4]
+        if not (magic == b"\x7fELF" if sys.platform.startswith("linux") else
+                magic[:2] == b"MZ" if sys.platform == "win32" else
+                magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")):
+            raise SystemExit(f"Invalid staged external runtime: {runtime}")
+        notice = package / "licenses" / "clap-cpp.txt"
+        if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
+            raise SystemExit(f"Missing runtime notices: {notice}")
+        PY
         python -m build --wheel "$RUNNER_TEMP/clap-vulkan" --outdir raw
     - name: Repair Vulkan wheel (Ubuntu 24.04 glibc floor)
       run: |
@@ -431,6 +489,23 @@ jobs:
         set -euo pipefail
         cp -R "libraries/rocm/clap_cpp/." "$RUNNER_TEMP/clap-rocm/clap_cpp_rocm/"
         cp "$RUNNER_TEMP/clap-rocm/LICENSE" "$RUNNER_TEMP/clap-rocm/clap_cpp_rocm/licenses/clap-cpp.txt"
+        python - <<'PY'
+        from pathlib import Path
+        import sys
+        package = Path(__import__("os").environ["RUNNER_TEMP"]) / "clap-rocm" / "clap_cpp_rocm"
+        native = "clap.dll" if sys.platform == "win32" else ("libclap.dylib" if sys.platform == "darwin" else "libclap.so")
+        runtime = package / native
+        if not runtime.is_file() or not runtime.stat().st_size:
+            raise SystemExit(f"Missing staged external runtime: {runtime}")
+        magic = runtime.read_bytes()[:4]
+        if not (magic == b"\x7fELF" if sys.platform.startswith("linux") else
+                magic[:2] == b"MZ" if sys.platform == "win32" else
+                magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")):
+            raise SystemExit(f"Invalid staged external runtime: {runtime}")
+        notice = package / "licenses" / "clap-cpp.txt"
+        if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
+            raise SystemExit(f"Missing runtime notices: {notice}")
+        PY
         python -m build --wheel "$RUNNER_TEMP/clap-rocm" --outdir raw
     - name: Repair ROCm wheel, retaining system ROCm runtime
       run: |
@@ -536,12 +611,23 @@ jobs:
             with zipfile.ZipFile(wheel) as archive:
                 package = name.replace('-', '_')
                 entries = set(archive.namelist())
+                if any('tests' in pathlib.PurePosixPath(entry).parts for entry in entries):
+                    raise SystemExit(f'Wheel contains tests: {wheel.name}')
                 if f'{package}/clap.py' not in entries:
                     raise SystemExit(f'Missing Python ctypes wrapper: {wheel.name}')
                 native = ('clap.dll' if platform == 'win-amd64' else
                           'libclap.dylib' if platform == 'macosx-arm64' else 'libclap.so')
                 if f'{package}/{native}' not in entries:
                     raise SystemExit(f'Missing package-local native library {package}/{native}: {wheel.name}')
+                payload = archive.read(f'{package}/{native}')
+                valid = (payload.startswith(b'\x7fELF') if platform.startswith('linux-') else
+                         payload.startswith(b'MZ') if platform == 'win-amd64' else
+                         payload[:4] in (b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf'))
+                if not valid:
+                    raise SystemExit(f'Invalid package-local native library: {wheel.name}')
+                notice = f'{package}/licenses/clap-cpp.txt'
+                if notice not in entries or not archive.read(notice).strip():
+                    raise SystemExit(f'Missing runtime notices: {wheel.name}')
             if (dist / wheel.name).exists():
                 raise SystemExit(f'Duplicate release asset: {wheel.name}')
             shutil.copy2(wheel, dist)
@@ -556,7 +642,9 @@ jobs:
             with tarfile.open(source) as archive:
                 entries = {entry.name.split('/', 1)[1] for entry in archive if '/' in entry.name and entry.isfile()}
                 package = name.replace('-', '_')
-                required = {'pyproject.toml', 'pyproject.toml.j2', 'hatch_build.py', 'README.md', 'LICENSE',
+                if any('tests' in pathlib.PurePosixPath(entry).parts for entry in entries):
+                    raise SystemExit(f'Sdist contains tests: {source.name}')
+                required = {'pyproject.toml', 'pyproject.toml.j2', 'README.md', 'LICENSE',
                             f'{package}/__init__.py', f'{package}/clap.py', f'{package}/clap.pyi', f'{package}/py.typed'}
                 if not required <= entries:
                     raise SystemExit(f'Sdist missing wrapper or packaging input: {source.name}: {required - entries}')
@@ -594,7 +682,7 @@ jobs:
         ROCm GPU targets: gfx908,gfx90a,gfx942,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201.
         Linux wheels are auditwheel-repaired manylinux wheels; the external
         GPU runtimes above remain deliberate exceptions, not portability promises.
-        Source archives contain wrappers, a Jinja metadata template and a validation/tag hook, not native sources.
+        Source archives contain wrappers, a Jinja metadata template and direct backend metadata, not native sources.
         Compile native runtimes separately from a recursive checkout, then stage
         them before packaging; Python wheel builds do not run CMake.
         CPU wheels pass installed-wheel tests on Python 3.9-3.14; GPU execution is not tested here.

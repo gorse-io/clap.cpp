@@ -3,8 +3,8 @@
 {% set package = 'clap_cpp' ~ ('_' ~ backend if backend != 'cpu' else '') -%}
 # Generated from pyproject.toml.j2; render for cpu, cuda, rocm or vulkan.
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["scikit-build-core>=1.1.2"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "{{ package | replace('_', '-') }}"
@@ -22,20 +22,22 @@ cuda = ["clap-cpp-cuda=={{ version }}"]
 rocm = ["clap-cpp-rocm=={{ version }}"]
 vulkan = ["clap-cpp-vulkan=={{ version }}"]
 {% endif %}
-[tool.hatch.build]
-exclude = ["**/__pycache__", "**/*.pyc", "**/.pytest_cache"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["{{ package }}"]
-# The explicitly copied native payload is ignored by Git, not by the wheel.
-ignore-vcs = true
-
-[tool.hatch.build.targets.wheel.hooks.custom]
-path = "hatch_build.py"
-
-[tool.hatch.build.targets.sdist]
+[tool.scikit-build]
+minimum-version = "1.1.2"
+wheel.cmake = false
+wheel.platlib = true
+wheel.py-api = "py3"
+wheel.packages = []
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**"]
+sdist.cmake = false
+sdist.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**"]
+sdist.inclusion-mode = "explicit"
 # Never ship staged binaries, companion data or runtime notices in source archives.
-include = ["/pyproject.toml", "/pyproject.toml.j2", "/README.md", "/LICENSE", "/hatch_build.py", "/{{ package }}/*.py", "/{{ package }}/*.pyi", "/{{ package }}/py.typed"{% if backend == 'cpu' %}, "/tests/**"{% endif %}]
+sdist.include = ["/pyproject.toml", "/pyproject.toml.j2", "/README.md", "/LICENSE", "/{{ package }}/*.py", "/{{ package }}/*.pyi", "/{{ package }}/py.typed"]
+
+[tool.scikit-build.wheel.force-include]
+# Include Git-ignored external payloads without broadening the source archive.
+"{{ package }}" = "{{ package }}"
 {% if backend == 'cpu' %}
 [tool.pytest.ini_options]
 testpaths = ["tests"]

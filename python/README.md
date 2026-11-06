@@ -101,7 +101,7 @@ libraries/linux-x64/
 stage it into the wrapper project and build a platform wheel:
 
 ```sh
-python -m pip install build 'hatchling>=1.27'
+python -m pip install build 'scikit-build-core>=1.1.2'
 cp -R libraries/linux-x64/clap_cpp/. python/clap_cpp/
 cp python/LICENSE python/clap_cpp/licenses/clap-cpp.txt
 python -m build --wheel python
@@ -115,30 +115,35 @@ Start from a fresh wrapper project when switching runtimes so stale companion
 libraries cannot leak into the next wheel. Do not copy Python sources from a
 runtime artifact or overwrite the wrapper files.
 
-Hatchling only assembles the copied files. Its thin `hatch_build.py` hook rejects
-missing/empty host-platform libraries or `licenses/clap-cpp.txt`, and sets
-non-pure `py3-none` platform tags. It never stages files, renders metadata or
-compiles code. A local Linux wheel has a `linux_<arch>` tag and still needs
-portability checks/repair before release. Metadata and wrapper-only source
-archives do not require a runtime. Editable installs also require a copied runtime;
-Hatchling's temporary editable wheel references the source directory and is not
-a distributable runtime wheel.
+The direct `scikit_build_core.build` backend only assembles the copied files:
+`wheel.cmake=false`, `wheel.platlib=true`, `wheel.py-api="py3"` and
+`sdist.cmake=false`. Wheel force-inclusion preserves Git-ignored runtime files;
+explicit source inclusion keeps sdists wrapper-only. There is no custom backend,
+build hook, staging or generation script.
 
-On macOS, the wheel tag must match the staged runtime's architecture and minimum
-macOS deployment target, not just the Python interpreter's build configuration.
-A universal2 interpreter can report a universal2 platform even when the copied
-runtime is single-architecture. The hook rejects all universal2 tags, including
-explicit overrides; it does not verify native binary architectures. Set an
-explicit single-architecture `_PYTHON_HOST_PLATFORM` matching the staged runtime
-when building with such an interpreter. Supported macOS releases are ARM64; for
-an ARM64 runtime built with deployment target 11.0, use:
+Actions validates a nonempty host-platform library with the expected binary
+header and a nonempty `licenses/clap-cpp.txt` before building wheels. The final
+release gate validates the archived payload and notices again before publication.
+Local builds must perform equivalent checks: the direct backend does **not**
+reject an unstaged project, and a wheel without its matching native runtime is
+unusable and must never be published. Metadata and wrapper-only source archives
+need no runtime. Editable installs reference staged sources and are development
+artifacts, not distributable runtime wheels. A local Linux wheel has a
+`linux_<arch>` tag and still needs portability checks/repair before release.
+
+On macOS, scikit-build-core selects the executing architecture via packaging's
+platform tags, rather than treating a universal2 interpreter as proof of a
+universal2 runtime. Keep `MACOSX_DEPLOYMENT_TARGET=11.0` for both the external
+native build and wheel assembly to preserve the supported deployment minimum.
+For an ARM64 runtime built at that minimum on an ARM64 host:
 
 ```sh
-_PYTHON_HOST_PLATFORM=macosx-11.0-arm64 python -m build --wheel python
+MACOSX_DEPLOYMENT_TARGET=11.0 python -m build --wheel python
 ```
 
-This only sets packaging metadata; it does not convert the runtime or change its
-deployment target. The release cibuildwheel ARM64 override follows the same rule.
+This does not convert runtime architectures or change an existing binary's
+minimum. Cross-packaging requires explicit matching platform configuration;
+never label a single-architecture runtime universal2.
 
 ### Optional backend projects
 
@@ -154,7 +159,7 @@ backend=cuda  # or rocm, vulkan
 project="build/python-$backend"
 package="clap_cpp_$backend"
 mkdir -p "$project/$package"
-cp python-dist/{README.md,LICENSE,hatch_build.py,pyproject.toml.j2} "$project/"
+cp python-dist/{README.md,LICENSE,pyproject.toml.j2} "$project/"
 cp python-dist/clap_cpp/{clap.py,clap.pyi,py.typed} "$project/$package/"
 printf '"""Native %s runtime; import clap_cpp for the public API."""\n' "$backend" > "$project/$package/__init__.py"
 BACKEND="$backend" PROJECT="$project" python - <<'PY'
@@ -191,17 +196,19 @@ cp -R libraries/linux-x64/clap_cpp/. build/clap_cpp-0.1.0/clap_cpp/
 cp build/clap_cpp-0.1.0/LICENSE build/clap_cpp-0.1.0/clap_cpp/licenses/clap-cpp.txt
 python -m build --wheel build/clap_cpp-0.1.0
 python -m pip install 'build/clap_cpp-0.1.0/dist/'*.whl
-python -m pip install pytest mypy typing_extensions build 'hatchling>=1.27' jinja2
+python -m pip install pytest mypy typing_extensions build 'scikit-build-core>=1.1.2' jinja2
 python -m pytest python/tests
 ```
 
-Source distributions contain wrapper/typing files, tests, `LICENSE` and packaging
-helpers, not native C++ snapshots, staged binaries or native build definitions.
-An unstaged sdist intentionally cannot build a wheel: plain `python -m build
-python` creates an sdist then fails to build its unstaged wheel. Use the explicit
-`--sdist`, unpack, stage, `--wheel` sequence above. Backend projects can also be
-generated from the extracted CPU sdist before staging their runtimes. No NumPy,
-Python development headers or pybind11 are required.
+Source distributions contain wrapper/typing files, `LICENSE` and
+metadata/template files, not native C++ snapshots, staged binaries, build hooks
+or native build definitions. Tests are excluded from both wheels and sdists; release
+CI supplies them separately from the exact release checkout and tests the installed
+wheel on each supported interpreter. Plain `python -m build python` builds from an
+unstaged sdist and therefore produces an unusable runtime-free wheel; do not
+publish it. Use the explicit `--sdist`, unpack, stage, `--wheel` sequence above.
+Backend projects can also be rendered from the extracted CPU sdist before staging
+their runtimes. No NumPy, Python development headers or pybind11 are required.
 
 ## Releases
 
