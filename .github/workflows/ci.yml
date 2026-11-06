@@ -78,6 +78,11 @@ jobs:
           }
           7z x $archive "-o$destination" -y
           (Get-ChildItem $destination -Filter ffmpeg.exe -Recurse).DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Set macOS native and wheel target
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          printf '%s\n' 'MACOSX_DEPLOYMENT_TARGET=11.0' '_PYTHON_HOST_PLATFORM=macosx-11.0-arm64' >> "$GITHUB_ENV"
       - name: build-libraries
         uses: ./.github/actions/build-libraries
         with:
