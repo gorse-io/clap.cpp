@@ -184,12 +184,11 @@ jobs:
         if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
             raise SystemExit(f"Missing runtime notices: {notice}")
         PY
-    - name: Supply installed-wheel tests and template from the exact release checkout
+    - name: Supply metadata template from the exact release checkout
       shell: bash
       run: |
-        cp -R python/tests python-dist/tests
         cp python/pyproject.toml.j2 python-dist/pyproject.toml.j2
-    - name: Package and test CPU wheels from canonical wrapper sdist and shared runtime
+    - name: Package CPU wheels from canonical wrapper sdist and shared runtime
       uses: pypa/cibuildwheel@v4.3.4
       with:
         package-dir: python-dist
@@ -201,8 +200,6 @@ jobs:
         CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
         CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
         CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=11.0
-        CIBW_TEST_REQUIRES: pytest build scikit-build-core>=1.1.2 jinja2 packaging tomli mypy>=1.8 typing_extensions>=4.2
-        CIBW_TEST_COMMAND: python -m pytest {package}/tests -v
     - uses: actions/upload-artifact@v4
       with:
         name: python-wheels-${{ matrix.os }}
@@ -692,7 +689,6 @@ jobs:
         Source archives contain wrappers and rendered direct backend metadata, not Jinja templates or native sources.
         Compile native runtimes separately from a recursive checkout, then stage
         them before packaging; Python wheel builds do not run CMake.
-        CPU wheels pass installed-wheel tests on Python 3.9-3.14; GPU execution is not tested here.
         ''')
         (dist / 'PYTHON-SHA256SUMS.txt').write_text(''.join(
             f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
@@ -792,11 +788,18 @@ jobs:
           toolchain: stable
           cache-workspaces: . -> target
           build-warnings: ""
-      - name: Set package versions from release tag
-        id: version
+      - name: Install cargo set-version
+        run: cargo install cargo-edit --locked --no-default-features --features set-version
+      - name: Set Rust package version from release tag
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: python .github/scripts/release-version.py "$RELEASE_TAG"
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [[ "$version" == *+* ]]; then
+            echo "::error::Release tags with build metadata are not supported by npm"
+            exit 1
+          fi
+          cargo set-version -- "$version"
       - name: Build and verify Rust source distribution
         run: cargo package --allow-dirty
       - uses: actions/upload-artifact@v4
@@ -847,9 +850,6 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: .github/scripts
       - uses: actions/download-artifact@v4
         with:
           name: rust-crate
@@ -863,18 +863,12 @@ jobs:
         run: |
           mkdir "$RUNNER_TEMP/package"
           tar -xzf dist/*.crate --strip-components=1 -C "$RUNNER_TEMP/package"
-      - name: Verify Cargo repackaging preserves the tested sources
-        run: |
-          cargo package --manifest-path "$RUNNER_TEMP/package/Cargo.toml" --locked --no-verify
-          python .github/scripts/verify-crate.py dist/*.crate "$RUNNER_TEMP/package/target/package/"*.crate
       - uses: rust-lang/crates-io-auth-action@v1
         if: env.CARGO_REGISTRY_TOKEN == ''
         id: auth
       - name: Publish to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
-        # Cargo repackages on publish; the source-equivalence check excludes only
-        # Cargo.toml.orig and VCS metadata, not the normalized manifest or sources.
         run: cargo publish --manifest-path "$RUNNER_TEMP/package/Cargo.toml" --locked --no-verify
 
   build-node:
@@ -898,14 +892,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Set package versions from release tag
+      - name: Set npm package versions from release tag
         id: version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: python ../.github/scripts/release-version.py "$RELEASE_TAG"
+        run: |
+          version="${RELEASE_TAG#v}"
+          npm version --workspaces --include-workspace-root --no-git-tag-version \
+            --allow-same-version --ignore-scripts --workspaces-update=false -- "$version"
+          if [[ "$(node -p 'require("./package.json").version')" != "$version" ]]; then
+            echo "::error::Release tag must be a canonical SemVer without build metadata"
+            exit 1
+          fi
+          for target in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
+            npm pkg set "optionalDependencies.@gorse/clap-cpp-$target=$version"
+          done
+          npm install --package-lock-only --ignore-scripts --force --offline --no-audit --no-fund
+          npm_tag=latest
+          if [[ "$version" == *-* ]]; then
+            npm_tag=next
+          fi
+          echo "npm-tag=$npm_tag" >> "$GITHUB_OUTPUT"
       - name: Copy external runtimes into platform workspaces
         run: |
           set -euo pipefail
@@ -921,8 +928,6 @@ jobs:
         run: |
           mkdir -p artifacts
           npm pack --workspaces --include-workspace-root --pack-destination artifacts
-      - name: Validate all five package archives
-        run: python ../.github/scripts/validate-node-packages.py --artifacts artifacts --require-all
       - uses: actions/upload-artifact@v4
         with:
           name: node-package

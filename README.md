@@ -4,9 +4,6 @@
 
 [![CI](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/gorse-io/clap.cpp)](https://github.com/gorse-io/clap.cpp/releases/latest)
-[![PyPI](https://img.shields.io/pypi/v/clap-cpp)](https://pypi.org/project/clap-cpp/)
-[![npm](https://img.shields.io/npm/v/clap-cpp)](https://www.npmjs.com/package/clap-cpp)
-[![crates.io](https://img.shields.io/crates/v/clap-cpp)](https://crates.io/crates/clap-cpp)
 
 C++20/ggml implementations of audio embedding inference features:
 
@@ -32,45 +29,45 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 
 | Binding | CPU | CUDA | Vulkan | Install |
 | --- | --- | --- | --- | --- |
-| [Python](python) | ✅ | ❌ | ❌ | `pip3 install clap-cpp` |
-| [Rust](rust) | ✅ | ❌ | ❌ | `cargo install clap-cpp` |
+| [Python](python) | ✅ | ✅ | ✅ | `pip3 install clap-cpp` |
+| [Rust](rust) | ✅ | ✅ | ✅ | `cargo install clap-cpp` |
 | [Node.js](node) | ✅ | ❌ | ❌ | `npm install clap-cpp` |
 
 ## Usage
 
-## Embeddings command
+### Embeddings command
 
 Load a converted GGUF and generate real native text or audio embeddings:
 
 ```sh
-clap embedding --model model.gguf --text 'A jazz quartet.'
-clap embedding --model model.gguf --audio music.flac
+clap embedding --model larger_clap_general-q4_k_m.gguf --threads 4 --text 'Sound of a dog'
+clap embedding --model larger_clap_general-q4_k_m.gguf --threads 4 --audio dog.wav
 ```
 
-## Embeddings server
+### Embeddings server
 
 Start the server with a GGUF supporting the requested modality, such as CLAP,
 CLaMP3 or MuQ-MuLan (default listen address: `127.0.0.1:8080`):
 
 ```sh
-clap serve --model model.gguf --host 127.0.0.1 --port 8080
+clap serve --model larger_clap_general-q4_k_m.gguf --threads 4 --host 127.0.0.1 --port 8080
 ```
 
 The model is loaded once at startup. Its API identifier is the GGUF **filename**
-(`model.gguf` in this example), not its full path or a Hugging Face repository ID.
+(`larger_clap_general-q4_k_m.gguf` in this example), not its full path or a Hugging Face repository ID.
 Send an OpenAI-compatible text embeddings request:
 
 ```sh
 curl http://127.0.0.1:8080/v1/embeddings \
   -H 'Content-Type: application/json' \
-  -d '{"model":"model.gguf","input":["hello","world"],"encoding_format":"float"}'
+  -d '{"model":"larger_clap_general-q4_k_m.gguf","input":["Sound of a dog"],"encoding_format":"float"}'
 ```
 
 Audio inputs use one `input_audio` content block per item. Encode the complete
 WAV, MP3 or FLAC file as standard base64 (no whitespace or data-URL prefix):
 
 ```sh
-python3 -c 'import base64,json,sys; print(json.dumps({"input":[{"content":[{"type":"input_audio","input_audio":{"data":base64.b64encode(open(sys.argv[1],"rb").read()).decode()}}]}]}))' music.flac |
+python3 -c 'import base64,json,sys; print(json.dumps({"input":[{"content":[{"type":"input_audio","input_audio":{"data":base64.b64encode(open(sys.argv[1],"rb").read()).decode()}}]}]}))' dog.wav |
   curl http://127.0.0.1:8080/v1/embeddings \
     -H 'Content-Type: application/json' --data-binary @-
 ```
