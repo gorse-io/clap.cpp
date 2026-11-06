@@ -1,13 +1,23 @@
 'use strict';
-const koffi = require('koffi');
 const path = require('node:path');
 const { types } = require('node:util');
 
 // Load only this installation's runtime. Never search PATH or the system linker
 // path for a possibly incompatible copy of clap.
-const libraryName = { win32: 'clap.dll', darwin: 'libclap.dylib', linux: 'libclap.so' }[process.platform];
-if (!libraryName) throw new Error(`Unsupported platform: ${process.platform}`);
-const lib = koffi.load(path.join(__dirname, 'build', 'runtime', libraryName));
+const target = `${process.platform}-${process.arch}`;
+const libraryName = {
+  'linux-x64': 'libclap.so',
+  'linux-arm64': 'libclap.so',
+  'darwin-arm64': 'libclap.dylib',
+  'win32-x64': 'clap.dll',
+}[target];
+if (!libraryName) throw new Error(`Unsupported platform or architecture: ${target}`);
+const runtime = path.join(__dirname, 'runtime', target, libraryName);
+if (!require('node:fs').existsSync(runtime)) {
+  throw new Error(`Missing prebuilt clap runtime for ${target}: ${runtime}. Reinstall clap-cpp from a complete npm package.`);
+}
+const koffi = require('koffi');
+const lib = koffi.load(runtime);
 
 // Anonymous types keep independently installed copies from colliding in Koffi's
 // named type registry. Enums are C int; struct layout uses the platform C ABI.

@@ -8,7 +8,7 @@ import wave
 root = Path(__file__).resolve().parents[1]
 source = root.parent / 'python' / 'tests' / 'tiny_models.py'
 if not source.exists():
-    source = root / 'native-tests' / 'tiny_models.py'
+    source = root / 'test' / 'tiny_models.py'
 spec = importlib.util.spec_from_file_location('tiny_models', source)
 fixtures = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixtures)

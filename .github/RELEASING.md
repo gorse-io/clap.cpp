@@ -9,15 +9,18 @@ set from the tag (without `v`); the Node lockfile is updated too. Build metadata
 dist-tag; stable releases use `latest`. A release marked as a GitHub prerelease
 also uses `next`, even if its version has no prerelease suffix.
 
-Both packages ship portable CPU native sources and compile on installation;
-this does not publish GPU bindings or prebuilt Node binaries. Before publication,
-source archives are built and tested on Linux x64/ARM64, macOS ARM64 and Windows
-x64. The publishers download the verified Linux-built archive only after every
-platform succeeds. npm publishes that tarball directly. Cargo repackages the
-extracted crate before upload: the publisher verifies that all files, including
-the normalized manifest and native sources, match the tested archive. Only
-Cargo-generated `Cargo.toml.orig` and VCS metadata are excluded from this comparison;
-Rust guarantees source equivalence, not a byte-identical compressed archive.
+Rust ships portable CPU native sources and compiles on installation. Node ships
+one universal npm tarball containing externally compiled shared libraries for
+Linux x64/ARM64, macOS ARM64 and Windows x64; npm never builds clap.cpp. The Node
+release first builds each runtime on its matching runner, collects the runtimes
+and licenses, then tests the same tarball on all four platforms before publishing.
+The macOS runtime enables embedded Metal; Linux and Windows are CPU-only.
+
+Rust source archives are tested on the same platform matrix. Cargo repackages
+the extracted crate before upload: the publisher verifies that all files,
+including the normalized manifest and native sources, match the tested archive.
+Only Cargo-generated `Cargo.toml.orig` and VCS metadata are excluded; Rust
+guarantees source equivalence, not a byte-identical compressed archive.
 
 ## Registry authorization
 
@@ -50,6 +53,11 @@ only exercised when a release is published and registry authorization is ready.
 python -m unittest discover -s .github/scripts -v
 python -m unittest discover -s rust/tests -p test_package.py -v
 cargo package --allow-dirty -j 3
+cmake --preset node-linux-x64
+cmake --build build/node-runtime --config Release --target clap --parallel 4
+cmake --install build/node-runtime --config Release --component runtime --prefix "$PWD/node/runtime/linux-x64"
+cp LICENSE node/LICENSE
+cp python/tests/tiny_models.py node/test/tiny_models.py
 cd node
 npm ci
 npm run test:fixtures
@@ -65,7 +73,10 @@ npm test
 ```
 
 The checkout must contain the pinned initialized submodules. The repository-root
-Rust package includes the original native sources and upstream licenses directly;
-no staging or vendoring step is needed (see `rust/README.md`). Node's `prepack`
-still stages its own native tree. Do not commit generated native trees or archives. CMake, a C++20 compiler and Python are needed for local
-checks; install NumPy for Node's numerical oracle.
+Rust package includes original native sources and upstream licenses directly.
+Node packaging includes only staged prebuilt runtimes and licenses, not native
+sources or build scripts. Do not commit generated runtimes, fixture copies or
+archives. See `node/README.md` for the other platform presets; release packaging
+requires all four runtimes and `CLAP_CPP_REQUIRE_ALL_RUNTIMES=1`.
+CMake and a C++20 compiler are needed only for the separate native build; Python
+is needed for the maintainer tests, not npm installation.

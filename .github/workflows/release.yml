@@ -669,7 +669,37 @@ jobs:
         # Cargo.toml.orig and VCS metadata, not the normalized manifest or sources.
         run: cargo publish --manifest-path "$RUNNER_TEMP/package/Cargo.toml" --locked --no-verify
 
+  build-node-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            runtime: linux-x64
+          - os: ubuntu-22.04-arm
+            runtime: linux-arm64
+          - os: macos-15
+            runtime: darwin-arm64
+          - os: windows-2022
+            runtime: win32-x64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/node-runtime
+        with:
+          runtime: ${{ matrix.runtime }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-runtime-${{ matrix.runtime }}
+          path: node/runtime
+          if-no-files-found: error
+
   build-node:
+    needs: build-node-runtime
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -681,8 +711,11 @@ jobs:
         working-directory: node
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          submodules: recursive
+          pattern: node-runtime-*
+          path: node/runtime
+          merge-multiple: true
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -694,8 +727,14 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: python ../.github/scripts/release-version.py "$RELEASE_TAG"
-      - name: Pack source distribution
+      - name: Pack all prebuilt runtimes
+        env:
+          CLAP_CPP_REQUIRE_ALL_RUNTIMES: '1'
         run: |
+          cp ../LICENSE LICENSE
+          cp ../python/tests/tiny_models.py test/tiny_models.py
+          npm ci
+          npm run test:packaging
           mkdir -p artifacts
           npm pack --pack-destination artifacts
       - uses: actions/upload-artifact@v4
@@ -731,7 +770,9 @@ jobs:
           python-version: '3.11'
       - name: Install numerical oracle dependency
         run: python -m pip install numpy
-      - name: Install and test source distribution
+      - name: Install and test prebuilt distribution
+        env:
+          CLAP_CPP_REQUIRE_ALL_RUNTIMES: '1'
         run: |
           npm install --prefix installed ./dist/*.tgz
           cd installed/node_modules/clap-cpp

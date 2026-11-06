@@ -217,6 +217,91 @@
         "GGML_METAL": "OFF",
         "GGML_VULKAN": "ON"
       }
+    },
+    {
+      "name": "node-runtime-base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/node-runtime",
+      "cacheVariables": {
+        "GGML_NATIVE": "OFF",
+        "GGML_BACKEND_DL": "OFF",
+        "GGML_OPENMP": "OFF",
+        "GGML_BUILD_TESTS": "OFF",
+        "GGML_BUILD_EXAMPLES": "OFF",
+        "GGML_CUDA": "OFF",
+        "GGML_HIP": "OFF",
+        "GGML_VULKAN": "OFF",
+        "GGML_SYCL": "OFF",
+        "GGML_OPENCL": "OFF",
+        "GGML_OPENVINO": "OFF",
+        "GGML_RPC": "OFF",
+        "GGML_MUSA": "OFF",
+        "GGML_WEBGPU": "OFF",
+        "GGML_ZDNN": "OFF",
+        "GGML_VIRTGPU": "OFF",
+        "GGML_VIRTGPU_BACKEND": "OFF",
+        "GGML_ET": "OFF",
+        "GGML_HEXAGON": "OFF",
+        "GGML_ZENDNN": "OFF",
+        "GGML_BLAS": "OFF",
+        "GGML_ACCELERATE": "OFF",
+        "GGML_SSE42": "OFF",
+        "GGML_AVX": "OFF",
+        "GGML_AVX2": "OFF",
+        "GGML_AVX_VNNI": "OFF",
+        "GGML_BMI2": "OFF",
+        "GGML_FMA": "OFF",
+        "GGML_F16C": "OFF",
+        "GGML_AVX512": "OFF",
+        "GGML_AVX512_VBMI": "OFF",
+        "GGML_AVX512_VNNI": "OFF",
+        "GGML_AVX512_BF16": "OFF",
+        "GGML_AMX_TILE": "OFF",
+        "GGML_AMX_INT8": "OFF",
+        "GGML_AMX_BF16": "OFF",
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": "ON",
+        "CLAP_STATIC_DEPENDENCIES": "ON",
+        "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
+        "CLAP_BUILD_CLI": "OFF",
+        "BUILD_TESTING": "OFF",
+        "CLAP_USE_SYSTEM_ICU": "OFF",
+        "GGML_CPU": "ON",
+        "GGML_METAL": "OFF",
+        "GGML_METAL_EMBED_LIBRARY": "OFF",
+        "CMAKE_INSTALL_LIBDIR": ".",
+        "CMAKE_INSTALL_BINDIR": "."
+      }
+    },
+    {
+      "name": "node-linux-x64",
+      "inherits": "node-runtime-base",
+      "generator": "Unix Makefiles"
+    },
+    {
+      "name": "node-linux-arm64",
+      "inherits": "node-runtime-base",
+      "generator": "Unix Makefiles"
+    },
+    {
+      "name": "node-darwin-arm64",
+      "inherits": "node-runtime-base",
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "15.0",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "GGML_METAL": "ON",
+        "GGML_METAL_EMBED_LIBRARY": "ON"
+      }
+    },
+    {
+      "name": "node-win32-x64",
+      "inherits": "node-runtime-base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
+      }
     }
   ]
 }
