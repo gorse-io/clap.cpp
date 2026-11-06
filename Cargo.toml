@@ -14,7 +14,7 @@ include = [
     "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/rust/README.md",
     "/rust/build.rs", "/rust/src/**", "/rust/examples/*.rs",
     "/rust/tests/*.rs", "/rust/tests/ffi/*.rs", "/rust/tests/*.py",
-    "/python/tests/tiny_models.py", "/CMakeLists.txt", "/include/**", "/src/**", "/cmake/**",
+    "/CMakeLists.txt", "/include/**", "/src/**", "/cmake/**",
     "/ggml/CMakeLists.txt", "/ggml/cmake/**", "/ggml/include/**", "/ggml/src/**", "/ggml/LICENSE",
     "/thirdparty/json/CMakeLists.txt", "/thirdparty/json/cmake/**",
     "/thirdparty/json/include/**", "/thirdparty/json/nlohmann_json.natvis", "/thirdparty/json/LICENSE.MIT",

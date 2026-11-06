@@ -545,7 +545,7 @@ jobs:
     needs: build-python-sdist
     permissions:
       contents: read
-  python-attach-release:
+  python-prepare-pypi:
     needs:
     - build-python-sdist
     - build-python-wheels
@@ -554,7 +554,7 @@ jobs:
     - python-build-rocm
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
     steps:
     - uses: actions/download-artifact@v4
       with:
@@ -564,14 +564,13 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-    - name: Validate complete asset set and write runtime manifest
+    - name: Validate Python packages for PyPI
       shell: bash
       run: |
         set -euo pipefail
         python -m pip install packaging
         python - <<'PY'
         from collections import Counter
-        import hashlib
         import pathlib
         import shutil
         import tarfile
@@ -665,63 +664,8 @@ jobs:
         manifests = list(root.rglob('ROCM-6.4.3-EXCLUDED-SONAMES.txt'))
         if len(manifests) != 1:
             raise SystemExit('Expected exactly one ROCm exclusion manifest')
-        shutil.copy2(manifests[0], dist)
-        (dist / 'PYTHON-WHEEL-RUNTIME.txt').write_text('''Python wheels are GitHub Release assets; stable releases also publish to PyPI.
-        CPU: Python 3.9-3.14, Linux x86_64/aarch64 (wheel tags record the glibc minimum),
-        macOS arm64 (wheel filename records deployment minimum), Windows amd64.
-        GPU: Python 3.9-3.14, Linux x86_64 only. No Windows GPU wheels yet.
-        Wheels use Python ctypes with ABI-independent py3-none platform tags.
-        Install clap-cpp plus the matching clap-cpp-cuda/rocm/vulkan wheel,
-        with identical versions and compatible platform tags.
-        CUDA: toolkit 12.9.2, glibc >= 2.35; static cudart/cuBLAS;
-        compatible NVIDIA driver required, libcuda.so.1 is NOT bundled.
-        Vulkan: glibc >= 2.39; system libvulkan.so.1 loader and a working
-        vendor Vulkan ICD/driver are required and NOT bundled.
-        ROCm: glibc >= 2.35; install AMD ROCm 6.4.3 HIP, hipBLAS and rocBLAS,
-        including rocBLAS library data and a compatible AMD GPU/kernel driver.
-        Make /opt/rocm/lib:/opt/rocm/lib64 visible via LD_LIBRARY_PATH or ldconfig.
-        ROCM-6.4.3-EXCLUDED-SONAMES.txt lists every vendor SONAME deliberately
-        excluded from auditwheel bundling; these are system-runtime wheels,
-        not self-contained ROCm distributions. Do not relocate rocBLAS data.
-        ROCm GPU targets: gfx908,gfx90a,gfx942,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201.
-        Linux wheels are auditwheel-repaired manylinux wheels; the external
-        GPU runtimes above remain deliberate exceptions, not portability promises.
-        Source archives contain wrappers and rendered direct backend metadata, not Jinja templates or native sources.
-        Compile native runtimes separately from a recursive checkout, then stage
-        them before packaging; Python wheel builds do not run CMake.
-        ''')
-        (dist / 'PYTHON-SHA256SUMS.txt').write_text(''.join(
-            f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
-            for p in sorted(dist.iterdir())
-        ))
         print(f'Validated {sum(actual.values())} wheels and {len(sdists)} sdists; version {next(iter(versions))}')
         PY
-    - name: Attach verified assets to the triggering GitHub release
-      shell: bash
-      env:
-        GH_TOKEN: ${{ github.token }}
-        GH_REPO: ${{ github.repository }}
-        RELEASE_TAG: ${{ github.event.release.tag_name }}
-      run: |
-        set -euo pipefail
-        gh release upload "$RELEASE_TAG" dist/* --clobber
-        # Read back this exact release and verify asset size AND bytes; an
-        # upload command succeeding is not itself evidence of a complete set.
-        gh release view "$RELEASE_TAG" --json assets > release-assets.json
-        python - <<'PY'
-        import json
-        import pathlib
-        assets = {a['name']: a['size'] for a in json.loads(pathlib.Path('release-assets.json').read_text())['assets']}
-        for path in pathlib.Path('dist').iterdir():
-            if assets.get(path.name) != path.stat().st_size:
-                raise SystemExit(f'Release asset missing or wrong size: {path.name}')
-        PY
-        mkdir downloaded
-        for asset in dist/*; do
-          gh release download "$RELEASE_TAG" --pattern "$(basename "$asset")" --dir downloaded
-        done
-        cd downloaded
-        sha256sum -c PYTHON-SHA256SUMS.txt
     - uses: actions/upload-artifact@v4
       with:
         name: python-pypi
@@ -741,7 +685,7 @@ jobs:
       CMAKE_ARGS: -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache
         -DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DBUILD_TESTING=OFF -DGGML_CCACHE=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DGGML_METAL=OFF
   python-publish-pypi:
-    needs: python-attach-release
+    needs: python-prepare-pypi
     if: github.event.release.prerelease == false
     runs-on: ubuntu-22.04
     environment:
