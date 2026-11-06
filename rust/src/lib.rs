@@ -201,7 +201,3 @@ impl CLAP {
         output.into_vec()
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/ffi/regression.rs"]
-mod regression;

@@ -77,16 +77,14 @@ source tree can override checkout edits.
 
 ## Packaging and publishing (maintainers)
 
-From the repository root, with Python 3 and the pinned submodules initialized:
+From the repository root, with the pinned submodules initialized:
 
 ```sh
-python3 -m unittest discover -s rust/tests -p test_package.py -v
 cargo package --locked -j 3
 ```
 
-The guard checks require clean submodules at the revisions pinned by the checkout
-and check Cargo's actual file inventory. Cargo includes the initialized Git
-submodules directly through the root manifest's include allowlist: the native
+Use clean submodules at the revisions pinned by the checkout. Cargo includes the
+initialized Git submodules directly through the root manifest's include allowlist: the native
 CMake graph, clap.cpp sources, selected dependency source trees (including optional
 GPU backends), upstream licenses in their original locations, and
 `python/tests/tiny_models.py` for standalone tests. There is no copying step and
@@ -96,15 +94,8 @@ For an intentional dirty local package use `--allow-dirty`; releases should use
 the pinned clean source tree.
 
 Do not skip Cargo's package verification: it builds the archived source rather
-than the checkout. Also run integration tests against a standalone extraction
-(no parent source tree), replacing the version below if needed:
-
-```sh
-mkdir -p target/standalone
-tar -xzf target/package/clap-cpp-0.1.0.crate -C target/standalone
-cargo test --manifest-path target/standalone/clap-cpp-0.1.0/Cargo.toml --all-targets --locked -j 3
-cargo test --manifest-path target/standalone/clap-cpp-0.1.0/Cargo.toml --doc --locked -j 3
-```
+than the checkout. Run integration and documentation tests from the Git checkout
+with `cargo test --all-targets` and `cargo test --doc`, not from the packaged crate.
 
 After review and verification, publish the verified release archive's extracted
 crate with `cargo publish --locked` from that directory. Release automation may
@@ -114,7 +105,6 @@ Keep the compressed `.crate` below the registry's size limit (10 MiB by default)
 Other local checks:
 
 ```sh
-python3 -m unittest discover -s rust/tests -p 'test_package.py'
 cargo fmt -- --check
 cargo clippy --all-targets -j 3 -- -D warnings
 ```

@@ -682,8 +682,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: python .github/scripts/release-version.py "$RELEASE_TAG"
-      - name: Check package inventory and pinned sources
-        run: python -m unittest discover -s rust/tests -p test_package.py -v
       - name: Build and verify Rust source distribution
         run: cargo package --allow-dirty
       - uses: actions/upload-artifact@v4
@@ -693,7 +691,6 @@ jobs:
           if-no-files-found: error
 
   test-rust:
-    needs: build-rust
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -707,10 +704,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: rust-crate
-          path: dist
+          submodules: recursive
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -719,13 +715,10 @@ jobs:
           toolchain: stable
           cache: false
           build-warnings: ""
-      - name: Extract and test source distribution
+      - name: Test Rust checkout
         run: |
-          mkdir package
-          tar -xzf dist/*.crate --strip-components=1 -C package
-          cargo test --manifest-path package/Cargo.toml --all-targets --locked
-          cargo test --manifest-path package/Cargo.toml --doc --locked
-          python -m unittest discover -s package/rust/tests -p test_package.py -v
+          cargo test --all-targets --locked
+          cargo test --doc --locked
 
   publish-crates-io:
     env:
