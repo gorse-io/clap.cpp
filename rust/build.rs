@@ -27,7 +27,7 @@ impl Backends {
             cuda: enabled("CARGO_FEATURE_CUDA"),
             vulkan: enabled("CARGO_FEATURE_VULKAN"),
             rocm: enabled("CARGO_FEATURE_ROCM"),
-            metal: target_os == "macos" || enabled("CARGO_FEATURE_METAL"),
+            metal: target_os == "macos",
         }
     }
 
@@ -37,9 +37,6 @@ impl Backends {
         }
         if self.cuda && self.rocm {
             return Err("cuda and rocm cannot be enabled together (shared ggml CUDA symbols)");
-        }
-        if self.metal && os != "macos" {
-            return Err("the metal Cargo feature requires macOS");
         }
         if self.rocm && os != "linux" {
             return Err("the rocm Cargo feature currently requires Linux");

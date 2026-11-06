@@ -18,6 +18,8 @@ cargo add clap-cpp
 | `vulkan` | GGML Vulkan | Vulkan headers/loader, `glslc`, and SPIR-V headers |
 | `rocm` | GGML HIP | AMD ROCm/HIP SDK with hipBLAS and rocBLAS |
 
+Metal is enabled automatically on macOS.
+
 ## Usage
 
 ```rust,no_run

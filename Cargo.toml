@@ -29,7 +29,6 @@ default = []
 cuda = []
 vulkan = []
 rocm = []
-metal = []
 
 [lib]
 name = "clap_cpp"
