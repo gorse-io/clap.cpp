@@ -45,9 +45,9 @@ Vulkan loader exclusions remain backend-specific. Their existing auditwheel
 policies remain: CUDA/ROCm manylinux_2_35, Vulkan manylinux_2_39; GPU execution is
 not tested by these jobs.
 
-Rust source archives are tested on the same platform matrix. Cargo repackages
-the extracted crate before upload: the publisher verifies that all files,
-including the normalized manifest and native sources, match the tested archive.
+Rust checkout tests run on the same platform matrix, independently of packaging.
+Cargo repackages the extracted crate before upload: the publisher verifies that
+all files, including the normalized manifest and native sources, match the built archive.
 Only Cargo-generated `Cargo.toml.orig` and VCS metadata are excluded; Rust
 guarantees source equivalence, not a byte-identical compressed archive.
 

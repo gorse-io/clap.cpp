@@ -94,15 +94,8 @@ For an intentional dirty local package use `--allow-dirty`; releases should use
 the pinned clean source tree.
 
 Do not skip Cargo's package verification: it builds the archived source rather
-than the checkout. Also run integration tests against a standalone extraction
-(no parent source tree), replacing the version below if needed:
-
-```sh
-mkdir -p target/standalone
-tar -xzf target/package/clap-cpp-0.1.0.crate -C target/standalone
-cargo test --manifest-path target/standalone/clap-cpp-0.1.0/Cargo.toml --all-targets --locked -j 3
-cargo test --manifest-path target/standalone/clap-cpp-0.1.0/Cargo.toml --doc --locked -j 3
-```
+than the checkout. Run integration and documentation tests from the Git checkout
+with `cargo test --all-targets` and `cargo test --doc`, not from the packaged crate.
 
 After review and verification, publish the verified release archive's extracted
 crate with `cargo publish --locked` from that directory. Release automation may

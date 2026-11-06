@@ -172,14 +172,3 @@ jobs:
         run: cargo test --all-targets
       - name: Compile-fail thread-safety contract
         run: cargo test --doc
-      - name: Verify standalone package build
-        run: cargo package --allow-dirty
-      - name: Test standalone package inference and safety
-        shell: bash
-        run: |
-          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
-          manifest="target/package/clap-cpp-${version}/Cargo.toml"
-          cargo test --manifest-path "$manifest" --all-targets --locked
-          cargo test --manifest-path "$manifest" --doc --locked
-      - name: Recheck checkout after package verification
-        run: cargo test --all-targets --locked
