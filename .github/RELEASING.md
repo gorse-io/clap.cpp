@@ -32,11 +32,13 @@ validates archive contents, platform constraints and versions before publishing.
 Node inference tests run against the checkout and its platform workspace in CI.
 No Python wheel extraction is involved. All native packages publish before the wrapper.
 
-Python publishes canonical wrapper-only source archives including the shared
-`pyproject.toml.j2` template and direct scikit-build-core metadata;
-neither sdists nor wheels contain tests. Source archives contain neither native
-sources nor compiled libraries. Release jobs render
-the template with Jinja2 for CPU, CUDA, ROCm and Vulkan, preserving exact versions.
+Python publishes canonical wrapper-only source archives with rendered direct
+scikit-build-core metadata; neither sdists nor wheels contain tests or `.j2`
+templates. Source archives contain neither native sources nor compiled libraries.
+Release jobs render the repository's shared `pyproject.toml.j2` template with
+Jinja2 for CPU, CUDA, ROCm and Vulkan from the exact `${{ github.sha }}` checkout.
+GPU projects reuse wrapper bytes and the version from the canonical CPU sdist;
+the template is read from the checkout, not from that archive.
 CPU wheel jobs extract the base archive and directly copy the downloaded
 `clap_cpp/` runtime contents and license into its package. scikit-build-core never compiles
 native code (`wheel.cmake=false`, `sdist.cmake=false`); no custom hook/backend
@@ -44,7 +46,8 @@ is used. Actions checks runtime binary headers and nonempty runtime notices befo
 assembly and checks the archived payload again before publication. The direct
 backend alone does not reject unstaged projects; never publish their unusable
 runtime-free wheels. The wheel job checks out `${{ github.sha }}` and copies tests
-separately into its working source directory (not into published sdists/wheels).
+and the template separately into its working source directory for packaging tests
+(not into published sdists/wheels).
 cibuildwheel runs installed-wheel tests for Python 3.9, 3.10,
 3.11, 3.12, 3.13 and 3.14. ABI-independent `py3-none` wheels are reused across
 these interpreters; Linux wheels retain auditwheel-repaired manylinux tags.

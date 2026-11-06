@@ -28,12 +28,12 @@ wheel.cmake = false
 wheel.platlib = true
 wheel.py-api = "py3"
 wheel.packages = []
-wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**"]
+wheel.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**", "**/*.j2"]
 sdist.cmake = false
-sdist.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**"]
+sdist.exclude = ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/tests/**", "**/*.j2"]
 sdist.inclusion-mode = "explicit"
 # Never ship staged binaries, companion data or runtime notices in source archives.
-sdist.include = ["/pyproject.toml", "/pyproject.toml.j2", "/README.md", "/LICENSE", "/{{ package }}/*.py", "/{{ package }}/*.pyi", "/{{ package }}/py.typed"]
+sdist.include = ["/pyproject.toml", "/README.md", "/LICENSE", "/{{ package }}/*.py", "/{{ package }}/*.pyi", "/{{ package }}/py.typed"]
 
 [tool.scikit-build.wheel.force-include]
 # Include Git-ignored external payloads without broadening the source archive.

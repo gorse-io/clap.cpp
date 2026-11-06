@@ -45,6 +45,8 @@ def unit_wheel(root, distribution="clap_cpp", platform=PLATFORMS[0], interpreter
             archive.writestr(f"{distribution}/licenses/clap-cpp.txt", "" if payload == "empty-notice" else "UNIT FIXTURE notice")
         if payload == "tests":
             archive.writestr(f"{distribution}/tests/test_leaked.py", "# TEST FIXTURE")
+        if payload == "template":
+            archive.writestr(f"{distribution}/unused.j2", "UNIT FIXTURE template")
     return path
 
 
@@ -65,7 +67,7 @@ class PythonReleaseAssetsTest(unittest.TestCase):
     def unit_sdist(self, source, distribution, omitted=None, extra=()):
         """Write wrapper-only UNIT FIXTURE source archives for the real heredoc."""
         with tarfile.open(source, "w:gz") as archive:
-            for name in ("pyproject.toml", "pyproject.toml.j2", "README.md", "LICENSE",
+            for name in ("pyproject.toml", "README.md", "LICENSE",
                          *(f"{distribution}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed")), *extra):
                 if name == omitted:
                     continue
@@ -74,9 +76,9 @@ class PythonReleaseAssetsTest(unittest.TestCase):
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
 
-    def test_unit_fixture_sdist_requires_wrapper_metadata_and_template(self):
+    def test_unit_fixture_sdist_requires_wrapper_and_rendered_metadata(self):
         for distribution in DISTRIBUTIONS:
-            for required in ("pyproject.toml", "pyproject.toml.j2", "README.md", "LICENSE",
+            for required in ("pyproject.toml", "README.md", "LICENSE",
                              *(f"{distribution}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed"))):
                 with self.subTest(distribution=distribution, required=required):
                     source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
@@ -100,6 +102,19 @@ class PythonReleaseAssetsTest(unittest.TestCase):
                 self.unit_sdist(source, distribution)
                 unit_wheel(self.artifacts, distribution=distribution, payload="tests")
                 self.assert_rejected("Wheel contains tests")
+                unit_wheel(self.artifacts, distribution=distribution)
+
+    def test_published_archives_reject_jinja_templates(self):
+        for distribution in DISTRIBUTIONS:
+            for template in ("pyproject.toml.j2", f"{distribution}/unused.j2"):
+                with self.subTest(distribution=distribution, template=template):
+                    source = self.artifacts / f"{distribution}-0.1.0.tar.gz"
+                    self.unit_sdist(source, distribution, extra=(template,))
+                    self.assert_rejected("Sdist contains Jinja template")
+                    self.unit_sdist(source, distribution)
+            with self.subTest(distribution=distribution, archive="wheel"):
+                unit_wheel(self.artifacts, distribution=distribution, payload="template")
+                self.assert_rejected("Wheel contains Jinja template")
                 unit_wheel(self.artifacts, distribution=distribution)
 
     def run_validator(self):

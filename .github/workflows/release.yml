@@ -15,6 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        ref: ${{ github.sha }}
         submodules: recursive
     - uses: actions/setup-python@v5
       with:
@@ -50,7 +51,7 @@ jobs:
           destination="$RUNNER_TEMP/clap-$backend"
           package="clap_cpp_$backend"
           mkdir -p "$destination/$package"
-          cp python-dist/{README.md,LICENSE,pyproject.toml.j2} "$destination/"
+          cp python-dist/{README.md,LICENSE} "$destination/"
           cp python-dist/clap_cpp/{clap.py,clap.pyi,py.typed} "$destination/$package/"
           printf '"""Native %s runtime; import clap_cpp for the public API."""\n' "$backend" > "$destination/$package/__init__.py"
           BACKEND="$backend" DESTINATION="$destination" python - <<'PY'
@@ -61,7 +62,7 @@ jobs:
         source = Path('python-dist')
         version = tomllib.loads((source / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
         template = Environment(undefined=StrictUndefined, keep_trailing_newline=True).from_string(
-            (source / 'pyproject.toml.j2').read_text(encoding='utf-8'))
+            Path('python/pyproject.toml.j2').read_text(encoding='utf-8'))
         (Path(os.environ['DESTINATION']) / 'pyproject.toml').write_text(
             template.render(backend=os.environ['BACKEND'], version=version), encoding='utf-8')
         PY
@@ -183,9 +184,11 @@ jobs:
         if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
             raise SystemExit(f"Missing runtime notices: {notice}")
         PY
-    - name: Supply installed-wheel tests from the exact release checkout
+    - name: Supply installed-wheel tests and template from the exact release checkout
       shell: bash
-      run: cp -R python/tests python-dist/tests
+      run: |
+        cp -R python/tests python-dist/tests
+        cp python/pyproject.toml.j2 python-dist/pyproject.toml.j2
     - name: Package and test CPU wheels from canonical wrapper sdist and shared runtime
       uses: pypa/cibuildwheel@v4.3.4
       with:
@@ -611,6 +614,8 @@ jobs:
             with zipfile.ZipFile(wheel) as archive:
                 package = name.replace('-', '_')
                 entries = set(archive.namelist())
+                if any(entry.endswith('.j2') for entry in entries):
+                    raise SystemExit(f'Wheel contains Jinja template: {wheel.name}')
                 if any('tests' in pathlib.PurePosixPath(entry).parts for entry in entries):
                     raise SystemExit(f'Wheel contains tests: {wheel.name}')
                 if f'{package}/clap.py' not in entries:
@@ -644,7 +649,9 @@ jobs:
                 package = name.replace('-', '_')
                 if any('tests' in pathlib.PurePosixPath(entry).parts for entry in entries):
                     raise SystemExit(f'Sdist contains tests: {source.name}')
-                required = {'pyproject.toml', 'pyproject.toml.j2', 'README.md', 'LICENSE',
+                if any(entry.endswith('.j2') for entry in entries):
+                    raise SystemExit(f'Sdist contains Jinja template: {source.name}')
+                required = {'pyproject.toml', 'README.md', 'LICENSE',
                             f'{package}/__init__.py', f'{package}/clap.py', f'{package}/clap.pyi', f'{package}/py.typed'}
                 if not required <= entries:
                     raise SystemExit(f'Sdist missing wrapper or packaging input: {source.name}: {required - entries}')
@@ -682,7 +689,7 @@ jobs:
         ROCm GPU targets: gfx908,gfx90a,gfx942,gfx1030,gfx1100,gfx1101,gfx1200,gfx1201.
         Linux wheels are auditwheel-repaired manylinux wheels; the external
         GPU runtimes above remain deliberate exceptions, not portability promises.
-        Source archives contain wrappers, a Jinja metadata template and direct backend metadata, not native sources.
+        Source archives contain wrappers and rendered direct backend metadata, not Jinja templates or native sources.
         Compile native runtimes separately from a recursive checkout, then stage
         them before packaging; Python wheel builds do not run CMake.
         CPU wheels pass installed-wheel tests on Python 3.9-3.14; GPU execution is not tested here.

@@ -27,12 +27,13 @@ def metadata(path=PROJECT):
     return tomllib.loads((path / "pyproject.toml").read_text(encoding="utf-8"))
 
 
-def render(source, destination, backend="cpu", version=None):
+def render(source, destination, backend="cpu", version=None, template_source=PROJECT):
     """Mirror the workflow's Jinja rendering and plain wrapper copies."""
     destination.mkdir(parents=True)
     package = "clap_cpp" + (f"_{backend}" if backend != "cpu" else "")
-    for name in ("README.md", "LICENSE", "pyproject.toml.j2"):
+    for name in ("README.md", "LICENSE"):
         shutil.copy2(source / name, destination / name)
+    shutil.copy2(template_source / "pyproject.toml.j2", destination / "pyproject.toml.j2")
     shutil.copytree(source / "clap_cpp", destination / package,
                     ignore=shutil.ignore_patterns("__pycache__", "*.so", "*.dylib", "*.dll", "licenses"))
     if backend != "cpu":
@@ -41,7 +42,7 @@ def render(source, destination, backend="cpu", version=None):
     else:
         shutil.copytree(source / "tests", destination / "tests")
     template = Environment(undefined=StrictUndefined, keep_trailing_newline=True).from_string(
-        (source / "pyproject.toml.j2").read_text(encoding="utf-8"))
+        (template_source / "pyproject.toml.j2").read_text(encoding="utf-8"))
     (destination / "pyproject.toml").write_text(template.render(
         backend=backend, version=version or metadata(source)["project"]["version"]), encoding="utf-8")
     return destination, package
@@ -78,6 +79,7 @@ def test_wheel_and_wrapper_only_sdist(tmp_path, backend):
     (project / "tests/test_not_for_distribution.py").write_text("# Source-only test fixture")
     (project / package / "tests").mkdir()
     (project / package / "tests/test_not_for_distribution.py").write_text("# Must not leak via force inclusion")
+    (project / package / "unused.j2").write_text("Must not leak via force inclusion")
     (project / package / "__pycache__").mkdir()
     (project / package / "__pycache__/clap.pyc").write_bytes(b"cache fixture")
     assert config["project"]["name"] == package.replace("_", "-")
@@ -137,11 +139,12 @@ def test_wheel_and_wrapper_only_sdist(tmp_path, backend):
         for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed"):
             assert f"{package}/{name}" in entries
         assert not any("__pycache__" in n or "tests" in Path(n).parts for n in entries)
+        assert not any(n.endswith(".j2") for n in entries)
     result = build(project, out, "sdist", env)
     assert result.returncode == 0, result.stdout
     with tarfile.open(next(out.glob("*.tar.gz"))) as archive:
         entries = {n.split("/", 1)[1] for n in archive.getnames() if "/" in n}
-        required = {"pyproject.toml", "pyproject.toml.j2", "README.md", "LICENSE",
+        required = {"pyproject.toml", "README.md", "LICENSE",
                     *(f"{package}/{name}" for name in ("__init__.py", "clap.py", "clap.pyi", "py.typed"))}
         assert required <= entries
         assert not any(n.startswith("native/") or "licenses/" in n or "companions/" in n or
@@ -149,6 +152,7 @@ def test_wheel_and_wrapper_only_sdist(tmp_path, backend):
         assert not any("__pycache__" in n or n.endswith(".pyc") for n in entries)
         assert "unlisted.txt" not in entries
         assert not any("tests" in Path(n).parts for n in entries)
+        assert not any(n.endswith(".j2") for n in entries)
         assert not {"stage_runtime.py", "prepare_backend.py", "_build_backend.py", "hatch_build.py"} & entries
         archive.extractall(tmp_path / "extracted", filter="data")
     source = next((tmp_path / "extracted").iterdir())
@@ -156,7 +160,10 @@ def test_wheel_and_wrapper_only_sdist(tmp_path, backend):
     result = build(source, tmp_path / "from-sdist", "wheel", env)
     assert result.returncode == 0, result.stdout
     if backend == "cpu":
-        render(source, tmp_path / "cuda-from-cpu-sdist", "cuda")
+        assert not (source / "pyproject.toml.j2").exists()
+        gpu, gpu_package = render(source, tmp_path / "cuda-from-cpu-sdist", "cuda", template_source=PROJECT)
+        for name in ("clap.py", "clap.pyi", "py.typed"):
+            assert (gpu / gpu_package / name).read_bytes() == (source / "clap_cpp" / name).read_bytes()
     assert not marker.exists()
 
 

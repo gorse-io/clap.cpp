@@ -149,9 +149,12 @@ never label a single-architecture runtime universal2.
 
 `pyproject.toml.j2` is the shared CPU/CUDA/ROCm/Vulkan metadata template. The
 checked-in `pyproject.toml` is its CPU rendering for ordinary local builds.
+The template stays in the repository; wheels and sdists contain only rendered
+metadata, never `.j2` files.
 Render with `backend=cpu|cuda|rocm|vulkan` and one PEP 440 `version` (default
 `0.1.0`); CPU extras pin that exact version of each backend distribution.
-For example, using the canonical CPU sdist extracted into `python-dist`:
+For example, using the canonical CPU sdist extracted into `python-dist` and
+`python/pyproject.toml.j2` from the exact checkout that produced that archive:
 
 ```sh
 python -m pip install jinja2
@@ -159,7 +162,7 @@ backend=cuda  # or rocm, vulkan
 project="build/python-$backend"
 package="clap_cpp_$backend"
 mkdir -p "$project/$package"
-cp python-dist/{README.md,LICENSE,pyproject.toml.j2} "$project/"
+cp python-dist/{README.md,LICENSE} "$project/"
 cp python-dist/clap_cpp/{clap.py,clap.pyi,py.typed} "$project/$package/"
 printf '"""Native %s runtime; import clap_cpp for the public API."""\n' "$backend" > "$project/$package/__init__.py"
 BACKEND="$backend" PROJECT="$project" python - <<'PY'
@@ -173,7 +176,7 @@ except ImportError:
 source = Path('python-dist')
 version = tomllib.loads((source / 'pyproject.toml').read_text())['project']['version']
 template = Environment(undefined=StrictUndefined, keep_trailing_newline=True).from_string(
-    (source / 'pyproject.toml.j2').read_text())
+    Path('python/pyproject.toml.j2').read_text())
 (Path(os.environ['PROJECT']) / 'pyproject.toml').write_text(
     template.render(backend=os.environ['BACKEND'], version=version))
 PY
@@ -200,14 +203,16 @@ python -m pip install pytest mypy typing_extensions build 'scikit-build-core>=1.
 python -m pytest python/tests
 ```
 
-Source distributions contain wrapper/typing files, `LICENSE` and
-metadata/template files, not native C++ snapshots, staged binaries, build hooks
-or native build definitions. Tests are excluded from both wheels and sdists; release
-CI supplies them separately from the exact release checkout and tests the installed
-wheel on each supported interpreter. Plain `python -m build python` builds from an
+Source distributions contain wrapper/typing files, `LICENSE` and rendered
+metadata, not Jinja templates, native C++ snapshots, staged binaries, build hooks
+or native build definitions. Tests and `.j2` files are excluded from both wheels
+and sdists; release CI supplies tests and the metadata template separately from
+the exact release checkout and tests the installed wheel on each supported
+interpreter. Plain `python -m build python` builds from an
 unstaged sdist and therefore produces an unusable runtime-free wheel; do not
 publish it. Use the explicit `--sdist`, unpack, stage, `--wheel` sequence above.
-Backend projects can also be rendered from the extracted CPU sdist before staging
+Backend projects reuse wrappers and the version from the extracted CPU sdist,
+rendering metadata with the template from that same checkout before staging
 their runtimes. No NumPy, Python development headers or pybind11 are required.
 
 ## Releases
