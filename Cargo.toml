@@ -36,9 +36,5 @@ name = "clap_cpp"
 path = "rust/src/lib.rs"
 
 [[test]]
-name = "bindings"
-path = "rust/tests/bindings.rs"
-
-[[example]]
-name = "embed"
-path = "rust/examples/embed.rs"
+name = "clap_test"
+path = "rust/tests/clap.rs"
