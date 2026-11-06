@@ -75,20 +75,6 @@ python3 -c 'import base64,json,sys; print(json.dumps({"input":[{"content":[{"typ
     -H 'Content-Type: application/json' --data-binary @-
 ```
 
-## Development container
-
-Open this repository in VS Code and run **Dev Containers: Reopen in Container**.
-The container includes the C/C++ build tools, Rust toolchain, Python 3 and FFmpeg
-needed for the default CPU build and tests. Git submodules are initialized when
-the container is created. GPU SDKs and optional model-parity dependencies are not
-installed.
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure
-```
-
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).
