@@ -176,3 +176,55 @@ text oracle, Unicode strings/paths, real PCM/file equivalence, resampling,
 validation and native diagnostics, output ownership, idempotent close, and
 concurrent inference/close. These tiny fixtures test the ABI and inference
 contract; they are not a replacement for published-checkpoint accuracy tests.
+
+### Opt-in published checkpoint smoke test
+
+The `published-model` Maven profile adds **test-scoped**
+`com.aresstack:huggingface4j:0.1.1` (available from Maven Central), a separate test
+source directory, and a Failsafe integration test. It is not a runtime dependency
+of the bindings. Normal `mvn verify` does not compile/run this test, resolve this
+dependency, or download models, even after a prior profile-enabled build.
+
+From the repository root, after building the shared runtime above:
+
+```sh
+mvn -B -f java/pom.xml -Ppublished-model \
+  -Dclap.library.path="$PWD/build/java-native/runtime/libclap.so" verify
+```
+
+This profile requires an existing absolute native-library filename; missing or
+broken runtime, network/download errors, checksum mismatches, and inference
+failures are hard failures, not skips. Run `verify`, not just `test`: the
+published checkpoint check runs in the `integration-test`/`verify` phases.
+Results appear in `java/target/failsafe-reports/TEST-io.gorse.clap.PublishedModelIT.xml`.
+
+The test anonymously downloads public Apache-2.0 CLAP weights **through
+huggingface4j**, pinned to this immutable Hugging Face metadata:
+
+| Field | Pinned value |
+| --- | --- |
+| Repository | `gorse-io/larger_clap_music-GGUF` |
+| Revision | `25401a7cae09f916a395b9f686ee1fa43628d815` |
+| File | `larger_clap_music-q4_k_m.gguf` |
+| Bytes | `128926752` |
+| SHA-256 | `5f5cb986d8729930cbd681aa4d3dffbe4b1634d5e62a2e9823f8fa8f9e9ea247` |
+
+The revision and LFS size/SHA-256 were checked against
+`https://huggingface.co/api/models/gorse-io/larger_clap_music-GGUF/revision/25401a7cae09f916a395b9f686ee1fa43628d815?blobs=true`.
+The repository is one of the published GGUF models in the root README's Audio
+Embedding GGUF collection. Allow about 129 MB of download space plus native model
+and inference memory. Downloads are cached under
+`java/target/published-models/<revision>/`; set
+`-Dclap.test.modelCache=/absolute/cache/path` to retain them across `mvn clean`.
+Both new and already-cached files are checked for exact size and SHA-256 before
+loading. A corrupted cache fails clearly; remove that file to download again.
+Interrupted `.part` downloads can resume. No token is needed.
+
+The test performs real CPU/F32 inference with the downloaded checkpoint: two
+text prompts, repeatability of one prompt, and a deterministic non-silent
+one-second 440 Hz PCM tone. It asserts the expected 48 kHz/512-dimensional model
+metadata, finite unit-norm text/audio embeddings, finite cosine similarities in
+`[-1, 1]`, audio self-similarity, and nonidentical embeddings for different text
+prompts. It prints measured text/text and text/audio cosines. This is a published
+weights/inference sanity check, **not a semantic retrieval accuracy benchmark**;
+it does not claim a tone matches a music caption or impose a semantic ranking.

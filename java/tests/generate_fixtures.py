@@ -7,7 +7,7 @@ import wave
 
 sys.dont_write_bytecode = True
 root = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("tiny_models", root / "python/tests/tiny_models.py")
+spec = importlib.util.spec_from_file_location("tiny_models", root / "java/tests/tiny_models.py")
 assert spec is not None and spec.loader is not None
 tiny = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tiny)

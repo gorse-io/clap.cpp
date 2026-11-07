@@ -259,5 +259,5 @@ jobs:
             macOS) library=libclap.dylib ;;
             Windows) library=clap.dll ;;
           esac
-          mvn -B -f java/pom.xml "-Dclap.library.path=$GITHUB_WORKSPACE/build/java-native/runtime/$library" verify
+          mvn -B -f java/pom.xml -Ppublished-model "-Dclap.library.path=$GITHUB_WORKSPACE/build/java-native/runtime/$library" verify
           python java/tests/verify_package.py --library "$GITHUB_WORKSPACE/build/java-native/runtime/$library" --model java/target/fixtures/tiny-clap.gguf
