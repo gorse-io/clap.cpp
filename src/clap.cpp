@@ -17,6 +17,7 @@ int main(int argc, char **argv) {
     int port = 8080;
     std::string server_model;
     int server_threads = 0;
+    int queue_capacity = 64;
     std::string server_device;
     auto *devices = app.add_subcommand("devices", "List available GGML devices");
     auto *serve = app.add_subcommand("serve", "Start the embeddings HTTP server");
@@ -26,6 +27,11 @@ int main(int argc, char **argv) {
         ->capture_default_str();
     serve->add_option("--device", server_device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
     serve->add_option("--host", host, "Listen address")->capture_default_str();
+    serve
+        ->add_option("--queue-capacity", queue_capacity,
+                     "Maximum waiting inference requests (excludes running request)")
+        ->check(CLI::PositiveNumber)
+        ->capture_default_str();
     serve->add_option("--port", port, "Listen port")->check(CLI::Range(1, 65535))->capture_default_str();
 
     EmbeddingOptions options;
@@ -88,7 +94,8 @@ int main(int argc, char **argv) {
             return cmd_embedding(options);
         }
         if (*serve) {
-            return cmd_server(host, port, server_model, server_threads, server_device);
+            return cmd_server(host, port, server_model, server_threads, server_device,
+                              static_cast<std::size_t>(queue_capacity));
         }
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

@@ -61,9 +61,10 @@ clap_static_development()
 if(CLAP_BUILD_CLI)
     # The CLI target differs from the core library target, while its executable
     # keeps the existing "clap" name and command-line behavior.
+    find_package(Threads REQUIRED)
     add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
     target_compile_features(clap-cli PRIVATE cxx_std_20)
-    target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
+    target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json Threads::Threads)
     set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -75,6 +76,12 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Threads REQUIRED)
+    add_executable(clap-server-scheduler-test tests/server-scheduler-test.cpp)
+    target_include_directories(clap-server-scheduler-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(clap-server-scheduler-test PRIVATE Threads::Threads)
+    add_test(NAME clap_server_scheduler COMMAND clap-server-scheduler-test)
+    set_tests_properties(clap_server_scheduler PROPERTIES TIMEOUT 30)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME clap_public_api_boundary
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/public_api_boundary.py")
