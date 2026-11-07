@@ -2,10 +2,9 @@
 
 Usage: embedding_cli.py CLAP [BUILD_WITH_MODEL_FIXTURES]
 The default suite generates a tiny valid GGUF with a scalar text oracle using
-only the standard library. Optional existing model-fixture, clamp3-fixture and
-mert2-fixture oracles additionally check native text/audio/frame representations.
+only the standard library. Optional existing model-fixture and mert2-fixture
+oracles additionally check native text/audio/frame representations.
 """
-import errno
 import json
 import math
 from pathlib import Path
@@ -58,10 +57,11 @@ class EmbeddingCLITest(unittest.TestCase):
 
     def test_help(self):
         output = self.success("--help")
-        for option in ("--model", "--threads", "--prompt", "--text", "--audio", "--file",
-                       "--crop-offset", "--frames",
-                       "--embd-separator", "--embd-output-format"):
+        for option in ("--model", "--threads", "--text", "--audio",
+                       "--crop-offset", "--frames"):
             self.assertIn(option, output)
+        for option in ("--prompt", "--file", "--embd-separator", "--embd-output-format"):
+            self.assertNotIn(option, output)
         self.assertNotIn("--clamp3-features", output)
         self.assertNotIn("dummy", output.lower())
         result = self.run_cli("--help", command="serve")
@@ -70,7 +70,7 @@ class EmbeddingCLITest(unittest.TestCase):
             self.assertIn(option, result.stdout)
 
     def test_model_required_for_embedding_and_serve(self):
-        for command, args in (("embedding", ["--prompt", "hello"]), ("serve", [])):
+        for command, args in (("embedding", ["--text", "hello"]), ("serve", [])):
             with self.subTest(command=command):
                 # Do not hang if the old dummy server starts without a model.
                 try:
@@ -85,7 +85,7 @@ class EmbeddingCLITest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             model = Path(directory) / "invalid.gguf"
             model.write_bytes(b"not GGUF")
-            for command, args in (("embedding", ["--prompt", "hello"]), ("serve", [])):
+            for command, args in (("embedding", ["--text", "hello"]), ("serve", [])):
                 result = self.run_cli("--model", model, "--threads", "1", *args, command=command)
                 self.assertGreater(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, "")
@@ -101,49 +101,27 @@ class EmbeddingCLITest(unittest.TestCase):
             actual = json.loads(self.success(*args, "--text", case["input"]))
             self.assert_vector_close(actual, case["embedding"])
 
-    def test_prompt_raw_default_and_explicit_formats(self):
-        expected = self.vector("hello")
+    def test_removed_batch_options_are_unknown(self):
         args = self.model_args()
-        for flags in ([], ["--embd-output-format", "raw"]):
-            self.assert_vector_close([float(x) for x in self.success(*args, "-p", "hello", *flags).split()], expected)
-        self.assertEqual(json.loads(self.success(*args, "--text", "hello", "--embd-output-format", "array")), [expected])
-        for option in ("-p", "--prompt"):
-            result = json.loads(self.success(*args, option, "hello", "--embd-output-format", "json"))
-            self.assertEqual(result, {"object": "list", "data": [{"object": "embedding", "index": 0, "embedding": expected}]})
+        for option, value in (("-p", "hello"), ("--prompt", "hello"),
+                              ("-f", str(self.tiny_path)), ("--file", str(self.tiny_path)),
+                              ("--embd-separator", "\n"), ("--embd-output-format", "json")):
+            with self.subTest(option=option):
+                result = self.run_cli(*args, "--text", "hello", option, value)
+                self.assertGreater(result.returncode, 0)
+                self.assertIn("not expected", result.stderr)
+                self.assertIn(option, result.stderr)
+                self.assertEqual(result.stdout, "")
 
-    def test_separator_and_empty_segments(self):
-        args = self.model_args()
-        for text, separator, parts in (("hello\nworld", "\n", ["hello", "world"]),
-                                       ("hello<#sep#>world", "<#sep#>", ["hello", "world"]),
-                                       ("hello\n\n", "\n", ["hello", "", ""])):
-            actual = json.loads(self.success(*args, "--prompt", text, "--embd-separator", separator,
-                                             "--embd-output-format", "array"))
-            self.assertEqual(actual, [self.vector(part) for part in parts])
-        # --text is one item, never separator-split (including a trailing newline).
-        direct = self.vector("hello\nworld\n")
-        self.assertTrue(all(isinstance(x, (int, float)) for x in direct))
+    def test_newline_text_remains_single_vector(self):
+        actual = self.vector("hello\nworld\n")
+        self.assertEqual(len(actual), len(self.vector("hello")))
+        self.assertTrue(all(isinstance(x, (int, float)) and math.isfinite(x) for x in actual))
 
-    def test_file(self):
-        args = self.model_args()
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "prompts.txt"
-            path.write_bytes("你好\nworld".encode("utf-8"))
-            for flag in ("-f", "--file"):
-                actual = json.loads(self.success(*args, flag, path, "--embd-output-format", "array"))
-                self.assertEqual(actual, [self.vector("你好"), self.vector("world")])
-
-    def test_json_similarity_uses_true_cosine_for_unnormalized_vectors(self):
-        args = self.model_args("clamp3")
-        result = json.loads(self.success(*args, "--prompt", "ab c\na <mask> b", "--embd-output-format", "json+"))
-        vectors = [item["embedding"] for item in result["data"]]
-        norms = [math.sqrt(sum(x*x for x in vector)) for vector in vectors]
-        self.assertTrue(any(abs(norm - 1) > 1e-3 for norm in norms), "fixture must expose unnormalized outputs")
-        for i in range(2):
-            for j in range(2):
-                expected = sum(a*b for a, b in zip(vectors[i], vectors[j])) / (norms[i]*norms[j])
-                self.assertAlmostEqual(result["cosineSimilarity"][i][j], expected, places=6)
-        single = json.loads(self.success(*args, "-p", "hello", "--embd-output-format", "json+"))
-        self.assertNotIn("cosineSimilarity", single)
+    def test_empty_text_is_valid(self):
+        actual = self.vector("")
+        self.assertEqual(len(actual), len(self.vector("hello")))
+        self.assertTrue(all(isinstance(x, (int, float)) and math.isfinite(x) for x in actual))
 
     def test_audio_single_vector_and_native_frames(self):
         args = self.model_args("mert2")
@@ -167,55 +145,30 @@ class EmbeddingCLITest(unittest.TestCase):
     def test_invalid_arguments(self):
         args = self.model_args()
         with tempfile.TemporaryDirectory() as directory:
-            text = Path(directory) / "text.txt"
-            text.write_text("hello")
-            empty = Path(directory) / "empty.txt"
-            empty.write_text("")
             audio = Path(directory) / "audio.wav"
             with wave.open(str(audio), "wb") as output:
                 output.setnchannels(1); output.setsampwidth(2); output.setframerate(48000)
                 output.writeframes(b"\0\0" * 300)
-            for flags in ([], ["-p", ""], ["--text", "x", "--prompt", "x"],
-                          ["-p", "x", "-f", str(text)], ["-f", str(empty)],
+            for flags in ([],
                           ["--text", "x", "--audio", str(audio)],
                           ["--text", "x", "--crop-offset", "0"],
                           ["--text", "x", "--frames"],
                           ["-a", str(audio), "--frames", "--crop-offset", "0"],
-                          ["-p", "x", "--embd-separator", ""],
-                          ["-p", "x", "--embd-output-format", "invalid"],
-                          ["-p", "x", "--threads", "-1"]):
+                          ["--text", "x", "--threads", "-1"]):
                 with self.subTest(flags=flags):
                     result = self.run_cli(*args, *flags)
                     self.assertGreater(result.returncode, 0)
                     self.assertTrue(result.stderr)
                     self.assertEqual(result.stdout, "")
 
-    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux procfs")
-    def test_file_read_failure(self):
-        args = self.model_args()
-        try:
-            with open("/proc/self/mem", "rb") as stream:
-                stream.read(1)
-        except OSError as error:
-            if error.errno != errno.EIO:
-                self.skipTest(str(error))
-        else:
-            self.skipTest("procfs does not produce a read error")
-        result = self.run_cli(*args, "-f", "/proc/self/mem")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Failed to read input file", result.stderr)
-        self.assertEqual(result.stdout, "")
-
     @unittest.skipUnless(Path("/dev/full").exists(), "requires /dev/full")
     def test_stdout_write_failure(self):
         args = self.model_args()
-        for output_format in ("raw", "json"):
-            with self.subTest(output_format=output_format), open("/dev/full", "wb") as output:
-                result = subprocess.run([BINARY, "embedding", *args, "-p", "hello",
-                                         "--embd-output-format", output_format], stdout=output,
-                                        stderr=subprocess.PIPE, text=True, timeout=120)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Failed to write embedding output", result.stderr)
+        with open("/dev/full", "wb") as output:
+            result = subprocess.run([BINARY, "embedding", *args, "--text", "hello"], stdout=output,
+                                    stderr=subprocess.PIPE, text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Failed to write embedding output", result.stderr)
 
 
 if __name__ == "__main__":
