@@ -35,11 +35,6 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 
 ## Usage
 
-CPU inference defaults to the detected physical core count on Linux, macOS and
-Windows. A positive `--threads` value overrides it; `0` selects automatic detection.
-If physical topology is unavailable, it falls back to the logical CPU count (or
-one thread if that is also unavailable), without a fixed eight-thread cap.
-
 ### Embeddings command
 
 Load a converted GGUF and generate real native text or audio embeddings:
