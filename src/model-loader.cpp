@@ -139,7 +139,7 @@ void ModelLoader::load(const std::string &path, bool inference) {
     const bool named = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING;
     bundled = named && metadata("general.architecture") == "clamp3" && has_metadata_prefix("clamp3.audio_frontend");
     const std::string arch = named ? metadata("general.architecture") : "";
-    f32_activations = encoder_architecture(arch);
+    f32_activations = encoder_architecture(arch) || arch == "clap2";
     const auto data_offset = gguf_get_data_offset(gguf);
     if (!(data_offset <= mapping_size))
         throw std::runtime_error("CLAP: truncated GGUF data");
@@ -149,6 +149,8 @@ void ModelLoader::load(const std::string &path, bool inference) {
         if ((bundled && tensor_name.rfind("mert.", 0) == 0) && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16 &&
             w->type != GGML_TYPE_BF16)
             throw std::runtime_error("CLAP: MERT supports F32/F16/BF16 weights only");
+        if (arch == "clap2" && ggml_is_quantized(w->type))
+            throw std::runtime_error("CLAP: CLAP2 block-quantized weights are not supported; use F32/F16/BF16");
         if (encoder_architecture(arch) && ggml_is_quantized(w->type) && !encoder_quantizable(w, arch))
             throw std::runtime_error("CLAP: quantized non-dense/embedding tensor is unsupported: " + tensor_name);
         if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_BF16 ||

@@ -108,7 +108,8 @@ std::vector<int32_t> normalizer_boundaries(const icu::UnicodeString &text) {
 }
 } // namespace
 
-ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length)
+ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length,
+                                     bool split_special_tokens)
     : bos(bos), eos(eos), context_length(context_length) {
     if (tokenizer.at("model").at("type") != "BPE")
         throw std::runtime_error("CLAP: expected byte-level BPE");
@@ -130,7 +131,9 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
         }
         ranks.emplace(std::make_pair(x, y), rank++);
     }
-    if (tokenizer.contains("added_tokens"))
+    // CLAP2 uses tiktoken.encode_ordinary: control-token markup in the user's
+    // text is byte BPE, not an injected control token.
+    if (!split_special_tokens && tokenizer.contains("added_tokens"))
         for (const auto &v : tokenizer["added_tokens"]) {
             if (v.at("content").get<std::string>().empty())
                 throw std::runtime_error("CLAP: empty added token");

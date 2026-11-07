@@ -83,6 +83,10 @@ if(BUILD_TESTING)
         target_link_libraries(clap-c-api-allocation-test PRIVATE clap)
         add_test(NAME clap_c_api_allocation COMMAND clap-c-api-allocation-test)
     endif()
+    add_executable(clap-byte-bpe-test tests/models/byte-bpe-test.cpp)
+    target_include_directories(clap-byte-bpe-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(clap-byte-bpe-test PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME clap_byte_bpe COMMAND clap-byte-bpe-test)
     add_test(NAME clap_conversion_imports
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(clap_conversion_imports PROPERTIES TIMEOUT 30)
@@ -165,6 +169,26 @@ if(BUILD_TESTING)
     target_link_libraries(feature-input-test PRIVATE clap nlohmann_json::nlohmann_json)
     target_include_directories(feature-input-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     if(CLAP_BUILD_CLI)
+        add_executable(clap2-model-test tests/models/clap2-model-test.cpp)
+        target_link_libraries(clap2-model-test PRIVATE clap nlohmann_json::nlohmann_json)
+        add_test(NAME clap2_contract
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_invalid.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clap2-smoke")
+        set_tests_properties(clap2_contract PROPERTIES TIMEOUT 180)
+        option(CLAP2_MODEL_PARITY "Run optional pinned open_clip CLAP2 numerical oracles" OFF)
+        set(CLAP2_REFERENCE_SOURCE "" CACHE PATH "Pinned official open_clip source directory")
+        set(CLAP2_REFERENCE_ASSETS "" CACHE PATH "Pinned CLAP2 config/tokenizer/checkpoint-header assets")
+        if(CLAP2_MODEL_PARITY)
+            if(NOT EXISTS "${CLAP2_REFERENCE_SOURCE}/src/open_clip/audio/naflex_audio.py" OR
+               NOT EXISTS "${CLAP2_REFERENCE_ASSETS}/config.json")
+                message(FATAL_ERROR "CLAP2_REFERENCE_SOURCE and CLAP2_REFERENCE_ASSETS must contain pinned official sources/assets")
+            endif()
+            add_test(NAME clap2_model_parity
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_parity.py"
+                        "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clap2-fixture"
+                        "${CLAP2_REFERENCE_SOURCE}" "${CLAP2_REFERENCE_ASSETS}")
+            set_tests_properties(clap2_model_parity PROPERTIES TIMEOUT 600)
+        endif()
         add_test(NAME clamp3_bundle_contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_bundle_contract.py" "$<TARGET_FILE:clap-cli>")
     endif()
