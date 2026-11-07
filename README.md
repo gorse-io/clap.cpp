@@ -36,25 +36,6 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 
 ## Usage
 
-### CLAP2 conversion
-
-Download the Hugging Face-format checkpoint (not `open_clip_model.safetensors`)
-with its configuration, processor and tokenizer, then convert it:
-
-```sh
-hf download laion/clap2-large-audioxl-s1B \
-  --include config.json processor_config.json tokenizer.json model.safetensors \
-  --revision e836feaa79cd1f7de939fe77065819f48fc44e4c --local-dir models/clap2
-python3 convert_hf_to_gguf.py models/clap2 clap2-f16.gguf --dtype f16
-clap embedding --model clap2-f16.gguf --text 'Sound of a dog'
-clap embedding --model clap2-f16.gguf --audio assets/dog.wav
-```
-
-Both encoders run natively from the same GGUF; Python is needed only for
-conversion. CLAP2 uses a 256-token text context and produces normalized
-960-dimensional text and audio embeddings. Conversion supports F32 and F16;
-block-quantized CLAP2 GGUFs and quantization presets are not yet supported.
-
 ### Embeddings command
 
 Load a converted GGUF and generate real native text or audio embeddings:

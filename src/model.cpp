@@ -1,7 +1,6 @@
 #include "model.h"
 #include "audio.h"
 #include "models/models.h"
-#include "models/clap2.h"
 #include "vocab.h"
 #include <stdexcept>
 
