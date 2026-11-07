@@ -40,8 +40,8 @@ GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/colle
 Load a converted GGUF and generate real native text or audio embeddings:
 
 ```sh
-clap embedding --model larger_clap_general-q4_k_m.gguf --threads 4 --text 'Sound of a dog'
-clap embedding --model larger_clap_general-q4_k_m.gguf --threads 4 --audio dog.wav
+clap embedding --model larger_clap_general-q4_k_m.gguf --text 'Sound of a dog'
+clap embedding --model larger_clap_general-q4_k_m.gguf --audio dog.wav
 ```
 
 ### Embeddings server
@@ -50,7 +50,7 @@ Start the server with a GGUF supporting the requested modality, such as CLAP,
 CLaMP3 or MuQ-MuLan (default listen address: `127.0.0.1:8080`):
 
 ```sh
-clap serve --model larger_clap_general-q4_k_m.gguf --threads 4 --host 127.0.0.1 --port 8080
+clap serve --model larger_clap_general-q4_k_m.gguf --host 127.0.0.1 --port 8080
 ```
 
 The model is loaded once at startup. Its API identifier is the GGUF **filename**

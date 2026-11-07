@@ -17,7 +17,7 @@ npm install clap-cpp
 ```js
 const { CLAP } = require('clap-cpp');
 
-const model = new CLAP('larger_clap_general-q4_k_m.gguf', 4);
+const model = new CLAP('larger_clap_general-q4_k_m.gguf');
 try {
   const textEmbedding = model.encodeText('Sound of a dog');
   const audioEmbedding = model.encodeAudio('dog.wav');

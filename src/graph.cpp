@@ -79,8 +79,8 @@ struct GraphRuntime::State {
         cpu.reset(ggml_backend_cpu_init());
         if (!cpu)
             throw std::runtime_error("CLAP: CPU backend initialization failed");
-        ggml_backend_cpu_set_n_threads(
-            cpu.get(), threads > 0 ? threads : int(std::max(1u, std::min(8u, std::thread::hardware_concurrency()))));
+        ggml_backend_cpu_set_n_threads(cpu.get(),
+                                       threads > 0 ? threads : int(std::max(1u, std::thread::hardware_concurrency())));
         if (requested == "auto") {
             for (size_t i = 0; i < ggml_backend_dev_count() && !gpu; ++i) {
                 auto device = ggml_backend_dev_get(i);

@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
     auto *devices = app.add_subcommand("devices", "List available GGML devices");
     auto *serve = app.add_subcommand("serve", "Start the embeddings HTTP server");
     serve->add_option("-m,--model", server_model, "Converted model GGUF")->required()->check(CLI::ExistingFile);
-    serve->add_option("-t,--threads", server_threads, "ggml CPU threads (0: automatic)")
+    serve->add_option("-t,--threads", server_threads, "ggml CPU threads (0: hardware concurrency)")
         ->check(CLI::NonNegativeNumber)
         ->capture_default_str();
     serve->add_option("--device", server_device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
     embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
         ->required()
         ->check(CLI::ExistingFile);
-    embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: automatic)")
+    embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: hardware concurrency)")
         ->check(CLI::NonNegativeNumber)
         ->capture_default_str();
     embedding->add_option("--device", options.device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
