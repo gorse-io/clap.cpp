@@ -173,3 +173,47 @@ jobs:
         run: cargo test --all-targets
       - name: Compile-fail thread-safety contract
         run: cargo test --doc
+
+  java:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        java: ['11', '21']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+          cache-dependency-path: java/pom.xml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure shared C API runtime
+        shell: bash
+        run: >-
+          cmake -S . -B build/java-native
+          -DCMAKE_BUILD_TYPE=Release -DCLAP_BUILD_CLI=OFF -DBUILD_TESTING=OFF
+          -DBUILD_SHARED_LIBS=ON -DCLAP_STATIC_DEPENDENCIES=ON -DGGML_NATIVE=OFF
+          -DGGML_OPENMP=OFF -DCMAKE_INSTALL_LIBDIR=. -DCMAKE_INSTALL_BINDIR=.
+      - name: Build shared C API runtime
+        run: cmake --build build/java-native --config Release --parallel 3
+      - name: Install shared C API runtime
+        run: cmake --install build/java-native --config Release --component runtime --prefix "${{ github.workspace }}/build/java-native/runtime"
+      - name: Generate tiny model and audio fixtures
+        run: python java/tests/generate_fixtures.py
+      - name: Verify Java bindings and package
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) library=libclap.so ;;
+            macOS) library=libclap.dylib ;;
+            Windows) library=clap.dll ;;
+          esac
+          mvn -B -f java/pom.xml -Ppublished-model "-Dclap.library.path=$GITHUB_WORKSPACE/build/java-native/runtime/$library" verify
+          python java/tests/verify_package.py --library "$GITHUB_WORKSPACE/build/java-native/runtime/$library" --model java/target/fixtures/tiny-clap.gguf
