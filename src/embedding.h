@@ -24,10 +24,6 @@ struct EmbeddingOptions {
     std::string device;
     std::string text;
     std::string audio_path;
-    std::string separator = "\n";
-    // Empty means native single-vector JSON for --text/--audio, raw for --prompt/--file.
-    std::string format;
-    bool single_text = false;
     std::size_t crop_offset = 0;
     bool crop_requested = false;
     bool frames = false;
