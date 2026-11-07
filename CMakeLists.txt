@@ -85,7 +85,7 @@ if(BUILD_TESTING)
     endif()
     add_executable(clap-byte-bpe-test tests/models/byte-bpe-test.cpp)
     target_include_directories(clap-byte-bpe-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(clap-byte-bpe-test PRIVATE clap nlohmann_json::nlohmann_json)
+    target_link_libraries(clap-byte-bpe-test PRIVATE clap nlohmann_json::nlohmann_json ICU::i18n)
     add_test(NAME clap_byte_bpe COMMAND clap-byte-bpe-test)
     add_test(NAME clap_conversion_imports
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
