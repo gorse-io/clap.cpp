@@ -41,7 +41,7 @@ test('CLAP', async (t) => {
     await pipeline(file.stream(), createWriteStream(modelPath));
   }
 
-  const clap = new CLAP(modelPath, 1);
+  const clap = new CLAP(modelPath);
   t.after(() => clap.close());
   const audioEmbedding = clap.encodeAudio(path.join(__dirname, '..', '..', 'assets', 'dog.wav'), 0);
   const textEmbedding1 = clap.encodeText('Sound of a dog');

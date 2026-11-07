@@ -8,6 +8,7 @@ set(CLAP_CORE_SOURCES
     model.cpp
     model-loader.cpp
     graph.cpp
+    cpu-threads.cpp
     tensor-data.cpp
     audio.cpp
     vocab.cpp)

@@ -26,7 +26,7 @@ pip install "clap-cpp[vulkan]" # Vulkan
 ```python
 from clap_cpp import CLAP
 
-with CLAP("larger_clap_general-q4_k_m.gguf", threads=4) as model:
+with CLAP("larger_clap_general-q4_k_m.gguf") as model:
     text_embedding = model.encode_text("Sound of a dog")
     audio_embedding = model.encode_audio("dog.wav")
 ```

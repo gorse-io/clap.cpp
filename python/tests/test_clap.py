@@ -33,7 +33,7 @@ def test_clap():
     )
 
     audio_path = Path(__file__).resolve().parents[2] / "assets" / "dog.wav"
-    with CLAP(model_path, threads=1) as clap:
+    with CLAP(model_path) as clap:
         audio_embedding = clap.encode_audio(audio_path, 0)
         text_embedding_1 = clap.encode_text("Sound of a dog")
         text_embedding_2 = clap.encode_text("Sound of vaccum cleaner")

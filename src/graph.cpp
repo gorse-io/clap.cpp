@@ -1,11 +1,11 @@
 #include "graph.h"
+#include "cpu-threads.h"
 #include <ggml-cpu.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-#include <thread>
 namespace {
 void load_backends() {
     static std::once_flag once;
@@ -79,8 +79,7 @@ struct GraphRuntime::State {
         cpu.reset(ggml_backend_cpu_init());
         if (!cpu)
             throw std::runtime_error("CLAP: CPU backend initialization failed");
-        ggml_backend_cpu_set_n_threads(
-            cpu.get(), threads > 0 ? threads : int(std::max(1u, std::min(8u, std::thread::hardware_concurrency()))));
+        ggml_backend_cpu_set_n_threads(cpu.get(), threads > 0 ? threads : default_cpu_threads());
         if (requested == "auto") {
             for (size_t i = 0; i < ggml_backend_dev_count() && !gpu; ++i) {
                 auto device = ggml_backend_dev_get(i);
