@@ -16,11 +16,7 @@ C++20/ggml implementations of audio embedding inference features:
 | Model | Text | Audio | Embedding dimensions | Sample rate |
 | --- | --- | --- | --- | --- |
 | [CLAP](https://huggingface.co/laion/larger_clap_music) | ✅ | ✅ | 512 | 48 kHz |
-| [CLAP2 Large](https://huggingface.co/laion/clap2-large-audioxl-s1B) | ✅ | ✅ | 960 | 32 kHz |
-| [CLAP2 Medium](https://huggingface.co/laion/clap2-medium-audioxl-s1B) | ✅ | ✅ | 640 | 32 kHz |
-| [CLAP2 Small](https://huggingface.co/laion/clap2-small-audioxl-s1B) | ✅ | ✅ | 512 | 32 kHz |
-| [CLAP2 XS](https://huggingface.co/laion/clap2-xs-audioxl-s1B) | ✅ | ✅ | 320 | 32 kHz |
-| [CLAP2 XXS](https://huggingface.co/laion/clap2-xxs-audioxl-s1B) | ✅ | ✅ | 224 | 32 kHz |
+| [CLAP2](https://huggingface.co/laion/clap2-large-audioxl-s1B) | ✅ | ✅ | 960 | 32 kHz |
 | [CLaMP3](https://github.com/sanderwood/clamp3) | ✅ | ✅ | 768 | 24 kHz |
 | [MERT v1 95M](https://huggingface.co/m-a-p/MERT-v1-95M) | ❌ | ✅ | 768 | 24 kHz |
 | [MERT v1 330M](https://huggingface.co/m-a-p/MERT-v1-330M) | ❌ | ✅ | 1,024 | 24 kHz |
@@ -29,21 +25,6 @@ C++20/ggml implementations of audio embedding inference features:
 | [MuQ-MuLan](https://huggingface.co/OpenMuQ/MuQ-MuLan-large) | ✅ | ✅ | 512 | 24 kHz |
 
 GGUF models are available at [Audio Embedding GGUF](https://huggingface.co/collections/gorse-io/audio-embedding-gguf) collection.
-
-CLAP2 supports all five published sizes in F32 and F16. Convert a local Hugging
-Face checkpoint directory containing `config.json`, `processor_config.json`,
-`tokenizer.json` and the HF `model.safetensors` (not `open_clip_model.safetensors`):
-
-```sh
-python3 convert_hf_to_gguf.py clap2-xxs-audioxl-s1B clap2-xxs-f16.gguf --dtype f16
-clap embedding --model clap2-xxs-f16.gguf --text 'Sound of a dog'
-clap embedding --model clap2-xxs-f16.gguf --audio dog.wav
-```
-
-The converter infers the model size and default source identity from architecture
-dimensions; it does not authenticate checkpoint contents. Use `--clap2-revision`
-when converting another checkpoint revision or modified weights. CLAP2 block
-quantization is not supported.
 
 ## Bindings
 
