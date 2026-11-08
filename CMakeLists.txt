@@ -84,6 +84,10 @@ if(BUILD_TESTING)
     set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
     set(gtest_force_shared_crt ON CACHE BOOL "Use the shared MSVC runtime" FORCE)
     add_subdirectory(thirdparty/googletest EXCLUDE_FROM_ALL)
+    if(BUILD_SHARED_LIBS)
+        # GoogleTest only sets this for installed consumers, not build-tree users.
+        target_compile_definitions(gtest INTERFACE GTEST_LINKED_AS_SHARED_LIBRARY=1)
+    endif()
 
     if(NOT BUILD_SHARED_LIBS)
         add_executable(clap-c-api-allocation-test tests/clap-test.cpp)
