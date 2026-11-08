@@ -114,6 +114,12 @@ if(BUILD_TESTING)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
     add_executable(clap-audio-test tests/audio-test.cpp)
     target_link_libraries(clap-audio-test PRIVATE clap GTest::gtest)
+    if(WIN32 AND BUILD_SHARED_LIBS)
+        add_custom_command(TARGET clap-audio-test POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:gtest>" "$<TARGET_FILE_DIR:clap-audio-test>"
+            VERBATIM)
+    endif()
     add_dependencies(clap-audio-test clap-audio-fixtures)
     add_test(NAME clap_audio COMMAND clap-audio-test "${CLAP_AUDIO_FIXTURE_DIR}")
     add_executable(clap-audio-path-test tests/audio-path-test.cpp)
