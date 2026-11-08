@@ -15,10 +15,23 @@ Relevant upstream files:
 - `src/open_clip/transformer.py`: ModernTextTransformer and masked MAP pool
 - `src/open_clip/tokenizer.py`: TikTokenTokenizer, `encode_ordinary` semantics
 
-Published HF assets/checkpoint are `laion/clap2-large-audioxl-s1B` revision
-`e836feaa79cd1f7de939fe77065819f48fc44e4c`. The fixture generator validates its
-complete reduced-depth HF tensor-name set against the downloaded checkpoint
-header. Production conversion keeps those HF tensor names unchanged.
+Published HF assets/checkpoints are the five `laion/clap2-*-audioxl-s1B` releases:
+
+| Size | HF revision | Audio / text width | Audio / text layers | Projection | Head width |
+| --- | --- | --- | --- | --- | --- |
+| large | `e836feaa79cd1f7de939fe77065819f48fc44e4c` | 1024 / 960 | 12 / 11 | 960 | 64 |
+| medium | `3a8d9d79cb98e4d409fce24092a69718a821a7ad` | 640 / 640 | 12 / 11 | 640 | 64 |
+| small | `9891ee368dbec866dab1919f163b7e091ab0ed37` | 512 / 512 | 12 / 11 | 512 | 64 |
+| xs | `adc510748f0b759918ba4aaee94fc864e05c48d9` | 320 / 320 | 12 / 12 | 320 | 64 |
+| xxs | `adaca9be91f5045d06e10569de3075e1ef37f823` | 224 / 224 | 12 / 12 | 224 | 56 |
+
+`clap2_sizes.json` retains the pinned HF configurations and independently read
+published tensor-schema digests for offline regressions.
+Native inference derives tensor dimensions, layer counts and RoPE bands from
+configuration; XXS has 14 axial frequency bands per axis, not a rounded 64-wide
+head. `clap2-rope-test` checks every published tower geometry against an independent
+scalar oracle on an asymmetric frequency/time grid. Production conversion keeps
+the HF tensor names unchanged.
 
 ### Important text MLP layout difference
 
@@ -81,10 +94,21 @@ loader/API smoke coverage, NOT numerical architecture/frontend parity.
 ```
 
 `--generate-only` prepares both GGUFs and fixture JSONs without native execution.
+Use `--profile xxs-head56` to test the released XXS head geometry with small
+nondegenerate towers, or `--profile asymmetric-head64` for unequal tower widths,
+depths and MLP widths. The default `tiny` profile preserves the original reduced
+fixture. These profiles run the same tokenizer, padding, waveform and crop-sensitive
+long-audio cases in F32/F16. `--tokenizer-assets COMMON_ASSETS` can share identical
+tokenizer/header assets across sizes.
+
 `OFFICIAL_OPEN_CLIP` contains the reviewed checkout, `src/open_clip`, and
 `PINNED_SHA` containing the exact source SHA above. `HF_ASSETS` contains pinned
 `config.json`, `processor_config.json`, `tokenizer.json`, `tokenizer_config.json`,
-and `model.safetensors.header.json`; no full weights are needed. `OUTPUT` must
+`open_clip_config.json`, `identity.json` (`repo` and full `revision` SHA),
+and `model.safetensors.header.json`; no full weights are needed. A full HF API
+`hf-manifest.json` can supply `id` and `sha` instead of `identity.json`. The oracle
+cross-checks the HF and open_clip tower dimensions before constructing a model.
+`OUTPUT` must
 be separate from downloaded assets and checkpoints. It is updated in place,
 not recursively deleted. tiktoken may fetch/cache its standard r50k_base ranks
 on first use; no model checkpoint is downloaded by these scripts.
@@ -109,7 +133,26 @@ Coverage:
   counted as user tokens. The oracle verifies compact/padded inference equality
   and independently tests interior/suffix padding and masked MAP pooling.
 - Upstream invalid audio-patch padding invariance.
-- F32/F16 storage-rounded parity under a 5e-5 maximum-absolute embedding tolerance.
+- F32/F16 storage-rounded parity under a 5e-5 maximum-absolute embedding tolerance,
+  except the documented frontend-sensitive case below.
+
+### FFT precision boundary
+
+The synthetic `asymmetric-head64` profile's `multiple` pure-tone waveform spans
+more than 130 dB, including mel bins close to the −100 dB clamp. The pinned CPU
+Torch frontend uses an F32 MKL FFT; native inference uses the shared double FFT.
+Roundoff in near-zero spectral bins can therefore change the log-mel floor and
+produce an embedding difference around 1e-4 despite the same mathematical
+frontend. This single waveform case carries an explicit **2e-4** comparison
+bound and precision annotation in both storage modes. Other waveform cases,
+all text/token cases, and published-checkpoint tolerances are unchanged.
+
+To diagnose this boundary, compare native and official log-mel first, then inject
+the same official mel into the native patchify/audio tower through a private
+`FeatureTestAccess` probe. Cross-combine native/Torch powers and mel filters, and
+compare official F32 versus double FFT before attributing a difference to model
+geometry. The asymmetric tower agrees within 3e-7 with identical official mel;
+a filterbank-only change does not resolve this FFT-specific difference.
 
 Tiny random-weight parity is not published-checkpoint parity.
 

@@ -1,0 +1,351 @@
+{
+  "processor": {
+    "feature_extractor": {
+      "f_max": 16000.0,
+      "f_min": 50.0,
+      "feature_extractor_type": "Clap2FeatureExtractor",
+      "feature_size": 128,
+      "hop_length": 320,
+      "max_num_patches": null,
+      "n_fft": 1024,
+      "padding_side": "right",
+      "padding_value": 0.0,
+      "patch_size": 16,
+      "return_attention_mask": true,
+      "sampling_rate": 32000
+    },
+    "processor_class": "Clap2Processor"
+  },
+  "models": {
+    "large": {
+      "identity": {
+        "repo": "laion/clap2-large-audioxl-s1B",
+        "revision": "e836feaa79cd1f7de939fe77065819f48fc44e4c"
+      },
+      "config": {
+        "architectures": [
+          "Clap2Model"
+        ],
+        "audio_config": {
+          "attention_bias": true,
+          "attention_dropout": 0.0,
+          "hidden_act": "silu",
+          "hidden_size": 1024,
+          "initializer_range": 0.02,
+          "intermediate_size": 2816,
+          "layerscale_value": 1e-05,
+          "mlp_bias": true,
+          "model_type": "clap2_audio_model",
+          "num_attention_heads": 16,
+          "num_hidden_layers": 12,
+          "num_mel_bins": 128,
+          "num_register_tokens": 1,
+          "patch_size": 16,
+          "pooler_hidden_act": "gelu",
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "axial"
+          },
+          "use_qk_norm": false
+        },
+        "dtype": "float32",
+        "logit_scale_init_value": 2.6592,
+        "model_type": "clap2",
+        "projection_dim": 960,
+        "projection_hidden_act": "gelu",
+        "text_config": {
+          "attention_bias": false,
+          "attention_dropout": 0.0,
+          "bos_token_id": 50259,
+          "eos_token_id": 50257,
+          "hidden_act": "silu",
+          "hidden_size": 960,
+          "initializer_range": 0.02,
+          "intermediate_size": 2560,
+          "layerscale_value": null,
+          "max_position_embeddings": 256,
+          "mlp_bias": false,
+          "model_type": "clap2_text_model",
+          "num_attention_heads": 15,
+          "num_hidden_layers": 11,
+          "pad_token_id": 50258,
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "default"
+          },
+          "use_qk_norm": true,
+          "vocab_size": 50260
+        },
+        "transformers_version": "5.23.0.dev0"
+      },
+      "tensor_count": 261,
+      "tensor_shapes_sha256": "642dc0e223fca8751b03d3b91c0f5875556a2b66b8f1b8e4cce67ae1903a59d9"
+    },
+    "medium": {
+      "identity": {
+        "repo": "laion/clap2-medium-audioxl-s1B",
+        "revision": "3a8d9d79cb98e4d409fce24092a69718a821a7ad"
+      },
+      "config": {
+        "architectures": [
+          "Clap2Model"
+        ],
+        "audio_config": {
+          "attention_bias": true,
+          "attention_dropout": 0.0,
+          "hidden_act": "silu",
+          "hidden_size": 640,
+          "initializer_range": 0.02,
+          "intermediate_size": 1728,
+          "layerscale_value": 1e-05,
+          "mlp_bias": true,
+          "model_type": "clap2_audio_model",
+          "num_attention_heads": 10,
+          "num_hidden_layers": 12,
+          "num_mel_bins": 128,
+          "num_register_tokens": 1,
+          "patch_size": 16,
+          "pooler_hidden_act": "gelu",
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "axial"
+          },
+          "use_qk_norm": false
+        },
+        "dtype": "float32",
+        "logit_scale_init_value": 2.6592,
+        "model_type": "clap2",
+        "projection_dim": 640,
+        "projection_hidden_act": "gelu",
+        "text_config": {
+          "attention_bias": false,
+          "attention_dropout": 0.0,
+          "bos_token_id": 50259,
+          "eos_token_id": 50257,
+          "hidden_act": "silu",
+          "hidden_size": 640,
+          "initializer_range": 0.02,
+          "intermediate_size": 1728,
+          "layerscale_value": null,
+          "max_position_embeddings": 256,
+          "mlp_bias": false,
+          "model_type": "clap2_text_model",
+          "num_attention_heads": 10,
+          "num_hidden_layers": 11,
+          "pad_token_id": 50258,
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "default"
+          },
+          "use_qk_norm": true,
+          "vocab_size": 50260
+        },
+        "transformers_version": "5.23.0.dev0"
+      },
+      "tensor_count": 261,
+      "tensor_shapes_sha256": "9f697c858ef3e61bac1ece6b2bf927ffcbc5958dbc50d1ef5bef9c4715ca287e"
+    },
+    "small": {
+      "identity": {
+        "repo": "laion/clap2-small-audioxl-s1B",
+        "revision": "9891ee368dbec866dab1919f163b7e091ab0ed37"
+      },
+      "config": {
+        "architectures": [
+          "Clap2Model"
+        ],
+        "audio_config": {
+          "attention_bias": true,
+          "attention_dropout": 0.0,
+          "hidden_act": "silu",
+          "hidden_size": 512,
+          "initializer_range": 0.02,
+          "intermediate_size": 1408,
+          "layerscale_value": 1e-05,
+          "mlp_bias": true,
+          "model_type": "clap2_audio_model",
+          "num_attention_heads": 8,
+          "num_hidden_layers": 12,
+          "num_mel_bins": 128,
+          "num_register_tokens": 1,
+          "patch_size": 16,
+          "pooler_hidden_act": "gelu",
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "axial"
+          },
+          "use_qk_norm": false
+        },
+        "dtype": "float32",
+        "logit_scale_init_value": 2.6592,
+        "model_type": "clap2",
+        "projection_dim": 512,
+        "projection_hidden_act": "gelu",
+        "text_config": {
+          "attention_bias": false,
+          "attention_dropout": 0.0,
+          "bos_token_id": 50259,
+          "eos_token_id": 50257,
+          "hidden_act": "silu",
+          "hidden_size": 512,
+          "initializer_range": 0.02,
+          "intermediate_size": 1408,
+          "layerscale_value": null,
+          "max_position_embeddings": 256,
+          "mlp_bias": false,
+          "model_type": "clap2_text_model",
+          "num_attention_heads": 8,
+          "num_hidden_layers": 11,
+          "pad_token_id": 50258,
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "default"
+          },
+          "use_qk_norm": true,
+          "vocab_size": 50260
+        },
+        "transformers_version": "5.23.0.dev0"
+      },
+      "tensor_count": 261,
+      "tensor_shapes_sha256": "d264877be7061d23474dd21d5929c88c8cc459bbfc0ca06e78c98122dcb88ea1"
+    },
+    "xs": {
+      "identity": {
+        "repo": "laion/clap2-xs-audioxl-s1B",
+        "revision": "adc510748f0b759918ba4aaee94fc864e05c48d9"
+      },
+      "config": {
+        "architectures": [
+          "Clap2Model"
+        ],
+        "audio_config": {
+          "attention_bias": true,
+          "attention_dropout": 0.0,
+          "hidden_act": "silu",
+          "hidden_size": 320,
+          "initializer_range": 0.02,
+          "intermediate_size": 896,
+          "layerscale_value": 1e-05,
+          "mlp_bias": true,
+          "model_type": "clap2_audio_model",
+          "num_attention_heads": 5,
+          "num_hidden_layers": 12,
+          "num_mel_bins": 128,
+          "num_register_tokens": 1,
+          "patch_size": 16,
+          "pooler_hidden_act": "gelu",
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "axial"
+          },
+          "use_qk_norm": false
+        },
+        "dtype": "float32",
+        "logit_scale_init_value": 2.6592,
+        "model_type": "clap2",
+        "projection_dim": 320,
+        "projection_hidden_act": "gelu",
+        "text_config": {
+          "attention_bias": false,
+          "attention_dropout": 0.0,
+          "bos_token_id": 50259,
+          "eos_token_id": 50257,
+          "hidden_act": "silu",
+          "hidden_size": 320,
+          "initializer_range": 0.02,
+          "intermediate_size": 896,
+          "layerscale_value": null,
+          "max_position_embeddings": 256,
+          "mlp_bias": false,
+          "model_type": "clap2_text_model",
+          "num_attention_heads": 5,
+          "num_hidden_layers": 12,
+          "pad_token_id": 50258,
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "default"
+          },
+          "use_qk_norm": true,
+          "vocab_size": 50260
+        },
+        "transformers_version": "5.23.0.dev0"
+      },
+      "tensor_count": 269,
+      "tensor_shapes_sha256": "feead1b07ace75040b3300961f724a187aeac0b2215506c87cc6e3c20ff97d60"
+    },
+    "xxs": {
+      "identity": {
+        "repo": "laion/clap2-xxs-audioxl-s1B",
+        "revision": "adaca9be91f5045d06e10569de3075e1ef37f823"
+      },
+      "config": {
+        "architectures": [
+          "Clap2Model"
+        ],
+        "audio_config": {
+          "attention_bias": true,
+          "attention_dropout": 0.0,
+          "hidden_act": "silu",
+          "hidden_size": 224,
+          "initializer_range": 0.02,
+          "intermediate_size": 640,
+          "layerscale_value": 1e-05,
+          "mlp_bias": true,
+          "model_type": "clap2_audio_model",
+          "num_attention_heads": 4,
+          "num_hidden_layers": 12,
+          "num_mel_bins": 128,
+          "num_register_tokens": 1,
+          "patch_size": 16,
+          "pooler_hidden_act": "gelu",
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "axial"
+          },
+          "use_qk_norm": false
+        },
+        "dtype": "float32",
+        "logit_scale_init_value": 2.6592,
+        "model_type": "clap2",
+        "projection_dim": 224,
+        "projection_hidden_act": "gelu",
+        "text_config": {
+          "attention_bias": false,
+          "attention_dropout": 0.0,
+          "bos_token_id": 50259,
+          "eos_token_id": 50257,
+          "hidden_act": "silu",
+          "hidden_size": 224,
+          "initializer_range": 0.02,
+          "intermediate_size": 640,
+          "layerscale_value": null,
+          "max_position_embeddings": 256,
+          "mlp_bias": false,
+          "model_type": "clap2_text_model",
+          "num_attention_heads": 4,
+          "num_hidden_layers": 12,
+          "pad_token_id": 50258,
+          "rms_norm_eps": 1e-06,
+          "rope_parameters": {
+            "rope_theta": 10000.0,
+            "rope_type": "default"
+          },
+          "use_qk_norm": true,
+          "vocab_size": 50260
+        },
+        "transformers_version": "5.23.0.dev0"
+      },
+      "tensor_count": 269,
+      "tensor_shapes_sha256": "3035d5225765f9adfff00b030af2396433a6da7d9eb3a9ab9492757c11b7e442"
+    }
+  }
+}

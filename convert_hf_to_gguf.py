@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument('--clamp3-config', type=Path,
                         help='CLaMP3 combined config JSON (otherwise infer from sibling XLM-R config)')
     parser.add_argument('--tokenizer', type=Path, help='CLAP2/CLaMP3/MuLan local tokenizer.json (default: beside checkpoint)')
-    parser.add_argument('--clap2-revision', help='full HF revision SHA for CLAP2 metadata (default: pinned laion checkpoint)')
+    parser.add_argument('--clap2-revision', help='full HF revision SHA for CLAP2 metadata (default: pinned revision for the detected model size)')
     parser.add_argument('--mert2-revision', help='full pinned Hugging Face revision SHA for MERT2 metadata')
     parser.add_argument('--muq-revision', help='full pinned Hugging Face revision SHA for MuQ metadata')
     parser.add_argument('--mert-revision', help='full pinned Hugging Face revision SHA for MERT-v1 metadata')

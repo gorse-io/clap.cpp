@@ -16,7 +16,11 @@ C++20/ggml implementations of audio embedding inference features:
 | Model | Text | Audio | Embedding dimensions | Sample rate |
 | --- | --- | --- | --- | --- |
 | [CLAP](https://huggingface.co/laion/larger_clap_music) | ✅ | ✅ | 512 | 48 kHz |
-| [CLAP2](https://huggingface.co/laion/clap2-large-audioxl-s1B) | ✅ | ✅ | 960 | 32 kHz |
+| [CLAP2 Large](https://huggingface.co/laion/clap2-large-audioxl-s1B) | ✅ | ✅ | 960 | 32 kHz |
+| [CLAP2 Medium](https://huggingface.co/laion/clap2-medium-audioxl-s1B) | ✅ | ✅ | 640 | 32 kHz |
+| [CLAP2 Small](https://huggingface.co/laion/clap2-small-audioxl-s1B) | ✅ | ✅ | 512 | 32 kHz |
+| [CLAP2 XS](https://huggingface.co/laion/clap2-xs-audioxl-s1B) | ✅ | ✅ | 320 | 32 kHz |
+| [CLAP2 XXS](https://huggingface.co/laion/clap2-xxs-audioxl-s1B) | ✅ | ✅ | 224 | 32 kHz |
 | [CLaMP3](https://github.com/sanderwood/clamp3) | ✅ | ✅ | 768 | 24 kHz |
 | [MERT v1 95M](https://huggingface.co/m-a-p/MERT-v1-95M) | ❌ | ✅ | 768 | 24 kHz |
 | [MERT v1 330M](https://huggingface.co/m-a-p/MERT-v1-330M) | ❌ | ✅ | 1,024 | 24 kHz |
