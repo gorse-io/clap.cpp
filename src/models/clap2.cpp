@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <numbers>
 #include <stdexcept>
 
 namespace clap::detail {
@@ -276,9 +277,8 @@ HostMatrix Clap2Model::frontend(const std::vector<float> &pcm) const {
     const int samples = padded.size(), frames = samples / hop + 1, freqs = nfft / 2 + 1;
     HostMatrix mel(frames, bins);
     std::vector<float> window(nfft), edges(bins + 2), filters(size_t(freqs) * bins), power(freqs);
-    const float pi = float(std::acos(-1.0));
     for (int i = 0; i < nfft; ++i)
-        window[i] = 0.5f * (1.f - std::cos(2.f * pi * float(i) / nfft));
+        window[i] = 0.5f * (1.f - std::cos(2.f * static_cast<float>(std::numbers::pi) * float(i) / nfft));
     const float lo = float(2595.0 * std::log10(1.0 + fmin / 700.0));
     const float hi = float(2595.0 * std::log10(1.0 + fmax / 700.0));
     for (int i = 0; i < bins + 2; ++i) {

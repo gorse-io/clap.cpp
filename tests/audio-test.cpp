@@ -7,17 +7,17 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <numbers>
 #include <stdexcept>
 #include <utility>
 
 namespace {
-constexpr double pi = 3.14159265358979323846;
 clap::Audio tone(int rate, double frequency) {
     clap::Audio audio;
     audio.sample_rate = rate;
     audio.samples.resize(rate / 10);
     for (size_t i = 0; i < audio.samples.size(); ++i)
-        audio.samples[i] = static_cast<float>(0.5 * std::sin(2 * pi * frequency * i / rate));
+        audio.samples[i] = static_cast<float>(0.5 * std::sin(2 * std::numbers::pi * frequency * i / rate));
     return audio;
 }
 
@@ -41,7 +41,7 @@ TEST(Resample, PreservesDurationAmplitudeAndPhase) {
         double sine = 0, cosine = 0;
         const size_t begin = target / 100, end = target * 9 / 100; // whole periods, after startup
         for (size_t i = begin; i < end; ++i) {
-            const double phase = 2 * pi * 1000 * i / target;
+            const double phase = 2 * std::numbers::pi * 1000 * i / target;
             sine += output.samples[i] * std::sin(phase);
             cosine += output.samples[i] * std::cos(phase);
         }
@@ -51,7 +51,7 @@ TEST(Resample, PreservesDurationAmplitudeAndPhase) {
         const double phase = std::atan2(cosine, sine);
         double error = 0;
         for (size_t i = begin; i < end; ++i) {
-            const double angle = 2 * pi * 1000 * i / target;
+            const double angle = 2 * std::numbers::pi * 1000 * i / target;
             error += std::pow(output.samples[i] - sine * std::sin(angle) - cosine * std::cos(angle), 2);
         }
         const double rmse = std::sqrt(error / (end - begin));
@@ -60,7 +60,7 @@ TEST(Resample, PreservesDurationAmplitudeAndPhase) {
         ASSERT_GT(gain, 0.94);
         ASSERT_LT(gain, 1.01);
         ASSERT_LE(phase, 0.01);
-        ASSERT_GT(phase, -pi);
+        ASSERT_GT(phase, -std::numbers::pi);
         ASSERT_LT(rmse, 0.002);
     }
 }
@@ -162,8 +162,8 @@ TEST(AudioDecode, PreservesWaveformsAndMatchesMemoryDecoding) {
         double error = 0;
         for (size_t i = 0; i < audio.samples.size(); ++i) {
             ASSERT_TRUE(std::isfinite(audio.samples[i])) << "sample " << i;
-            const double left = 12000.0 / 32768 * std::sin(2 * 3.141592653589793 * 440 * i / 48000);
-            const double right = 12000.0 / 32768 * std::sin(2 * 3.141592653589793 * 880 * i / 48000);
+            const double left = 12000.0 / 32768 * std::sin(2 * std::numbers::pi * 440 * i / 48000);
+            const double right = 12000.0 / 32768 * std::sin(2 * std::numbers::pi * 880 * i / 48000);
             const double expected = stereo ? (left + right) / 2 : left;
             error += std::pow(audio.samples[i] - expected, 2);
         }

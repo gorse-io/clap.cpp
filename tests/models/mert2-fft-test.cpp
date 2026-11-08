@@ -5,16 +5,17 @@
 #include <vector>
 #include <cmath>
 #include <iostream>
+#include <numbers>
 #include <stdexcept>
 int main() {
     constexpr std::size_t n = 2048;
-    const double pi = std::acos(-1.0);
     std::vector<std::complex<float>> input(n);
     for (std::size_t i = 0; i < n; ++i) {
         const double t = (176.0 + i) / 24000.;
         const float pcm =
-            static_cast<float>(.19 * std::sin(2 * pi * (220 * t + 31 * t * t)) + .03 * std::cos(2 * pi * 443 * t));
-        const float window = static_cast<float>(.5 - .5 * std::cos(2 * pi * i / n));
+            static_cast<float>(.19 * std::sin(2 * std::numbers::pi * (220 * t + 31 * t * t)) +
+                               .03 * std::cos(2 * std::numbers::pi * 443 * t));
+        const float window = static_cast<float>(.5 - .5 * std::cos(2 * std::numbers::pi * i / n));
         input[i] = pcm * window;
     }
     std::vector<std::complex<double>> transformed(input.begin(), input.end());
@@ -24,7 +25,7 @@ int main() {
     for (std::size_t k = 0; k <= n / 2; ++k) {
         std::complex<double> reference{};
         for (std::size_t i = 0; i < n; ++i)
-            reference += static_cast<double>(input[i].real()) * std::polar(1., -2 * pi * double(k * i) / n);
+            reference += static_cast<double>(input[i].real()) * std::polar(1., -2 * std::numbers::pi * double(k * i) / n);
         const std::complex<float> expected(reference);
         complex_error = std::max(complex_error, double(std::abs(actual[k] - expected)));
         const double a = 10 * std::log10(std::max(double(std::norm(actual[k])), 1e-10));
