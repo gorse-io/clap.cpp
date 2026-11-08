@@ -1,8 +1,10 @@
-#include "model-loader.h"
 #include "graph-test-helpers.h"
+#include "model-loader.h"
 #include "quantize.h"
+
 #include <ggml.h>
 #include <gguf.h>
+
 #include <cmath>
 #include <cstring>
 #include <filesystem>

@@ -1,9 +1,11 @@
 #include "audio.h"
+
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <gtest/gtest.h>
 #include <iostream>
 #include <iterator>
 #include <limits>

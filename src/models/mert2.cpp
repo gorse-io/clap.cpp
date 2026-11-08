@@ -1,11 +1,11 @@
-#include "models.h"
 #include "audio.h"
+#include "models.h"
 
-#include <stdexcept>
 #include <algorithm>
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <stdexcept>
 
 namespace clap::detail {
 using json = nlohmann::json;

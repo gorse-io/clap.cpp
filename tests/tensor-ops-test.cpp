@@ -1,5 +1,7 @@
 #include "graph-test-helpers.h"
+
 #include <gguf.h>
+
 #include <cmath>
 #include <cstdio>
 #include <filesystem>

@@ -1,4 +1,5 @@
 #include "vocab.h"
+
 #include <fstream>
 #include <iostream>
 #include <stdexcept>

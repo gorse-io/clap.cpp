@@ -1,7 +1,8 @@
-#include "model.h"
 #include "audio.h"
+#include "model.h"
 #include "models/models.h"
 #include "vocab.h"
+
 #include <stdexcept>
 
 CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loader(options) {

@@ -1,12 +1,14 @@
 #include "vocab.h"
-#include <stdexcept>
+
 #include <unicode/uchar.h>
 #include <unicode/unistr.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 
 namespace clap::detail {
 using json = nlohmann::json;

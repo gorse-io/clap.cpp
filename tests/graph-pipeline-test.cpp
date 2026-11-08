@@ -1,5 +1,7 @@
 #include "graph.h"
+
 #include <gguf.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>

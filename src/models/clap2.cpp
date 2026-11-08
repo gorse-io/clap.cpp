@@ -1,5 +1,6 @@
-#include "model.h"
 #include "audio.h"
+#include "model.h"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>

@@ -2,12 +2,13 @@
 
 #include <ggml.h>
 #include <gguf.h>
+
 #include <cstdint>
 #include <initializer_list>
 #include <string>
-#include <utility>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace clap {

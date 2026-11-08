@@ -3,12 +3,14 @@
 #include "clap.h"
 #include "graph.h"
 #include "model-loader.h"
+
+#include <nlohmann/json.hpp>
+
 #include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <nlohmann/json.hpp>
 
 namespace clap {
 // Time-major waveform encoder output; values contains frames * dimension elements.

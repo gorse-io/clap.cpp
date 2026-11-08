@@ -1,6 +1,6 @@
-#include "clap.h"
-#include "c-api-helpers.h"
 #include "audio.h"
+#include "c-api-helpers.h"
+#include "clap.h"
 
 #include <cmath>
 #include <filesystem>

@@ -4,6 +4,7 @@
 // independent of the bundled waveform pipeline.
 #include "../../src/models/models.h"
 #include "audio.h"
+
 #include <stdexcept>
 namespace clap::detail {
 struct FeatureTestAccess {

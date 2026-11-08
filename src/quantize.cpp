@@ -1,14 +1,15 @@
 #include "model-loader.h"
+#include "quantization-policy.h"
 #include "quantize-output.h"
 #include "quantize.h"
-#include "quantization-policy.h"
-#include <stdexcept>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 

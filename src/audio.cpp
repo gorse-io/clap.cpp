@@ -27,11 +27,10 @@
 #define MA_NO_RUNTIME_LINKING
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
-#include "miniaudio.h"
-
 #include "audio.h"
 
-#include <stdexcept>
+#include "miniaudio.h"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -40,6 +39,7 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <stdexcept>
 
 namespace clap {
 

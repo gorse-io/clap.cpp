@@ -1,7 +1,8 @@
-#include "clap.h"
 #include "../c-api-helpers.h"
 #include "audio.h"
+#include "clap.h"
 #include "feature-test.h"
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>

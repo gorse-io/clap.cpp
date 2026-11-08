@@ -1,15 +1,17 @@
-#include "model-loader.h"
 #include "graph-test-helpers.h"
+#include "model-loader.h"
+
 #include <ggml.h>
 #include <gguf.h>
+
 #include <cmath>
 #include <cstdint>
-#include <string>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 using namespace clap::detail;
