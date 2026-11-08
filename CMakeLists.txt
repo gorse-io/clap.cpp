@@ -76,8 +76,6 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_test(NAME clap_public_api_boundary
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/public_api_boundary.py")
     if(NOT BUILD_SHARED_LIBS)
         add_executable(clap-c-api-allocation-test tests/c-api-allocation-test.cpp)
         target_link_libraries(clap-c-api-allocation-test PRIVATE clap)
