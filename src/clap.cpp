@@ -1,99 +1,189 @@
-#include "embedding.h"
 #include "clap.h"
-#include "quantize.h"
-#include "server.h"
+#include "model.h"
 
-#include <CLI/CLI.hpp>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <limits>
+#include <new>
+#include <utility>
 
-#include <iostream>
-#include <memory>
-#include <stdexcept>
-#include <string>
-
-int main(int argc, char **argv) {
-    CLI::App app{"clap.cpp"};
-    argv = app.ensure_utf8(argv);
-    std::string host = "127.0.0.1";
-    int port = 8080;
-    std::string server_model;
-    int server_threads = 0;
-    std::string server_device;
-    auto *devices = app.add_subcommand("devices", "List available GGML devices");
-    auto *serve = app.add_subcommand("serve", "Start the embeddings HTTP server");
-    serve->add_option("-m,--model", server_model, "Converted model GGUF")->required()->check(CLI::ExistingFile);
-    serve->add_option("-t,--threads", server_threads, "ggml CPU threads (0: hardware concurrency)")
-        ->check(CLI::NonNegativeNumber)
-        ->capture_default_str();
-    serve->add_option("--device", server_device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
-    serve->add_option("--host", host, "Listen address")->capture_default_str();
-    serve->add_option("--port", port, "Listen port")->check(CLI::Range(1, 65535))->capture_default_str();
-
-    EmbeddingOptions options;
-    auto *embedding = app.add_subcommand("embedding", "Generate native text or audio embeddings");
-    embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
-        ->required()
-        ->check(CLI::ExistingFile);
-    embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: hardware concurrency)")
-        ->check(CLI::NonNegativeNumber)
-        ->capture_default_str();
-    embedding->add_option("--device", options.device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
-    auto *input = embedding->add_option_group("Input", "Choose one text or audio file");
-    input->require_option(1, 1);
-    input->add_option("--text", options.text, "One UTF-8 text (output: flat JSON vector)");
-    auto *audio_option =
-        input->add_option("-a,--audio", options.audio_path, "WAV, MP3 or FLAC (output: flat JSON vector)")
-            ->check(CLI::ExistingFile);
-    auto *crop_option = embedding
-                            ->add_option("--crop-offset", options.crop_offset,
-                                         "Sample offset at 48 kHz into CLAP audio longer than ten seconds")
-                            ->check(CLI::NonNegativeNumber);
-    embedding->add_flag("--frames", options.frames,
-                        "Return final-layer waveform-encoder frames instead of mean pooling");
-
-    std::string quantize_input;
-    std::string quantize_output;
-    std::string quantize_type = "Q8_0";
-    auto *quantize = app.add_subcommand("quantize", "Convert F32/F16/BF16 GGUF to BF16, Q8_0 or mixed Q4_K_M");
-    quantize->add_option("--type", quantize_type, "Quantization preset")
-        ->check(CLI::IsMember({"BF16", "Q8_0", "Q4_K_M"}, CLI::ignore_case))
-        ->capture_default_str();
-    quantize->add_option("INPUT.gguf", quantize_input, "F32/F16/BF16 CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan model")
-        ->required();
-    quantize->add_option("OUTPUT.gguf", quantize_output, "Output model (must not exist)")->required();
-
-    CLI11_PARSE(app, argc, argv);
-
-    if (*quantize) {
-        return cmd_quantize(quantize_input, quantize_output, quantize_type);
-    }
-
-    try {
-        if (*devices) {
-            clap_device *list = nullptr;
-            std::size_t count = 0;
-            if (clap_available_devices(&list, &count) != CLAP_OK)
-                throw std::runtime_error(clap_last_error());
-            const auto free_devices = [count](clap_device *value) { clap_free_devices(value, count); };
-            const std::unique_ptr<clap_device, decltype(free_devices)> owned(list, free_devices);
-            for (std::size_t i = 0; i < count; ++i)
-                std::cout << list[i].name << "\t" << list[i].description << "\n";
-            return 0;
-        }
-        if (*embedding) {
-            options.crop_requested = crop_option->count() != 0;
-            if (options.crop_requested && !*audio_option)
-                throw std::runtime_error("--crop-offset requires --audio");
-            if (options.frames && (!*audio_option || options.crop_requested))
-                throw std::runtime_error("--frames requires --audio and excludes --crop-offset");
-            return cmd_embedding(options);
-        }
-        if (*serve) {
-            return cmd_server(host, port, server_model, server_threads, server_device);
-        }
-    } catch (const std::exception &error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-    std::cout << "clap.cpp\n";
-    return 0;
+namespace {
+thread_local char diagnostic[1024] = {};
+struct InvalidArgument {
+    const char *message;
+};
+void require(bool valid, const char *message) {
+    if (!valid)
+        throw InvalidArgument{message};
 }
+template <typename F> clap_status protect(F &&f) noexcept {
+    diagnostic[0] = '\0';
+    try {
+        f();
+        return CLAP_OK;
+    } catch (const InvalidArgument &e) {
+        std::snprintf(diagnostic, sizeof(diagnostic), "%s", e.message);
+        return CLAP_INVALID_ARGUMENT;
+    } catch (const std::bad_alloc &) {
+        std::snprintf(diagnostic, sizeof(diagnostic), "%s", "CLAP: out of memory");
+        return CLAP_OUT_OF_MEMORY;
+    } catch (const std::exception &e) {
+        std::snprintf(diagnostic, sizeof(diagnostic), "%s", e.what());
+    } catch (...) {
+        std::snprintf(diagnostic, sizeof(diagnostic), "%s", "CLAP: unknown error");
+    }
+    return CLAP_ERROR;
+}
+void *allocate(size_t count, size_t size) {
+    if (count > std::numeric_limits<size_t>::max() / size)
+        throw std::bad_alloc();
+    void *p = std::calloc(count, size);
+    if (!p && count)
+        throw std::bad_alloc();
+    return p;
+}
+template <typename T> T *copy(const std::vector<T> &v) {
+    T *p = static_cast<T *>(allocate(v.size(), sizeof(T)));
+    if (!v.empty())
+        std::memcpy(p, v.data(), v.size() * sizeof(T));
+    return p;
+}
+char *copy_string(const std::string &s) {
+    char *p = static_cast<char *>(allocate(s.size() + 1, 1));
+    std::memcpy(p, s.c_str(), s.size() + 1);
+    return p;
+}
+template <typename T> void reset(T **p, size_t *n) {
+    if (p)
+        *p = nullptr;
+    if (n)
+        *n = 0;
+}
+template <typename F> clap_status embedding(CLAP *model, float **out, size_t *count, F &&f) {
+    reset(out, count);
+    return protect([&] {
+        require(model && out && count, "CLAP: model and output slots are required");
+        const auto values = f();
+        *out = copy(values);
+        *count = values.size();
+    });
+}
+std::vector<float> waveform(const float *pcm, size_t count, int rate) {
+    require(pcm && count && rate > 0, "CLAP: nonempty PCM and a positive sample rate are required");
+    require(count <= std::vector<float>().max_size(), "CLAP: too many samples");
+    for (size_t i = 0; i < count; ++i)
+        require(std::isfinite(pcm[i]), "CLAP: PCM must be finite");
+    return {pcm, pcm + count};
+}
+} // namespace
+
+extern "C" {
+clap_runtime_options clap_default_options(void) { return {0, nullptr, CLAP_ACTIVATION_MODEL_DEFAULT}; }
+const char *clap_last_error(void) { return diagnostic; }
+clap_status clap_create(const char *path, const clap_runtime_options *options, CLAP **out) {
+    if (out)
+        *out = nullptr;
+    return protect([&] {
+        require(path && *path && out, "CLAP: nonempty model path and output slot are required");
+        clap::RuntimeOptions native;
+        if (options) {
+            require(options->threads >= 0, "CLAP: threads must be nonnegative");
+            require(options->activation_precision == CLAP_ACTIVATION_MODEL_DEFAULT ||
+                        options->activation_precision == CLAP_ACTIVATION_F32,
+                    "CLAP: invalid activation precision");
+            native.threads = options->threads;
+            if (options->device)
+                native.device = options->device;
+            if (options->activation_precision == CLAP_ACTIVATION_F32)
+                native.activation_precision = clap::ActivationPrecision::F32;
+        }
+        *out = new CLAP(path, native);
+    });
+}
+void clap_destroy(CLAP *model) { delete model; }
+void clap_free(void *allocation) { std::free(allocation); }
+void clap_free_devices(clap_device *devices, size_t count) {
+    if (!devices)
+        return;
+    for (size_t i = 0; i < count; ++i) {
+        std::free(const_cast<char *>(devices[i].name));
+        std::free(const_cast<char *>(devices[i].description));
+    }
+    std::free(devices);
+}
+clap_status clap_available_devices(clap_device **out, size_t *count) {
+    reset(out, count);
+    return protect([&] {
+        require(out && count, "CLAP: device output slots are required");
+        const auto native = clap::available_devices();
+        auto *devices = static_cast<clap_device *>(allocate(native.size(), sizeof(clap_device)));
+        try {
+            for (size_t i = 0; i < native.size(); ++i) {
+                devices[i].name = copy_string(native[i].name);
+                devices[i].description = copy_string(native[i].description);
+                devices[i].gpu = native[i].gpu;
+            }
+        } catch (...) {
+            clap_free_devices(devices, native.size());
+            throw;
+        }
+        *out = devices;
+        *count = native.size();
+    });
+}
+void clap_free_audio_frames(clap_audio_frames *frames) {
+    if (frames) {
+        std::free(frames->values);
+        *frames = {};
+    }
+}
+clap_status clap_tokenize(const CLAP *model, const char *utf8, size_t max_length, int **out, size_t *count) {
+    reset(out, count);
+    return protect([&] {
+        require(model && utf8 && out && count && max_length > 0,
+                "CLAP: model, text, positive max_length and output slots are required");
+        const auto tokens = clap::detail::tokenize(*model, utf8, max_length);
+        *out = copy(tokens);
+        *count = tokens.size();
+    });
+}
+clap_status clap_encode_text(CLAP *model, const char *utf8, float **out, size_t *count) {
+    return embedding(model, out, count, [&] {
+        require(utf8, "CLAP: text is required");
+        return clap::detail::encode_text(*model, utf8);
+    });
+}
+clap_status clap_encode_tokens(CLAP *model, const int *tokens, size_t n, float **out, size_t *count) {
+    return embedding(model, out, count, [&] {
+        require(tokens && n && n <= std::vector<int>().max_size(), "CLAP: nonempty tokens are required");
+        return model->architecture->text(std::vector<int>(tokens, tokens + n));
+    });
+}
+clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t n, int rate, size_t crop, float **out,
+                              size_t *count) {
+    return embedding(model, out, count,
+                     [&] { return clap::detail::encode_audio(*model, waveform(pcm, n, rate), rate, crop); });
+}
+clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop, float **out, size_t *count) {
+    return embedding(model, out, count, [&] {
+        require(path && *path, "CLAP: audio path is required");
+        return clap::detail::encode_audio_file(*model, path, crop);
+    });
+}
+clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int rate, clap_audio_frames *out) {
+    if (out)
+        *out = {};
+    return protect([&] {
+        require(model && out, "CLAP: model and frame output slot are required");
+        const auto frames = clap::detail::audio_frames(*model, waveform(pcm, n, rate), rate);
+        out->values = copy(frames.values);
+        out->frames = static_cast<size_t>(frames.frames);
+        out->dimension = static_cast<size_t>(frames.dimension);
+    });
+}
+int clap_audio_sample_rate(const CLAP *model) { return model ? model->architecture->sample_rate() : 0; }
+int clap_projection_dimension(const CLAP *model) { return model ? model->architecture->projection_dimension() : 0; }
+} // extern "C"
