@@ -1,4 +1,5 @@
 #include "quantize-output.h"
+
 #include <fstream>
 #include <iostream>
 #include <stdexcept>

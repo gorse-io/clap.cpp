@@ -1,6 +1,6 @@
-#include "embedding.h"
-#include "clap.h"
 #include "audio.h"
+#include "clap.h"
+#include "embedding.h"
 
 #include <nlohmann/json.hpp>
 

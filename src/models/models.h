@@ -1,9 +1,10 @@
 #pragma once
 
-#include "model.h"
-#include "model-loader.h"
 #include "graph.h"
+#include "model-loader.h"
 #include "model-weights.h"
+#include "model.h"
+
 #include <nlohmann/json.hpp>
 
 namespace clap::detail {

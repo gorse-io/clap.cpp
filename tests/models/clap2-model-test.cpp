@@ -1,5 +1,5 @@
-#include "clap.h"
 #include "../c-api-helpers.h"
+#include "clap.h"
 
 #include <nlohmann/json.hpp>
 

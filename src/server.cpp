@@ -1,6 +1,6 @@
-#include "server.h"
-#include "clap.h"
 #include "audio.h"
+#include "clap.h"
+#include "server.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -9,8 +9,8 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
-#include <mutex>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 

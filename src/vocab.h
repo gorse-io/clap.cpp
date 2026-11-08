@@ -15,6 +15,9 @@
  */
 #pragma once
 
+#include <nlohmann/json.hpp>
+#include <unicode/regex.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -22,8 +25,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <nlohmann/json.hpp>
-#include <unicode/regex.h>
 
 namespace clap::detail {
 

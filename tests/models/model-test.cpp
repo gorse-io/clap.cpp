@@ -1,8 +1,10 @@
-#include "clap.h"
 #include "../c-api-helpers.h"
 #include "audio.h"
+#include "clap.h"
 #include "feature-test.h"
+
 #include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <fstream>

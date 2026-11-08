@@ -3,3 +3,14 @@ IndentWidth: 4
 ColumnLimit: 120
 PointerAlignment: Right
 SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Third-party headers may use either angle brackets or quotes.
+  - Regex: '^[<"](CLI/|ggml[^>]*\.h[>"]|gguf\.h[>"]|gtest/|httplib\.h[>"]|miniaudio\.h[>"]|nlohmann/|unicode/)'
+    Priority: 1
+  # Keep the main header (implicitly priority 0) with other local headers.
+  - Regex: '^"'
+    Priority: 0
+  # Standard library and platform headers.
+  - Regex: '.*'
+    Priority: 2

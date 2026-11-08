@@ -1,5 +1,6 @@
 #pragma once
 #include "clap.h"
+
 #include <memory>
 #include <stdexcept>
 #include <vector>

@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "embedding.h"
 #include "clap.h"
+#include "embedding.h"
 #include "quantize.h"
 #include "server.h"
 

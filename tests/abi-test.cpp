@@ -15,9 +15,10 @@
  */
 #include "clap.h"
 
+#include <gtest/gtest.h>
+
 #include <cstdlib>
 #include <cstring>
-#include <gtest/gtest.h>
 #include <new>
 
 namespace {

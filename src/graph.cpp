@@ -1,5 +1,7 @@
 #include "graph.h"
+
 #include <ggml-cpu.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
