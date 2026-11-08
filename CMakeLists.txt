@@ -76,9 +76,22 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/googletest/CMakeLists.txt")
+        message(FATAL_ERROR
+            "GoogleTest submodule is missing. Run: git submodule update --init --recursive")
+    endif()
+    set(BUILD_GMOCK OFF CACHE BOOL "Build GoogleMock" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
+    set(gtest_force_shared_crt ON CACHE BOOL "Use the shared MSVC runtime" FORCE)
+    add_subdirectory(thirdparty/googletest EXCLUDE_FROM_ALL)
+    if(BUILD_SHARED_LIBS)
+        # GoogleTest only sets this for installed consumers, not build-tree users.
+        target_compile_definitions(gtest INTERFACE GTEST_LINKED_AS_SHARED_LIBRARY=1)
+    endif()
+
     if(NOT BUILD_SHARED_LIBS)
-        add_executable(clap-c-api-allocation-test tests/c-api-allocation-test.cpp)
-        target_link_libraries(clap-c-api-allocation-test PRIVATE clap)
+        add_executable(clap-c-api-allocation-test tests/clap-test.cpp)
+        target_link_libraries(clap-c-api-allocation-test PRIVATE clap GTest::gtest_main)
         add_test(NAME clap_c_api_allocation COMMAND clap-c-api-allocation-test)
     endif()
     add_test(NAME clap_conversion_imports
@@ -99,11 +112,14 @@ if(BUILD_TESTING)
         COMMENT "Generating audio test fixtures"
         VERBATIM)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
-    add_executable(clap-resample-test tests/resample-test.cpp)
-    target_link_libraries(clap-resample-test PRIVATE clap)
-    add_test(NAME clap_resample COMMAND clap-resample-test)
     add_executable(clap-audio-test tests/audio-test.cpp)
-    target_link_libraries(clap-audio-test PRIVATE clap)
+    target_link_libraries(clap-audio-test PRIVATE clap GTest::gtest)
+    if(WIN32 AND BUILD_SHARED_LIBS)
+        add_custom_command(TARGET clap-audio-test POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:gtest>" "$<TARGET_FILE_DIR:clap-audio-test>"
+            VERBATIM)
+    endif()
     add_dependencies(clap-audio-test clap-audio-fixtures)
     add_test(NAME clap_audio COMMAND clap-audio-test "${CLAP_AUDIO_FIXTURE_DIR}")
     add_executable(clap-audio-path-test tests/audio-path-test.cpp)
@@ -373,7 +389,7 @@ if(BUILD_TESTING)
         set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
     endif()
     # Audio preprocessing helpers are private to the core and its tests.
-    foreach(target IN ITEMS clap-resample-test clap-audio-test clap-audio-path-test
+    foreach(target IN ITEMS clap-audio-test clap-audio-path-test
             mert2-fft-test mert-model-test clamp3-bundled-test muq-model-test muq-mulan-model-test)
         if(TARGET ${target})
             target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
