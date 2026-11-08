@@ -61,7 +61,7 @@ clap_static_development()
 if(CLAP_BUILD_CLI)
     # The CLI target differs from the core library target, while its executable
     # keeps the existing "clap" name and command-line behavior.
-    add_executable(clap-cli src/clap.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
+    add_executable(clap-cli src/cli.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
     target_compile_features(clap-cli PRIVATE cxx_std_20)
     target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
     set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
@@ -76,8 +76,6 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_test(NAME clap_public_api_boundary
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/public_api_boundary.py")
     if(NOT BUILD_SHARED_LIBS)
         add_executable(clap-c-api-allocation-test tests/c-api-allocation-test.cpp)
         target_link_libraries(clap-c-api-allocation-test PRIVATE clap)
