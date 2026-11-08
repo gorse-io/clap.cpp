@@ -4,6 +4,9 @@
 python clap2_checkpoint_parity.py BRANCH CHECKPOINT_DIR OUTPUT OFFICIAL_OPEN_CLIP HF_ASSETS
 BRANCH is text or audio. No downloads. Creates fixture-BRANCH-f32.json for
 clap2-model-test; execute native separately after this process releases torch.
+HF_ASSETS supplies config.json, open_clip_config.json and identity.json (or the
+legacy hf-manifest.json). The official tower shape and revision come from those
+assets, not the large model's source configuration.
 """
 import argparse
 import importlib.metadata
@@ -11,7 +14,7 @@ import json
 from pathlib import Path
 import sys
 
-from clap2_parity import HF_REVISION, REVISION, hf_name, hf_value
+from clap2_parity import REVISION, hf_name, hf_value, load_oracle_assets
 
 
 def main():
@@ -24,6 +27,7 @@ def main():
     parser.add_argument("--dtype", choices=("f32", "f16"), default="f32",
                         help="storage-rounded oracle, always F32 activations")
     args = parser.parse_args()
+    _, cfg, identity = load_oracle_assets(args.assets)
     assert (args.official / "PINNED_SHA").read_text().strip() == REVISION
     assert importlib.metadata.version("timm") == "1.0.30"
     sys.path.insert(0, str(args.official / "src"))
@@ -36,7 +40,6 @@ def main():
     from open_clip.audio.naflex_audio import AudioNaFlexCfg, AudioNaFlexPatchify
     from open_clip.tokenizer import TikTokenTokenizer
     torch.set_num_threads(2)
-    cfg = json.loads((args.official / "src/open_clip/model_configs/naflexclap_large.json").read_text())
     args.output.mkdir(parents=True, exist_ok=True)
     # Instantiate only one tower; assign=True replaces initialized parameters
     # with mmap-backed safetensors views rather than cloning the full checkpoint.
@@ -51,12 +54,12 @@ def main():
             state[name] = value.half().float() if args.dtype == "f16" and value.ndim == 2 else value
         tower.load_state_dict(state, strict=True, assign=True)
     tower.eval()
-    fixture = dict(source_revision=REVISION, hf_revision=HF_REVISION, sample_rate=32000,
+    fixture = dict(source_revision=REVISION, hf_revision=identity["revision"], hf_repo=identity["repo"], sample_rate=32000,
                    projection_dim=cfg["embed_dim"], context_length=cfg["text_cfg"]["context_length"],
                    tolerance=8e-5, text_cases=[], token_cases=[], waveform_cases=[])
     with torch.no_grad():
         if args.branch == "text":
-            tok = TikTokenTokenizer("r50k_base", context_length=256)
+            tok = TikTokenTokenizer("r50k_base", context_length=cfg["text_cfg"]["context_length"])
             for text in ("", "a dog barking", "We're I'M can't CAN'T", "café 中文 🙂", "a  b\t\nnext  ",
                          "<|endoftext|> <|bos|> <|pad|>"):
                 ids = tok(text)[0]

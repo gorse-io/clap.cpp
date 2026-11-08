@@ -188,7 +188,18 @@ if(BUILD_TESTING)
         add_test(NAME clap2_contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_invalid.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clap2-smoke")
-        set_tests_properties(clap2_contract PROPERTIES TIMEOUT 180)
+        set_tests_properties(clap2_contract PROPERTIES TIMEOUT 180 FIXTURES_SETUP clap2_smoke)
+        add_executable(clap2-rope-test tests/models/clap2-rope-test.cpp)
+        target_include_directories(clap2-rope-test PRIVATE src)
+        target_link_libraries(clap2-rope-test PRIVATE clap ggml::ggml nlohmann_json::nlohmann_json)
+        add_test(NAME clap2_rope
+            COMMAND clap2-rope-test "${CMAKE_CURRENT_BINARY_DIR}/clap2-smoke/model-f32.gguf")
+        set_tests_properties(clap2_rope PROPERTIES
+            FIXTURES_REQUIRED clap2_smoke TIMEOUT 60 ENVIRONMENT "OMP_NUM_THREADS=2")
+        add_test(NAME clap2_oracle_config
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_oracle_test.py")
+        add_test(NAME clap2_sizes
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_sizes.py")
         option(CLAP2_MODEL_PARITY "Run optional pinned open_clip CLAP2 numerical oracles" OFF)
         set(CLAP2_REFERENCE_SOURCE "" CACHE PATH "Pinned official open_clip source directory")
         set(CLAP2_REFERENCE_ASSETS "" CACHE PATH "Pinned CLAP2 config/tokenizer/checkpoint-header assets")
@@ -201,7 +212,15 @@ if(BUILD_TESTING)
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_parity.py"
                         "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clap2-fixture"
                         "${CLAP2_REFERENCE_SOURCE}" "${CLAP2_REFERENCE_ASSETS}")
-            set_tests_properties(clap2_model_parity PROPERTIES TIMEOUT 600)
+            set_tests_properties(clap2_model_parity PROPERTIES TIMEOUT 600 RESOURCE_LOCK clap2_oracles)
+            foreach(profile IN ITEMS xxs-head56 asymmetric-head64)
+                add_test(NAME clap2_model_parity_${profile}
+                    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_parity.py"
+                            "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clap2-fixture-${profile}"
+                            "${CLAP2_REFERENCE_SOURCE}" "${CLAP2_REFERENCE_ASSETS}" --profile "${profile}")
+                set_tests_properties(clap2_model_parity_${profile} PROPERTIES
+                    TIMEOUT 600 RESOURCE_LOCK clap2_oracles)
+            endforeach()
         endif()
         add_test(NAME clamp3_bundle_contract
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_bundle_contract.py" "$<TARGET_FILE:clap-cli>")

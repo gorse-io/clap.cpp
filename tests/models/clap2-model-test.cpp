@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
                         return clap_encode_audio(model.get(), wave.data(), wave.size(), fixture.at("sample_rate"), 0,
                                                  out, count);
                     }),
-                    test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
+                    test.at("expected").get<std::vector<float>>(), test.value("tolerance", tolerance), test.at("name"));
             float *out = nullptr;
             size_t count = 0;
             const auto status =

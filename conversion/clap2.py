@@ -15,8 +15,20 @@ import tempfile
 
 from .base import ModelBase, string
 
-SOURCE_REPO = 'laion/clap2-large-audioxl-s1B'
-SOURCE_REVISION = 'e836feaa79cd1f7de939fe77065819f48fc44e4c'
+# Published tower dimensions (width, FFN width, heads, depth), projection and
+# immutable HF revisions. In particular XXS uses 56-dimensional attention heads.
+PUBLISHED_MODELS = {
+    'large': ((1024, 2816, 16, 12), (960, 2560, 15, 11), 960,
+              'e836feaa79cd1f7de939fe77065819f48fc44e4c'),
+    'medium': ((640, 1728, 10, 12), (640, 1728, 10, 11), 640,
+               '3a8d9d79cb98e4d409fce24092a69718a821a7ad'),
+    'small': ((512, 1408, 8, 12), (512, 1408, 8, 11), 512,
+              '9891ee368dbec866dab1919f163b7e091ab0ed37'),
+    'xs': ((320, 896, 5, 12), (320, 896, 5, 12), 320,
+           'adc510748f0b759918ba4aaee94fc864e05c48d9'),
+    'xxs': ((224, 640, 4, 12), (224, 640, 4, 12), 224,
+            'adaca9be91f5045d06e10569de3075e1ef37f823'),
+}
 OPEN_CLIP_REVISION = 'f9a0948d573009f8fa3e530e55814cb11fb8e8bd'
 
 
@@ -194,8 +206,7 @@ def clap2_inputs(source, revision=None, tokenizer_path=None):
     source = Path(source)
     if not source.is_dir():
         raise ValueError('CLAP2 source must be a checkpoint directory')
-    revision = SOURCE_REVISION if revision is None else revision
-    if not isinstance(revision, str) or re.fullmatch(r'[0-9a-fA-F]{40}', revision) is None:
+    if revision is not None and (not isinstance(revision, str) or re.fullmatch(r'[0-9a-fA-F]{40}', revision) is None):
         raise ValueError('CLAP2 revision must be a full 40-character commit SHA')
     config = _read_json(source / 'config.json')
     processor = _read_json(source / 'processor_config.json')
@@ -205,12 +216,22 @@ def clap2_inputs(source, revision=None, tokenizer_path=None):
     checkpoint = source / 'model.safetensors'
     if not checkpoint.is_file():
         raise ValueError('CLAP2 source is missing HF model.safetensors (open_clip weights are not interchangeable)')
-    metadata = {'general.architecture': 'clap2', 'general.name': SOURCE_REPO,
-                'clap2.source_repo': SOURCE_REPO, 'clap2.source_revision': revision.lower(),
+    metadata = {'general.architecture': 'clap2', 'general.name': 'CLAP2',
                 'clap2.open_clip_revision': OPEN_CLIP_REVISION,
                 'clap2.config': json.dumps(config, separators=(',', ':')),
                 'clap2.processor_config': json.dumps(processor, separators=(',', ':')),
                 'clap2.tokenizer': json.dumps(tokenizer, separators=(',', ':'), ensure_ascii=False)}
+    fields = ('hidden_size', 'intermediate_size', 'num_attention_heads', 'num_hidden_layers')
+    signature = tuple(tuple(config[branch + '_config'][key] for key in fields)
+                      for branch in ('audio', 'text')) + (config['projection_dim'],)
+    for size, (*dimensions, pinned_revision) in PUBLISHED_MODELS.items():
+        if signature == tuple(dimensions):
+            repo = f'laion/clap2-{size}-audioxl-s1B'
+            metadata.update({'general.name': repo, 'clap2.source_repo': repo})
+            revision = pinned_revision if revision is None else revision
+            break
+    if revision is not None:
+        metadata['clap2.source_revision'] = revision.lower()
     return checkpoint, metadata, config
 
 
