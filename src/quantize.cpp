@@ -66,6 +66,8 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     clap::detail::ModelLoader loader;
     loader.load(source.string(), false);
     const auto architecture = loader.metadata("general.architecture");
+    if (architecture == "clap2")
+        throw std::runtime_error("CLAP: CLAP2 quantization presets are not supported; use converted F32/F16 weights");
     if (!(architecture == "clap" || architecture == "clamp3" || clap::detail::encoder_architecture(architecture)))
         throw std::runtime_error("CLAP: unsupported architecture");
     File input(gguf_init_from_file(source.string().c_str(), {true, nullptr}), gguf_free);

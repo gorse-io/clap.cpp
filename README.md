@@ -16,6 +16,7 @@ C++20/ggml implementations of audio embedding inference features:
 | Model | Text | Audio | Embedding dimensions | Sample rate |
 | --- | --- | --- | --- | --- |
 | [CLAP](https://huggingface.co/laion/larger_clap_music) | ✅ | ✅ | 512 | 48 kHz |
+| [CLAP2](https://huggingface.co/laion/clap2-large-audioxl-s1B) | ✅ | ✅ | 960 | 32 kHz |
 | [CLaMP3](https://github.com/sanderwood/clamp3) | ✅ | ✅ | 768 | 24 kHz |
 | [MERT v1 95M](https://huggingface.co/m-a-p/MERT-v1-95M) | ❌ | ✅ | 768 | 24 kHz |
 | [MERT v1 330M](https://huggingface.co/m-a-p/MERT-v1-330M) | ❌ | ✅ | 1,024 | 24 kHz |

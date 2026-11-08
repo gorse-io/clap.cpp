@@ -22,7 +22,8 @@ class Vocabulary {
 // and encoder execution. ICU owns Unicode pre-tokenization only.
 class ByteBpeVocabulary final : public Vocabulary {
   public:
-    ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length);
+    ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length,
+                      bool split_special_tokens = false);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
 
   private:

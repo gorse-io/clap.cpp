@@ -65,6 +65,8 @@ def get_model_architecture(source, clamp3_config=None, muq_revision=None, muq_mu
         return 'muq'
     if hparams.get('model_type') == 'mert2':
         return 'mert2'
+    if hparams.get('model_type') == 'clap2':
+        return 'clap2'
     if hparams.get('model_type') == 'mert_model':
         return 'mert'
     if muq_mulan_revision is not None or all(key in hparams for key in ('mulan', 'audio_model', 'text_model')):

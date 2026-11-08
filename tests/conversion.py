@@ -17,13 +17,13 @@ class ConversionImportsTest(unittest.TestCase):
         self.run_python('''
 import sys
 import convert_hf_to_gguf
-assert not any('conversion.' + name in sys.modules for name in ('clap', 'clamp3', 'mert', 'mert2', 'muq'))
+assert not any('conversion.' + name in sys.modules for name in ('clap', 'clap2', 'clamp3', 'mert', 'mert2', 'muq'))
 assert 'torch' not in sys.modules
 assert 'numpy' not in sys.modules
 ''')
 
     def test_loads_only_selected_converter(self):
-        for name in ('clap', 'clamp3', 'mert', 'mert2', 'muq'):
+        for name in ('clap', 'clap2', 'clamp3', 'mert', 'mert2', 'muq'):
             with self.subTest(model=name):
                 self.run_python(f'''
 import sys
@@ -33,7 +33,7 @@ from conversion import ModelBase
 assert issubclass(converter, ModelBase)
 assert converter.__module__ == 'conversion.' + {name!r}
 assert converter is get_model_class({name!r})
-for name in ('clap', 'clamp3', 'mert', 'mert2', 'muq'):
+for name in ('clap', 'clap2', 'clamp3', 'mert', 'mert2', 'muq'):
     assert ('conversion.' + name in sys.modules) == (name == {name!r})
 assert 'torch' not in sys.modules
 assert 'numpy' not in sys.modules

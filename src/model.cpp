@@ -11,6 +11,8 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
     const auto name = loader.metadata("general.architecture");
     if (name == "clap")
         architecture = std::make_unique<ClapModel>(loader, threads);
+    else if (name == "clap2")
+        architecture = std::make_unique<Clap2Model>(loader, threads);
     else if (name == "clamp3")
         architecture = std::make_unique<Clamp3Model>(loader, threads);
     else if (name == "mert2")
@@ -29,6 +31,8 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
         const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
         if (name == "clamp3" || name == "muq_mulan")
             vocabulary = std::make_unique<UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
+        else if (name == "clap2")
+            vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length, true);
         else
             vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
     }
