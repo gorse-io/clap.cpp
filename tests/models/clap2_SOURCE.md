@@ -66,7 +66,8 @@ little-endian IEEE F32; the runner handles host byte order.
 ## Default stdlib-only regression
 
 ```
-python tests/models/clap2_invalid.py "$BUILD" "$BUILD/clap2-smoke"
+python tests/models/model_tests.py --arch clap2 --suite invalid \
+    --build "$BUILD" --fixture "$BUILD/clap2-smoke"
 ```
 
 This generates complete analytical F32/F16 GGUFs, checks tokenizer/text/token/audio

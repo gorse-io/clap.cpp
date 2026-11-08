@@ -182,12 +182,21 @@ if(BUILD_TESTING)
     add_executable(feature-input-test tests/models/feature-input-test.cpp)
     target_link_libraries(feature-input-test PRIVATE clap nlohmann_json::nlohmann_json)
     target_include_directories(feature-input-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    # One architecture-parameterized runner, registered per fixture like the
+    # common llama.cpp tokenizer tests. Keep native numerical oracles separate.
+    add_test(NAME model_contract_framework
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/model_contract_test.py")
+    set_tests_properties(model_contract_framework PROPERTIES TIMEOUT 30)
+    function(clap_add_model_contract name architecture suite)
+        add_test(NAME ${name}
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/model_tests.py"
+                    --arch ${architecture} --suite ${suite} --cli "$<TARGET_FILE:clap-cli>" ${ARGN})
+    endfunction()
     if(CLAP_BUILD_CLI)
         add_executable(clap2-model-test tests/models/clap2-model-test.cpp)
         target_link_libraries(clap2-model-test PRIVATE clap nlohmann_json::nlohmann_json)
-        add_test(NAME clap2_contract
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clap2_invalid.py"
-                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/clap2-smoke")
+        clap_add_model_contract(clap2_contract clap2 invalid
+            --build "${CMAKE_CURRENT_BINARY_DIR}" --fixture "${CMAKE_CURRENT_BINARY_DIR}/clap2-smoke")
         set_tests_properties(clap2_contract PROPERTIES TIMEOUT 180 FIXTURES_SETUP clap2_smoke)
         add_executable(clap2-rope-test tests/models/clap2-rope-test.cpp)
         target_include_directories(clap2-rope-test PRIVATE src)
@@ -279,9 +288,8 @@ if(BUILD_TESTING)
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/parity.py"
                         "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
             set_tests_properties(clap_model_parity PROPERTIES TIMEOUT 600)
-            add_test(NAME clap_model_cli
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/cli.py"
-                        "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
+            clap_add_model_contract(clap_model_cli clap cli
+                --fixture "${CMAKE_CURRENT_BINARY_DIR}/model-fixture")
             set_tests_properties(clap_model_cli PROPERTIES DEPENDS clap_model_parity TIMEOUT 60)
         endif()
         option(CLAMP3_MODEL_PARITY "Run optional CLaMP3 Transformers oracle tests (torch/transformers/numpy/tokenizers required)" OFF)
@@ -310,19 +318,15 @@ if(BUILD_TESTING)
                         "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/model-f16.gguf"
                         "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture/fixture-f16.json")
             set_tests_properties(clamp3_model_native_f16 PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
-            add_test(NAME clamp3_model_cli
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_cli.py"
-                        "$<TARGET_FILE:clap-cli>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+            clap_add_model_contract(clamp3_model_cli clamp3 cli
+                --fixture "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
             set_tests_properties(clamp3_model_cli PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
-            add_test(NAME clamp3_invalid_metadata
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/clamp3_invalid.py"
-                        "$<TARGET_FILE:clap-cli>" "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
+            clap_add_model_contract(clamp3_invalid_metadata clamp3 invalid
+                --fixture "${CMAKE_CURRENT_BINARY_DIR}/clamp3-fixture")
             set_tests_properties(clamp3_invalid_metadata PROPERTIES DEPENDS clamp3_model_parity TIMEOUT 120)
         endif()
         option(MERT2_MODEL_PARITY "Run optional official MERT-v2-FullSong oracle tests (torch/torchaudio/transformers/safetensors required)" OFF)
-        add_test(NAME mert_invalid_metadata
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert_invalid.py"
-                    "$<TARGET_FILE:clap-cli>")
+        clap_add_model_contract(mert_invalid_metadata mert invalid)
         set_tests_properties(mert_invalid_metadata PROPERTIES TIMEOUT 30)
         option(MERT_MODEL_PARITY "Run optional reviewed official MERT-v1 numerical oracles" OFF)
         set(MERT_REFERENCE_SOURCE "" CACHE PATH "Reviewed pinned MERT-v1 source (modeling_MERT.py/configuration_MERT.py)")
@@ -371,9 +375,8 @@ if(BUILD_TESTING)
                         "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture"
                         "${MERT2_REFERENCE_SOURCE}")
             set_tests_properties(mert2_model_parity PROPERTIES TIMEOUT 600)
-            add_test(NAME mert2_model_cli
-                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/mert2_cli.py"
-                        "$<TARGET_FILE:clap-cli>" "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture")
+            clap_add_model_contract(mert2_model_cli mert2 cli
+                --fixture "${CMAKE_CURRENT_BINARY_DIR}/mert2-fixture")
             set_tests_properties(mert2_model_cli PROPERTIES DEPENDS mert2_model_parity TIMEOUT 180)
         endif()
         add_test(NAME muq_conversion_contract
