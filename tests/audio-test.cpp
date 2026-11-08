@@ -1,8 +1,11 @@
 #include "audio.h"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <gtest/gtest.h>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -139,3 +142,85 @@ TEST(Resample, RejectsInvalidInputs) {
     ASSERT_THROW(clap::resample_audio({{0}, 1}, std::numeric_limits<int>::max()), std::exception);
 }
 } // namespace
+
+namespace {
+std::filesystem::path fixture_dir;
+
+TEST(AudioDecode, PreservesWaveformsAndMatchesMemoryDecoding) {
+    for (const auto &name : {"mono.wav", "mono.flac", "mono.mp3", "stereo.wav", "stereo.flac", "stereo.mp3",
+                             "unknown-length.flac", "pcm24.wav", "float.wav"}) {
+        SCOPED_TRACE(name);
+        const auto audio = clap::decode_audio((fixture_dir / name).string());
+        std::ifstream file(fixture_dir / name, std::ios::binary);
+        const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
+        const auto memory = clap::decode_audio(bytes.data(), bytes.size());
+        ASSERT_EQ(audio.sample_rate, memory.sample_rate);
+        ASSERT_EQ(audio.samples, memory.samples);
+        ASSERT_EQ(48000, audio.sample_rate);
+        ASSERT_EQ(4800u, audio.samples.size());
+        const bool stereo = std::string(name).find("stereo") == 0;
+        double error = 0;
+        for (size_t i = 0; i < audio.samples.size(); ++i) {
+            ASSERT_TRUE(std::isfinite(audio.samples[i])) << "sample " << i;
+            const double left = 12000.0 / 32768 * std::sin(2 * 3.141592653589793 * 440 * i / 48000);
+            const double right = 12000.0 / 32768 * std::sin(2 * 3.141592653589793 * 880 * i / 48000);
+            const double expected = stereo ? (left + right) / 2 : left;
+            error += std::pow(audio.samples[i] - expected, 2);
+        }
+        const double rmse = std::sqrt(error / audio.samples.size());
+        const double tolerance = std::string(name).find(".mp3") != std::string::npos ? 0.02 : 0.00002;
+        ASSERT_LT(rmse, tolerance);
+        std::cout << name << " RMSE=" << rmse << '\n';
+    }
+}
+
+TEST(AudioDecode, PreservesSampleRate) {
+    const auto other_rate = clap::decode_audio((fixture_dir / "44100.flac").string());
+    ASSERT_EQ(44100, other_rate.sample_rate);
+    ASSERT_EQ(4410u, other_rate.samples.size());
+}
+
+TEST(AudioDecode, DetectsFormatFromContents) {
+    const auto decoded = clap::decode_audio((fixture_dir / "audio.dat").string());
+    ASSERT_EQ(4800u, decoded.samples.size());
+}
+
+TEST(AudioDecode, MixesSurroundChannelsWithEqualWeights) {
+    const auto surround = clap::decode_audio((fixture_dir / "surround.wav").string());
+    ASSERT_EQ(4800u, surround.samples.size());
+    for (float value : surround.samples)
+        ASSERT_LT(std::abs(value - 10500.0f / 32768), 1e-6f);
+}
+
+TEST(AudioDecode, RejectsInvalidFilesAndMemoryBuffers) {
+    for (const auto &path :
+         {fixture_dir / "truncated.wav", fixture_dir / "truncated.flac", fixture_dir / "nonfinite.wav",
+          fixture_dir / "missing.wav", fixture_dir / "invalid.bin", fixture_dir / "empty.wav"}) {
+        SCOPED_TRACE(path.string());
+        ASSERT_THROW(clap::decode_audio(path.string()), std::exception);
+        if (std::filesystem::exists(path)) {
+            std::ifstream file(path, std::ios::binary);
+            const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), {});
+            ASSERT_THROW(clap::decode_audio(bytes.data(), bytes.size()), std::exception);
+        }
+    }
+}
+
+TEST(AudioDecode, RejectsNullBuffers) {
+    for (size_t size : {size_t{0}, size_t{4}}) {
+        SCOPED_TRACE(size);
+        ASSERT_THROW(clap::decode_audio(nullptr, size), std::exception);
+    }
+}
+} // namespace
+
+int main(int argc, char **argv) {
+    testing::InitGoogleTest(&argc, argv);
+    if (argc != 2 && !GTEST_FLAG_GET(list_tests)) {
+        std::cerr << "usage: clap-audio-test FIXTURE_DIR\n";
+        return 1;
+    }
+    if (argc == 2)
+        fixture_dir = argv[1];
+    return RUN_ALL_TESTS();
+}

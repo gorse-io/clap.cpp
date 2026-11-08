@@ -108,11 +108,8 @@ if(BUILD_TESTING)
         COMMENT "Generating audio test fixtures"
         VERBATIM)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
-    add_executable(clap-resample-test tests/audio-test.cpp)
-    target_link_libraries(clap-resample-test PRIVATE clap GTest::gtest_main)
-    add_test(NAME clap_resample COMMAND clap-resample-test)
-    add_executable(clap-audio-test tests/audio-decode-test.cpp)
-    target_link_libraries(clap-audio-test PRIVATE clap)
+    add_executable(clap-audio-test tests/audio-test.cpp)
+    target_link_libraries(clap-audio-test PRIVATE clap GTest::gtest)
     add_dependencies(clap-audio-test clap-audio-fixtures)
     add_test(NAME clap_audio COMMAND clap-audio-test "${CLAP_AUDIO_FIXTURE_DIR}")
     add_executable(clap-audio-path-test tests/audio-path-test.cpp)
@@ -382,7 +379,7 @@ if(BUILD_TESTING)
         set_tests_properties(clap_embedding_cli PROPERTIES TIMEOUT 30)
     endif()
     # Audio preprocessing helpers are private to the core and its tests.
-    foreach(target IN ITEMS clap-resample-test clap-audio-test clap-audio-path-test
+    foreach(target IN ITEMS clap-audio-test clap-audio-path-test
             mert2-fft-test mert-model-test clamp3-bundled-test muq-model-test muq-mulan-model-test)
         if(TARGET ${target})
             target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
