@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
                 require(rejected, "comparison must reject nonfinite native AND reference components");
             }
         }
-        require(argc == 3, "usage: muq-mulan-model-test MODEL FIXTURE");
+        require(argc == 3, "usage: test-muq-mulan-model MODEL FIXTURE");
         nlohmann::json f;
         std::ifstream input(argv[2]);
         input >> f;

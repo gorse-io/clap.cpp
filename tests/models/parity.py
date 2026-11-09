@@ -65,7 +65,7 @@ fixture = dict(text_cases=cases, features=features.reshape(-1).tolist(), frames=
                expected_audio=expected_audio, waveform=wave.tolist(), mel=mel.reshape(-1).tolist())
 (out / 'fixture.json').write_text(json.dumps(fixture))
 subprocess.run([sys.executable, str(ROOT / 'convert_hf_to_gguf.py'), str(out), str(out / 'model.gguf')], check=True)
-subprocess.run([str(build / 'clap-model-test'), str(out / 'model.gguf'), str(out / 'fixture.json')], check=True)
+subprocess.run([str(build / 'test-model'), str(out / 'model.gguf'), str(out / 'fixture.json')], check=True)
 # F16 storage parity against the same parameters rounded exactly as conversion.
 with torch.no_grad():
     for parameter in m.parameters():
@@ -82,7 +82,7 @@ with torch.no_grad():
     rounded['expected_audio'] = torch.nn.functional.normalize(m.audio_projection(pooled), dim=-1)[0].tolist()
 (out / 'fixture-f16.json').write_text(json.dumps(rounded))
 subprocess.run([sys.executable, str(ROOT / 'convert_hf_to_gguf.py'), str(out), str(out / 'model-f16.gguf'), '--dtype', 'f16'], check=True)
-subprocess.run([str(build / 'clap-model-test'), str(out / 'model-f16.gguf'), str(out / 'fixture-f16.json')], check=True)
+subprocess.run([str(build / 'test-model'), str(out / 'model-f16.gguf'), str(out / 'fixture-f16.json')], check=True)
 # Q8 native inference against exact stored weights, not an unquantized oracle.
 from q8_reference import load_storage
 sys.path.insert(0, str(ROOT))
@@ -93,7 +93,7 @@ for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
     if target.exists(): target.unlink()
     subprocess.run([str(build / 'clap'), 'quantize', '--type',
                     'Q4_K_M' if 'q4' in suffix else 'Q8_0', str(out / source), str(target)], check=True)
-    count = load_storage(m, target, clap_tensor_name, build / 'clap-q8-test' if 'q4' in suffix else None)
+    count = load_storage(m, target, clap_tensor_name, build / 'test-q8' if 'q4' in suffix else None)
     quantized_fixture = json.loads(json.dumps(fixture))
     # Block packing is discontinuous: small interpolation/normalization rounding
     # differences can move audio activations across Q8 bins. Allow 1% absolute
@@ -109,7 +109,7 @@ for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
         quantized_fixture['expected_audio'] = torch.nn.functional.normalize(m.audio_projection(pooled), dim=-1)[0].tolist()
     fixture_path = out / f'fixture-{suffix}.json'
     fixture_path.write_text(json.dumps(quantized_fixture))
-    subprocess.run([str(build / 'clap-model-test'), str(target), str(fixture_path)], check=True)
+    subprocess.run([str(build / 'test-model'), str(target), str(fixture_path)], check=True)
     print(f'CLAP {suffix}: {count} quantized parameters, text/audio storage-rounded parity passed')
 # Converter must reject unsupported variants rather than silently misinterpret them.
 c.audio_config.enable_fusion = True

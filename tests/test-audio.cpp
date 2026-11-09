@@ -219,7 +219,7 @@ TEST(AudioDecode, RejectsNullBuffers) {
 int main(int argc, char **argv) {
     testing::InitGoogleTest(&argc, argv);
     if (argc != 2 && !GTEST_FLAG_GET(list_tests)) {
-        std::cerr << "usage: clap-audio-test FIXTURE_DIR\n";
+        std::cerr << "usage: test-audio FIXTURE_DIR\n";
         return 1;
     }
     if (argc == 2)

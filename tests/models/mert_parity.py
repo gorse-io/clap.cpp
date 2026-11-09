@@ -109,7 +109,7 @@ def run(args):
         subprocess.run([sys.executable, str(root/'convert_hf_to_gguf.py'),str(source),str(target),
                         '--dtype', dtype,'--mert-revision', revision], check=True)
         check_metadata(target, source, revision)
-        subprocess.run([str(args.build/'mert-model-test'), str(target), str(args.out)], check=True)
+        subprocess.run([str(args.build/'test-mert-model'), str(target), str(args.out)], check=True)
         cases['resampled'] = np.frombuffer((args.out/'resampled-control.wav').read_bytes()[44:], dtype='<f4').copy()
         # Compare identical storage-rounded weights, not a half-activation oracle.
         if dtype == 'f16':
@@ -150,7 +150,7 @@ def run(args):
                     print(f'{dtype}/48kHz private helper -> 24kHz MERT matches native-rate control', flush=True)
     for n in [0,399,23999]:
         path=args.out/f'short-{n}.wav';wav(path,np.zeros(n,dtype='float32'))
-        result=subprocess.run([str(args.build/'feature-extract-test'), str(target), str(path)],
+        result=subprocess.run([str(args.build/'test-feature-extract'), str(target), str(path)],
                               capture_output=True,text=True)
         assert result.returncode != 0, (n,result.stdout)
     print('MERT-v1 numerical parity passed',flush=True)

@@ -7,7 +7,7 @@
 int main(int argc, char **argv) {
     try {
         if (argc != 3)
-            throw std::runtime_error("usage: clap-unigram-test TOKENIZER.json CASES.json");
+            throw std::runtime_error("usage: test-unigram TOKENIZER.json CASES.json");
         nlohmann::json tokenizer, cases;
         std::ifstream input(argv[1]);
         input >> tokenizer;

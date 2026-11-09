@@ -95,7 +95,7 @@ gguf = args.gguf or args.output / "mert-v2-fullsong-f32.gguf"
 if args.gguf is None:
     subprocess.run([sys.executable, str(converter), str(args.checkpoint), str(gguf),
                     "--mert2-revision", revision], check=True)
-subprocess.run([str(args.build / "mert2-model-test"), str(gguf), str(fixture_path)], check=True)
+subprocess.run([str(args.build / "test-mert2-model"), str(gguf), str(fixture_path)], check=True)
 
 # Exercise the public CLI once with the actual checkpoint.
 raw_wave = struct.pack("<" + "f" * len(waveform), *waveform.tolist())

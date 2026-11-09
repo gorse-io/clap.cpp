@@ -29,7 +29,7 @@ Published HF assets/checkpoints are the five `laion/clap2-*-audioxl-s1B` release
 published tensor-schema digests for offline regressions.
 Native inference derives tensor dimensions, layer counts and RoPE bands from
 configuration; XXS has 14 axial frequency bands per axis, not a rounded 64-wide
-head. `clap2-rope-test` checks every published tower geometry against an independent
+head. `test-clap2-rope` checks every published tower geometry against an independent
 scalar oracle on an asymmetric frequency/time grid. Production conversion keeps
 the HF tensor names unchanged.
 
@@ -51,12 +51,12 @@ to their corresponding HF tensors.
 
 ## Native runner
 
-Build `clap2-model-test` from `tests/models/clap2-model-test.cpp`, linked with
+Build `test-clap2-model` from `tests/models/test-clap2-model.cpp`, linked with
 `clap` and `nlohmann_json::nlohmann_json`. It uses the public C API and existing
 `tests/c-api-helpers.h`; no private include directories are needed.
 
 ```
-"$BUILD/clap2-model-test" MODEL.gguf FIXTURE.json
+"$BUILD/test-clap2-model" MODEL.gguf FIXTURE.json
 ```
 
 It forces CPU, two threads and F32 activation compute. F16 below means rounded
@@ -80,8 +80,8 @@ conversion is covered by the optional numerical oracle below.
 
 ```
 python tests/models/clap2_fixture.py "$BUILD/clap2-smoke"
-"$BUILD/clap2-model-test" "$BUILD/clap2-smoke/model-f32.gguf" "$BUILD/clap2-smoke/fixture.json"
-"$BUILD/clap2-model-test" "$BUILD/clap2-smoke/model-f16.gguf" "$BUILD/clap2-smoke/fixture.json"
+"$BUILD/test-clap2-model" "$BUILD/clap2-smoke/model-f32.gguf" "$BUILD/clap2-smoke/fixture.json"
+"$BUILD/test-clap2-model" "$BUILD/clap2-smoke/model-f16.gguf" "$BUILD/clap2-smoke/fixture.json"
 ```
 
 The degenerate analytical model has constant unit outputs. It establishes valid
@@ -161,8 +161,8 @@ Tiny random-weight parity is not published-checkpoint parity.
 ```
 "$PYTHON" tests/models/clap2_checkpoint_parity.py text "$CHECKPOINT_DIR" "$OUTPUT" "$OFFICIAL_OPEN_CLIP" "$HF_ASSETS" --dtype f32
 "$PYTHON" tests/models/clap2_checkpoint_parity.py audio "$CHECKPOINT_DIR" "$OUTPUT" "$OFFICIAL_OPEN_CLIP" "$HF_ASSETS" --dtype f32
-"$BUILD/clap2-model-test" MODEL-F32.gguf "$OUTPUT/fixture-text-f32.json"
-"$BUILD/clap2-model-test" MODEL-F32.gguf "$OUTPUT/fixture-audio-f32.json"
+"$BUILD/test-clap2-model" MODEL-F32.gguf "$OUTPUT/fixture-text-f32.json"
+"$BUILD/test-clap2-model" MODEL-F32.gguf "$OUTPUT/fixture-audio-f32.json"
 ```
 
 `CHECKPOINT_DIR/model.safetensors` must already exist. Use `--dtype f16` with an

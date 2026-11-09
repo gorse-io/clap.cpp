@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
         require(rejected, "missing GGUF must be rejected");
         if (argc == 1)
             return 0;
-        require(argc == 3, "usage: clap-model-test [MODEL.gguf FIXTURE.json]");
+        require(argc == 3, "usage: test-model [MODEL.gguf FIXTURE.json]");
         std::ifstream input(argv[2]);
         nlohmann::json fixture;
         input >> fixture;

@@ -6,7 +6,7 @@
 int main(int argc, char **argv) {
     try {
         if (argc != 3)
-            throw std::runtime_error("usage: feature-extract-test MERT.gguf AUDIO");
+            throw std::runtime_error("usage: test-feature-extract MERT.gguf AUDIO");
         const auto audio = clap::decode_audio(argv[2]);
         const auto features = clap::detail::FeatureTestAccess::extract(argv[1], audio.samples, audio.sample_rate);
         std::cout << nlohmann::json(

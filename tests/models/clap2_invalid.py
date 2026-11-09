@@ -33,7 +33,7 @@ def main():
         assert json.loads(metadata[field]) == json.loads(converted_metadata[field])
 
     for dtype in ("f32", "f16"):
-        subprocess.run([str(build / "clap2-model-test"), str(output / f"model-{dtype}.gguf"),
+        subprocess.run([str(build / "test-clap2-model"), str(output / f"model-{dtype}.gguf"),
                         str(output / "fixture.json")], check=True)
 
     invalid = []
@@ -76,7 +76,7 @@ def main():
                                        "clap2.tokenizer": json.dumps(t)})
         path = output / f"invalid-{index}.gguf"
         write_gguf(path, bad_metadata, tensors)
-        result = subprocess.run([str(build / "clap2-model-test"), str(path), str(output / "fixture.json")],
+        result = subprocess.run([str(build / "test-clap2-model"), str(path), str(output / "fixture.json")],
                                 text=True, capture_output=True)
         if result.returncode == 0:
             failures.append(f"native accepted {label}")
@@ -92,7 +92,7 @@ def main():
             bad_tensors[target] = ((23, 8), [0.0] * (23 * 8))
         path = output / f"invalid-tensor-{label}.gguf"
         write_gguf(path, metadata, bad_tensors)
-        result = subprocess.run([str(build / "clap2-model-test"), str(path), str(output / "fixture.json")],
+        result = subprocess.run([str(build / "test-clap2-model"), str(path), str(output / "fixture.json")],
                                 text=True, capture_output=True)
         assert result.returncode != 0 and ("tensor" in result.stderr.lower() or "qkv_proj" in result.stderr), result.stderr
         print(f"Rejected {label} tensor: {result.stderr.strip()}")

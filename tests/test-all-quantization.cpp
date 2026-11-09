@@ -88,7 +88,7 @@ static void fixture(const std::string &path, const std::string &arch, ggml_type 
 }
 int main(int argc, char **argv) {
     try {
-        require(argc == 2, "usage: all-quantization-test DIRECTORY");
+        require(argc == 2, "usage: test-all-quantization DIRECTORY");
         std::filesystem::create_directories(argv[1]);
         for (const std::string arch : {"mert", "mert2", "muq", "muq_mulan"})
             for (auto type : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16}) {

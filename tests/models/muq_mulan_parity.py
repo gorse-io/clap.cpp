@@ -97,7 +97,7 @@ for dtype in ('f32','f16'):
         '--muq-mulan-revision','2e01c796b71dca71b45251384c04cd7b237c9020',
         '--muq-config',str(out/'muq-config.json'),'--text-config',str(out/'text-config.json')]
     subprocess.run(command,check=True)
-    subprocess.run([str(build/'muq-mulan-model-test'),str(target),str(path)],check=True)
+    subprocess.run([str(build/'test-muq-mulan-model'),str(target),str(path)],check=True)
     # Native CLI must return joint vectors and reject every unsupported input mode.
     x=waves[-1][1]; data=x.numpy().astype('<f4').tobytes(); wav=out/'input.wav'
     wav.write_bytes(b'RIFF'+struct.pack('<I',36+len(data))+b'WAVEfmt '+struct.pack('<IHHIIHH',16,3,1,24000,96000,4,32)+b'data'+struct.pack('<I',len(data))+data)
