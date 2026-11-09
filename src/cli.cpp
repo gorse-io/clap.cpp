@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "bench.h"
 #include "clap.h"
 #include "embedding.h"
 #include "quantize.h"
@@ -28,6 +29,40 @@
 int main(int argc, char **argv) {
     CLI::App app{"clap.cpp"};
     argv = app.ensure_utf8(argv);
+    BenchOptions bench_options;
+    // Only bench's literal separator belongs to Google Benchmark. Leave other
+    // subcommands' parsing (and errors) unchanged, including their -- separator.
+    if (argc > 1 && std::string(argv[1]) == "bench") {
+        for (int i = 2; i < argc; ++i) {
+            if (std::string(argv[i]) == "--") {
+                for (int j = i + 1; j < argc; ++j)
+                    bench_options.benchmark_args.emplace_back(argv[j]);
+                argc = i;
+                break;
+            }
+        }
+    }
+    auto *bench = app.add_subcommand("bench", "Benchmark native embedding latency");
+    bench->footer("Pass native Google Benchmark flags after -- (for example --benchmark_format=json). "
+                  "Defaults: --benchmark_min_time=1s --benchmark_repetitions=3.");
+    bench->add_option("-m,--model", bench_options.model_path, "Converted model GGUF")
+        ->required()
+        ->check(CLI::ExistingFile);
+    bench->add_option("-t,--threads", bench_options.threads, "ggml CPU threads (0: hardware concurrency)")
+        ->check(CLI::NonNegativeNumber)
+        ->capture_default_str();
+    bench->add_option("--device", bench_options.device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
+    auto *bench_input = bench->add_option_group("Input", "Choose one text or audio file");
+    bench_input->require_option(1, 1);
+    bench_input->add_option("--text", bench_options.text, "One UTF-8 text");
+    auto *bench_audio =
+        bench_input->add_option("-a,--audio", bench_options.audio_path, "WAV, MP3 or FLAC")->check(CLI::ExistingFile);
+    auto *bench_crop = bench
+                           ->add_option("--crop-offset", bench_options.crop_offset,
+                                        "Sample offset at 48 kHz into CLAP audio longer than ten seconds")
+                           ->check(CLI::NonNegativeNumber);
+    bench->add_flag("--frames", bench_options.frames,
+                    "Benchmark final-layer waveform-encoder frames instead of pooling");
     std::string host = "127.0.0.1";
     int port = 8080;
     std::string server_model;
@@ -83,6 +118,14 @@ int main(int argc, char **argv) {
     }
 
     try {
+        if (*bench) {
+            bench_options.crop_requested = bench_crop->count() != 0;
+            if (bench_options.crop_requested && !*bench_audio)
+                throw std::runtime_error("--crop-offset requires --audio");
+            if (bench_options.frames && (!*bench_audio || bench_options.crop_requested))
+                throw std::runtime_error("--frames requires --audio and excludes --crop-offset");
+            return cmd_bench(bench_options);
+        }
         if (*devices) {
             clap_device *list = nullptr;
             std::size_t count = 0;

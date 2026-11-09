@@ -38,6 +38,19 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio/miniaudio.h")
 endif()
 
 
+# Benchmark is a CLI-only static PIC dependency, even in shared core builds.
+# Function scope leaves the caller's dependency/test/install settings untouched.
+function(clap_add_benchmark)
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(BENCHMARK_ENABLE_TESTING OFF)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF)
+    set(BENCHMARK_ENABLE_INSTALL OFF)
+    set(BENCHMARK_INSTALL_DOCS OFF)
+    set(BENCHMARK_ENABLE_WERROR OFF)
+    add_subdirectory(thirdparty/benchmark EXCLUDE_FROM_ALL)
+endfunction()
+
 # Scope BUILD_SHARED_LIBS to dependency creation: the core still honors the
 # caller's setting, without forcing cache values or duplicating its build graph.
 function(clap_add_dependencies)
@@ -59,11 +72,16 @@ include(cmake/static-development.cmake)
 clap_static_development()
 
 if(CLAP_BUILD_CLI)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/benchmark/CMakeLists.txt")
+        message(FATAL_ERROR "Google Benchmark submodule is missing. Run: git submodule update --init --recursive")
+    endif()
+    # Keep CLI-only archives out of the core's static development SDK collector.
+    clap_add_benchmark()
     # The CLI target differs from the core library target, while its executable
     # keeps the existing "clap" name and command-line behavior.
-    add_executable(clap-cli src/cli.cpp src/embedding.cpp src/server.cpp src/quantize.cpp)
+    add_executable(clap-cli src/cli.cpp src/embedding.cpp src/bench.cpp src/server.cpp src/quantize.cpp)
     target_compile_features(clap-cli PRIVATE cxx_std_20)
-    target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json)
+    target_link_libraries(clap-cli PRIVATE clap CLI11::CLI11 httplib::httplib nlohmann_json::nlohmann_json benchmark::benchmark)
     set_target_properties(clap-cli PROPERTIES OUTPUT_NAME clap CXX_EXTENSIONS OFF)
 
     if(MSVC)
@@ -423,6 +441,13 @@ if(BUILD_TESTING)
                     "${MERT_REFERENCE_SOURCE}" "${MERT2_REFERENCE_SOURCE}" "${MUQ_REFERENCE_SOURCE}" "${MUQ_MULAN_REFERENCE_SOURCE}")
             set_tests_properties(test-encoder-quantized-parity PROPERTIES TIMEOUT 600)
         endif()
+        add_test(NAME test-clap-bench-packaging
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bench_build.py"
+                    "${CMAKE_COMMAND}" "${CMAKE_CURRENT_BINARY_DIR}" "$<CONFIG>")
+        set_tests_properties(test-clap-bench-packaging PROPERTIES TIMEOUT 90)
+        add_test(NAME test-clap-bench-cli
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bench_cli.py" "$<TARGET_FILE:clap-cli>")
+        set_tests_properties(test-clap-bench-cli PROPERTIES TIMEOUT 180)
         add_test(NAME test-clap-embedding-cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
         set_tests_properties(test-clap-embedding-cli PROPERTIES TIMEOUT 30)
@@ -448,6 +473,8 @@ endforeach()
 
 if(CLAP_BUILD_CLI)
     install(TARGETS clap-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/benchmark/LICENSE"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/licenses RENAME benchmark.txt)
 endif()
 
 # The runtime component is also usable by standalone C-library consumers.

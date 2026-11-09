@@ -175,3 +175,61 @@ def write_model(path, *, broken_projection=False, waveform=False) -> dict:
 
     return dict(model=path.name, dimensions=5,
                 cases=[reference(prompt) for prompt in ("hello", "world", "hello world!", "caf\u00e9", "a", "b")])
+
+
+def write_mert_model(path):
+    """Small valid waveform/frame encoder, without optional ML packages."""
+    config = dict(model_type="mert_model", sample_rate=24000,
+                  feat_extract_norm="group", feat_proj_layer_norm=True,
+                  hidden_act="gelu", feat_extract_activation="gelu", hidden_size=8,
+                  intermediate_size=16, num_hidden_layers=1, num_attention_heads=2,
+                  num_conv_pos_embeddings=4, num_conv_pos_embedding_groups=2,
+                  conv_dim=[4, 4], conv_kernel=[10, 3], conv_stride=[5, 2],
+                  layer_norm_eps=1e-5, conv_bias=False)
+    tensors = {}
+
+    def add(name, shape, norm=False):
+        serial = len(tensors) + 1
+        values = [1.0 if norm else 0.1 * math.sin((i + 17 * serial) * 0.173)
+                  for i in range(math.prod(shape))]
+        tensors[name] = (shape, struct.pack("<" + "f" * len(values), *values))
+
+    def norm(name, dim):
+        add(name + ".weight", [dim], True)
+        add(name + ".bias", [dim])
+
+    def linear(name, inputs, outputs):
+        add(name + ".weight", [inputs, outputs])
+        add(name + ".bias", [outputs])
+
+    add("frontend.0.conv.weight", [10, 1, 4])
+    norm("frontend.0.layer_norm", 4)
+    add("frontend.1.conv.weight", [3, 4, 4])
+    norm("projection.layer_norm", 4)
+    linear("projection.projection", 4, 8)
+    add("position.weight", [4, 4, 8])
+    add("position.bias", [8])
+    norm("encoder.layer_norm", 8)
+    for part in ("q_proj", "k_proj", "v_proj", "out_proj"):
+        linear("layers.0.attention." + part, 8, 8)
+    norm("layers.0.layer_norm", 8)
+    norm("layers.0.final_layer_norm", 8)
+    linear("layers.0.ffn.in", 8, 16)
+    linear("layers.0.ffn.out", 16, 8)
+
+    def string(value):
+        raw = value.encode("utf-8")
+        return struct.pack("<Q", len(raw)) + raw
+
+    metadata = {"general.architecture": "mert", "mert.config": json.dumps(config)}
+    header = b"GGUF" + struct.pack("<IQQ", 3, len(tensors), len(metadata))
+    for name, value in metadata.items():
+        header += string(name) + struct.pack("<I", 8) + string(value)
+    data = bytearray()
+    for name, (shape, raw) in tensors.items():
+        header += (string(name) + struct.pack("<I", len(shape))
+                   + struct.pack("<" + "Q" * len(shape), *shape)
+                   + struct.pack("<IQ", 0, len(data)))
+        data.extend(raw)
+        data.extend(b"\0" * (-len(data) % 32))
+    Path(path).write_bytes(header + b"\0" * (-len(header) % 32) + data)
