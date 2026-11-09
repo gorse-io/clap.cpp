@@ -70,7 +70,7 @@ static void rotary(const Clap2Model &model, const GraphRuntime &runtime, const c
 int main(int argc, char **argv) {
     try {
         if (argc != 2)
-            throw std::runtime_error("usage: clap2-rope-test TINY-CLAP2.gguf");
+            throw std::runtime_error("usage: test-clap2-rope TINY-CLAP2.gguf");
         clap::RuntimeOptions options;
         options.device = "cpu";
         ModelLoader loader(options);

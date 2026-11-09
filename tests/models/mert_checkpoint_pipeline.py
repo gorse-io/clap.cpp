@@ -44,7 +44,7 @@ def run(args):
     audio.embeddings.register_buffer('token_type_ids', torch.zeros(1,128,dtype=torch.long), persistent=False)
     audio.eval()
     cli = str(args.build/'clap')
-    subprocess.run([str(args.build/'mert-model-test'), str(args.mert_gguf), str(args.output)], check=True)
+    subprocess.run([str(args.build/'test-mert-model'), str(args.mert_gguf), str(args.output)], check=True)
     rng = np.random.default_rng(719)
     cases = {'broadband': rng.normal(.1,.12,24000).astype('float32'),
              # Unequal chunk statistics expose per-window rather than recording normalization.

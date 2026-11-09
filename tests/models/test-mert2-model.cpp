@@ -33,7 +33,7 @@ static void compare(const std::vector<float> &actual, const std::vector<float> &
 
 int main(int argc, char **argv) {
     try {
-        require(argc == 3, "usage: mert2-model-test MODEL.gguf FIXTURE.json");
+        require(argc == 3, "usage: test-mert2-model MODEL.gguf FIXTURE.json");
         std::ifstream input(argv[2]);
         nlohmann::json fixture;
         input >> fixture;

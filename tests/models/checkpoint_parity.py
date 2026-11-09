@@ -63,7 +63,7 @@ gc.collect()
 root = Path(__file__).resolve().parents[2]
 gguf = out / 'larger-clap-music-f32.gguf'
 subprocess.run([sys.executable, str(root / 'convert_hf_to_gguf.py'), str(source), str(gguf)], check=True)
-subprocess.run([str(build / 'clap-model-test'), str(gguf), str(fixture_path)], check=True)
+subprocess.run([str(build / 'test-model'), str(gguf), str(fixture_path)], check=True)
 # Exercise the public native executable, including its float32 WAV decoder.
 raw = waveform.astype('<f4').tobytes()
 wav = out / 'oracle.wav'

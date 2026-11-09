@@ -65,7 +65,7 @@ void wav(const std::string &path, const clap::Audio &audio) {
 
 int main(int argc, char **argv) {
     try {
-        require(argc == 3, "usage: mert-model-test model.gguf output-directory");
+        require(argc == 3, "usage: test-mert-model model.gguf output-directory");
         clap_runtime_options options = clap_default_options();
         options.threads = 2;
         CLAP *raw = nullptr;

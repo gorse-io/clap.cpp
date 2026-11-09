@@ -66,7 +66,7 @@ for dtype, tolerance in [('f32', 3e-4), ('f16', 3e-3)]:
     gguf = out / ('model-' + dtype + '.gguf')
     subprocess.run([sys.executable, str(root / 'convert_hf_to_gguf.py'), str(out), str(gguf),
                     '--dtype', dtype, '--muq-revision', MODEL_REVISION], check=True)
-    subprocess.run([str(build / 'muq-model-test'), str(gguf), str(fixture_path)], check=True)
+    subprocess.run([str(build / 'test-muq-model'), str(gguf), str(fixture_path)], check=True)
     case = cases[2]
     data = struct.pack('<' + 'f' * len(case['waveform']), *case['waveform'])
     wav = out / 'input.wav'

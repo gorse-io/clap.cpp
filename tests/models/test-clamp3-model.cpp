@@ -35,7 +35,7 @@ static void compare(const std::vector<float> &actual, const std::vector<float> &
 int main(int argc, char **argv) {
     try {
         require(argc == 3 || (argc == 4 && std::string(argv[3]) == "--f32"),
-                "usage: clamp3-model-test MODEL.gguf FIXTURE.json [--f32]");
+                "usage: test-clamp3-model MODEL.gguf FIXTURE.json [--f32]");
         std::ifstream input(argv[2]);
         nlohmann::json fixture;
         input >> fixture;

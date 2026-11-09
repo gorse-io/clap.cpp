@@ -224,7 +224,7 @@ static void devices(const std::string &path) {
 }
 int main(int argc, char **argv) {
     try {
-        require(argc == 2, "graph-pipeline-test FIXTURE.gguf");
+        require(argc == 2, "test-graph-pipeline FIXTURE.gguf");
         auto *ctx = ggml_init({1024 * 1024, nullptr, false});
         auto *file = gguf_init_empty();
         for (int groups : {1, 2, 4}) {

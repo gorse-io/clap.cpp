@@ -127,7 +127,7 @@ static void run(const std::filesystem::path &path, bool strict, bool cpu) {
 int main(int argc, char **argv) {
     if (argc < 2 || argc > 3 ||
         (argc == 3 && std::string(argv[2]) != "--require-vulkan" && std::string(argv[2]) != "--require-cpu")) {
-        std::cerr << "usage: tensor-ops-test FIXTURE.gguf [--require-vulkan|--require-cpu]\n";
+        std::cerr << "usage: test-tensor-ops FIXTURE.gguf [--require-vulkan|--require-cpu]\n";
         return 2;
     }
     const std::filesystem::path path(argv[1]);

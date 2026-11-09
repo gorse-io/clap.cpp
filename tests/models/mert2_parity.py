@@ -132,7 +132,7 @@ for variant, context, model_name in (("fs", 360, "m-a-p/MERT-v2-FullSong"),
         assert metadata["general.name"] == model_name, metadata
         assert json.loads(metadata["mert2.config"]) == json.loads((current / "config.json").read_text())
         assert metadata["mert2.source_revision"] == revision
-        subprocess.run([str(build / "mert2-model-test"), str(target),
+        subprocess.run([str(build / "test-mert2-model"), str(target),
                         str(current / f"fixture{suffix}.json")], check=True)
     print(f"Synthetic official MERT2 {variant} F32/F16 and >30-second parity passed", flush=True)
 
@@ -148,7 +148,7 @@ assert not (out / "must-not-exist.gguf").exists()
 metadata["mert2.config"] = json.dumps(raw, separators=(",", ":"))
 invalid = out / "invalid-variant.gguf"
 write_safetensors_gguf(invalid, checkpoint, metadata, "f32", np, torch)
-failed = subprocess.run([str(build / "mert2-model-test"), str(invalid), str(out / "fixture.json")],
+failed = subprocess.run([str(build / "test-mert2-model"), str(invalid), str(out / "fixture.json")],
                         text=True, capture_output=True)
 assert failed.returncode and "variant" in failed.stderr, failed.stderr
 print("Unsupported MERT2 variant rejected by converter and runtime")

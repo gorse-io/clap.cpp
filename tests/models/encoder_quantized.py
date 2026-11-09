@@ -147,7 +147,7 @@ def main(args):
             for preset in ['Q8_0','Q4_K_M']:
                 target=out/f'{dtype}-{preset}.gguf'; target.unlink(missing_ok=True)
                 run(args.build/'clap','quantize','--type',preset,source,target)
-                stored={name:(typ,data) for name,typ,data in tensors(target,args.build/'clap-q8-test' if preset=='Q4_K_M' else None)}
+                stored={name:(typ,data) for name,typ,data in tensors(target,args.build/'test-q8' if preset=='Q4_K_M' else None)}
                 kinds={typ for typ,_ in stored.values()}; assert (8 in kinds if preset=='Q8_0' else {12,14}<=kinds), kinds
                 installed=set()
                 with torch.no_grad():
@@ -159,7 +159,7 @@ def main(args):
                 assert quantized<=installed,quantized-installed
                 assert all(np.any(stored[n][1]!=0) for n in quantized), 'zero quantized fixture'
                 roundtrip=out/f'{dtype}-{preset}-decoded.gguf'
-                run(args.build/'clap-q8-test','decode',target,roundtrip)
+                run(args.build/'test-q8','decode',target,roundtrip)
                 for label,wave in waves:
                     audio=out/f'{label}.wav'; wav(audio,wave.numpy(),rate)
                     command=[str(args.build/'clap'), 'embedding','-m',str(target),'-a',str(audio),'-t','2']

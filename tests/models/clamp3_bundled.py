@@ -41,7 +41,7 @@ for dtype in ['f32', 'f16']:
     bundled_args = base_args.copy(); bundled_args[3] = str(bundled)
     subprocess.run([*bundled_args, '--mert-revision', revision], check=True)
     # Native API verifies waveform dispatch, resampling, text and feature compatibility.
-    subprocess.run([str(build/'clamp3-bundled-test'), str(bundled), str(standalone),
+    subprocess.run([str(build/'test-clamp3-bundled'), str(bundled), str(standalone),
                     str(out/f'model-{dtype}.gguf')], check=True)
     for case in ['broadband', 'silence', 'tone', 'two_chunks', 'discard_tail', 'resampled-input']:
         wave = out / f'{case}.wav'
@@ -58,7 +58,7 @@ for dtype in ['f32', 'f16']:
         if quantized.exists(): quantized.unlink()
         subprocess.run([str(build/'clap'), 'quantize', '--type', preset,
                         str(bundled), str(quantized)], check=True)
-        rounded = {n:(t,v) for n,t,v in stored_tensors(quantized, build/'clap-q8-test' if preset=='Q4_K_M' else None)
+        rounded = {n:(t,v) for n,t,v in stored_tensors(quantized, build/'test-q8' if preset=='Q4_K_M' else None)
                    if n.startswith('mert.')}
         assert original.keys()==rounded.keys()
         for name,(typ,values) in original.items():

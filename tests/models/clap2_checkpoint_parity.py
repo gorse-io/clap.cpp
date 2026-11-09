@@ -3,7 +3,7 @@
 
 python clap2_checkpoint_parity.py BRANCH CHECKPOINT_DIR OUTPUT OFFICIAL_OPEN_CLIP HF_ASSETS
 BRANCH is text or audio. No downloads. Creates fixture-BRANCH-f32.json for
-clap2-model-test; execute native separately after this process releases torch.
+test-clap2-model; execute native separately after this process releases torch.
 HF_ASSETS supplies config.json, open_clip_config.json and identity.json (or the
 legacy hf-manifest.json). The official tower shape and revision come from those
 assets, not the large model's source configuration.

@@ -195,7 +195,7 @@ for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
     target = out / f'model-{suffix}.gguf'
     subprocess.run([str(build / 'clap'), 'quantize', '--type',
                     'Q4_K_M' if 'q4' in suffix else 'Q8_0', str(out / source), str(target)], check=True)
-    count = load_storage(model, target, clamp3_tensor_name, build / 'clap-q8-test' if 'q4' in suffix else None)
+    count = load_storage(model, target, clamp3_tensor_name, build / 'test-q8' if 'q4' in suffix else None)
     quantized_fixture = json.loads(json.dumps(fixture))
     quantized_fixture['embedding_tolerance'] = 2e-3
     for case in quantized_fixture['text_cases']:
@@ -206,11 +206,11 @@ for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
     fixture_path = out / f'fixture-{suffix}.json'
     fixture_path.write_text(json.dumps(quantized_fixture))
     # This oracle explicitly models the CPU's activation packing.
-    subprocess.run([str(build / 'clamp3-model-test'), str(target), str(fixture_path)],
+    subprocess.run([str(build / 'test-clamp3-model'), str(target), str(fixture_path)],
                    check=True, env={**os.environ, 'CLAP_DEVICE': 'cpu'})
     # Separately verify portable F32 activations on the selected device. No
     # activation packing hooks: only the stored weights are rounded/quantized.
-    load_storage(model, target, clamp3_tensor_name, build / 'clap-q8-test' if 'q4' in suffix else None,
+    load_storage(model, target, clamp3_tensor_name, build / 'test-q8' if 'q4' in suffix else None,
                  pack_activations=False)
     for case in quantized_fixture['text_cases']:
         case['expected'] = text_oracle(case['ids']).tolist()
@@ -219,7 +219,7 @@ for source, suffix in [('model.gguf', 'q8'), ('model-f16.gguf', 'f16-q8'),
         case['expected'] = audio_oracle(features).tolist()
     float_fixture = out / f'fixture-{suffix}-f32-activations.json'
     float_fixture.write_text(json.dumps(quantized_fixture))
-    subprocess.run([str(build / 'clamp3-model-test'), str(target), str(float_fixture), '--f32'], check=True)
+    subprocess.run([str(build / 'test-clamp3-model'), str(target), str(float_fixture), '--f32'], check=True)
     print(f'CLaMP3 {suffix}: {count} quantized parameters, text/audio storage-rounded parity passed')
 
 # Corrupt the architecture string in-place without altering GGUF offsets.

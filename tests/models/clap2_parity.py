@@ -303,7 +303,7 @@ def main():
         subprocess.run([sys.executable, str(root / "convert_hf_to_gguf.py"), str(args.output),
                         str(target), "--dtype", dtype, "--clap2-revision", identity["revision"]], check=True)
         if not args.generate_only:
-            subprocess.run([str(args.build / "clap2-model-test"), str(target), str(fixture)], check=True)
+            subprocess.run([str(args.build / "test-clap2-model"), str(target), str(fixture)], check=True)
         print(f"Official open_clip/timm CLAP2 {dtype} fixture passed; native={'not run' if args.generate_only else 'passed'}", flush=True)
     versions = {name: importlib.metadata.version(name) for name in
                 ("torch", "timm", "tiktoken", "safetensors", "tokenizers", "numpy")}

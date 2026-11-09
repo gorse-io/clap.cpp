@@ -88,5 +88,5 @@ converter=Path(__file__).resolve().parents[2]/'convert_hf_to_gguf.py'
 gguf=args.gguf or out/('model-'+args.dtype+'.gguf')
 if args.gguf is None:
     subprocess.run([sys.executable,str(converter),str(checkpoint_path),str(gguf),'--dtype',args.dtype],check=True)
-subprocess.run([str(args.build/'clamp3-model-test'),str(gguf),str(out/'fixture.json')],check=True)
+subprocess.run([str(args.build/'test-clamp3-model'),str(gguf),str(out/'fixture.json')],check=True)
 print('Published CLaMP3 checkpoint parity passed:',args.dtype)
