@@ -288,11 +288,10 @@ ggml_tensor *Graph::weight(ggml_tensor *source, bool f32) {
     return converted.emplace(source, ggml_cast(ctx(), w, GGML_TYPE_F32)).first->second;
 }
 ggml_tensor *Graph::matmul(ggml_tensor *weight, ggml_tensor *input, bool offload) {
-    // The pinned Metal MM/MMA kernels round operands to F16. Express the
-    // same product as a batch of native GGML matrix-vector products instead:
-    // [K,M,B] x [K,N,B] -> [K,M,1,B] x [K,1,N,B]. This keeps F32 operands
-    // intact and still executes on the selected GPU, without custom kernels.
-    if (runtime.metal && weight->ne[0] >= 64 && input->ne[1] > 1) {
+    // Let ggml select native MM/MMA or MV kernels, as in llama.cpp. Only
+    // explicit/model-required F32 activations need the vector-product fallback:
+    // Metal's matrix kernels can round operands to F16 despite F32 accumulation.
+    if (runtime.metal && runtime.f32_activations && weight->ne[0] >= 64 && input->ne[1] > 1) {
         const int64_t rows = input->ne[1], batches = input->ne[2], groups = input->ne[3];
         // Retain general GGML broadcasting when the two batch axes differ.
         if ((weight->ne[2] == batches && weight->ne[3] == groups) || (weight->ne[2] == 1 && weight->ne[3] == 1)) {
