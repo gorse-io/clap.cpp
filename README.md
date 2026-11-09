@@ -71,11 +71,40 @@ curl http://127.0.0.1:8080/v1/embeddings \
 Audio inputs use one `input_audio` content block per item. Encode the complete
 WAV, MP3 or FLAC file as standard base64 (no whitespace or data-URL prefix):
 
-```sh
-python3 -c 'import base64,json,sys; print(json.dumps({"input":[{"content":[{"type":"input_audio","input_audio":{"data":base64.b64encode(open(sys.argv[1],"rb").read()).decode()}}]}]}))' dog.wav |
+```bash
+audio_base64=$(base64 < dog.wav | tr -d '\r\n')
+printf '{"input":[{"content":[{"type":"input_audio","input_audio":{"data":"%s"}}]}]}' "$audio_base64" |
   curl http://127.0.0.1:8080/v1/embeddings \
     -H 'Content-Type: application/json' --data-binary @-
 ```
+
+### Audio search (brute force)
+
+Search the `esc5` audio directory recursively for `dog` and return the ten most related audio files:
+
+```sh
+clap search esc5 --model larger_clap_general-q4_k_m.gguf --text 'dog' --top-k 10
+```
+
+<details>
+<summary>Show example search results</summary>
+
+```json
+[
+  {"path": "esc5/2-118072-A-0-dog.wav", "score": 0.3736357720143104},
+  {"path": "esc5/1-110389-A-0-dog.wav", "score": 0.36165991257288893},
+  {"path": "esc5/4-183992-A-0-dog.wav", "score": 0.3574270305924374},
+  {"path": "esc5/1-30226-A-0-dog.wav", "score": 0.34910229736736315},
+  {"path": "esc5/3-180977-A-0-dog.wav", "score": 0.34359234068457495},
+  {"path": "esc5/4-194754-A-0-dog.wav", "score": 0.3425423428503198},
+  {"path": "esc5/2-118964-A-0-dog.wav", "score": 0.3389233902904601},
+  {"path": "esc5/1-100032-A-0-dog.wav", "score": 0.33009392183878733},
+  {"path": "esc5/5-9032-A-0-dog.wav", "score": 0.3280081351893563},
+  {"path": "esc5/4-182395-A-0-dog.wav", "score": 0.32210240115509925}
+]
+```
+
+</details>
 
 ## License
 
