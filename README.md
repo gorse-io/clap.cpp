@@ -49,34 +49,6 @@ clap embedding --model larger_clap_general-q4_k_m.gguf --text 'Sound of a dog'
 clap embedding --model larger_clap_general-q4_k_m.gguf --audio dog.wav
 ```
 
-### Benchmark command
-
-Measure one serial text, audio embedding, or (`--frames`) waveform-frame call:
-
-```sh
-clap bench -m larger_clap_general-q4_k_m.gguf --text 'Sound of a dog'
-clap bench -m larger_clap_general-q4_k_m.gguf --audio dog.wav
-clap bench -m mert.gguf --audio music.flac --frames
-clap bench -m larger_clap_general-q4_k_m.gguf --text 'Sound of a dog' -- \
-  --benchmark_min_time=2s --benchmark_repetitions=5 \
-  --benchmark_out=bench.json --benchmark_out_format=json
-```
-
-Google Benchmark flags must follow the literal `--`; filters, JSON/CSV reports,
-listing (`--benchmark_list_tests=true`), and native help (`--help`) are supported
-there. Defaults are a one-second minimum per repetition and three repetitions.
-Listing validates CLI paths but does not load weights, decode audio, or infer.
-
-Timing uses real wall-clock milliseconds and items/second. Model loading, file
-decoding, and one warmup are excluded. Each timed call includes the public API's
-text tokenization or audio resampling/frontend, inference, and output allocation
-and release; it does not include CLI serialization or report writing. Audio uses
-decoded source-rate mono PCM, not a precomputed frontend. `--device`, `--frames`,
-and `--crop-offset` have the same semantics as `embedding`; requested device
-context is not a claim about automatic backend resolution. Inference failures,
-unmatched filters, unknown flags, and report write failures exit nonzero.
-Google Benchmark is bundled only when building the CLI, not the core or bindings.
-
 ### Embeddings server
 
 Start the server with a GGUF supporting the requested modality, such as CLAP,
