@@ -16,6 +16,7 @@
 #include "clap.h"
 #include "embedding.h"
 #include "quantize.h"
+#include "search.h"
 #include "server.h"
 
 #include <CLI/CLI.hpp>
@@ -65,6 +66,25 @@ int main(int argc, char **argv) {
     embedding->add_flag("--frames", options.frames,
                         "Return final-layer waveform-encoder frames instead of mean pooling");
 
+    SearchOptions search_options;
+    auto *search = app.add_subcommand("search", "Search a directory recursively for similar audio");
+    search->add_option("DIRECTORY", search_options.directory, "Directory of WAV, MP3 and FLAC files")->required();
+    search->add_option("-m,--model", search_options.model_path, "Converted model GGUF")
+        ->required()
+        ->check(CLI::ExistingFile);
+    search->add_option("-k,--top-k", search_options.top_k, "Maximum number of results")
+        ->check(CLI::PositiveNumber)
+        ->capture_default_str();
+    search->add_option("-t,--threads", search_options.threads, "ggml CPU threads (0: hardware concurrency)")
+        ->check(CLI::NonNegativeNumber)
+        ->capture_default_str();
+    search->add_option("--device", search_options.device,
+                       "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
+    auto *search_input = search->add_option_group("Input", "Choose one text or audio query");
+    search_input->require_option(1, 1);
+    auto *search_text = search_input->add_option("--text", search_options.text, "UTF-8 text query");
+    search_input->add_option("--audio", search_options.audio_path, "WAV, MP3 or FLAC query")->check(CLI::ExistingFile);
+
     std::string quantize_input;
     std::string quantize_output;
     std::string quantize_type = "Q8_0";
@@ -101,6 +121,10 @@ int main(int argc, char **argv) {
             if (options.frames && (!*audio_option || options.crop_requested))
                 throw std::runtime_error("--frames requires --audio and excludes --crop-offset");
             return cmd_embedding(options);
+        }
+        if (*search) {
+            search_options.text_requested = search_text->count() != 0;
+            return cmd_search(search_options);
         }
         if (*serve) {
             return cmd_server(host, port, server_model, server_threads, server_device);
