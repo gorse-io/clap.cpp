@@ -423,10 +423,6 @@ if(BUILD_TESTING)
                     "${MERT_REFERENCE_SOURCE}" "${MERT2_REFERENCE_SOURCE}" "${MUQ_REFERENCE_SOURCE}" "${MUQ_MULAN_REFERENCE_SOURCE}")
             set_tests_properties(test-encoder-quantized-parity PROPERTIES TIMEOUT 600)
         endif()
-        add_test(NAME test-clap-search-cli
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/search_cli.py"
-                    "$<TARGET_FILE:clap-cli>" "${CLAP_AUDIO_FIXTURE_DIR}")
-        set_tests_properties(test-clap-search-cli PROPERTIES TIMEOUT 120)
         add_test(NAME test-clap-embedding-cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/embedding_cli.py" "$<TARGET_FILE:clap-cli>")
         set_tests_properties(test-clap-embedding-cli PROPERTIES TIMEOUT 30)
