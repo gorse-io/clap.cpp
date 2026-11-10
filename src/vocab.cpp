@@ -157,8 +157,9 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
         expect(processors.at(0), "use_regex", false);
         const auto &templ = processors.at(1);
         expect(templ, "type", "TemplateProcessing");
-        expect(templ, "single", json::array({json{{"Sequence", {{"id", "A"}, {"type_id", 0}}}},
-                                            json{{"SpecialToken", {{"id", "<|endoftext|>"}, {"type_id", 0}}}}}));
+        expect(templ, "single",
+               json::array({json{{"Sequence", {{"id", "A"}, {"type_id", 0}}}},
+                            json{{"SpecialToken", {{"id", "<|endoftext|>"}, {"type_id", 0}}}}}));
         const auto &end = templ.at("special_tokens").at("<|endoftext|>");
         expect(end, "ids", json::array({eos}));
         expect(end, "tokens", json::array({"<|endoftext|>"}));
@@ -202,8 +203,8 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
         byte_chars[i] = utf8(regular ? i : extra++);
     }
     UErrorCode status = U_ZERO_ERROR;
-    const std::string regex = qwen ? qwen_regex :
-        "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
+    const std::string regex =
+        qwen ? qwen_regex : "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
     pattern.reset(icu::RegexPattern::compile(icu::UnicodeString::fromUTF8(regex), 0, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: cannot compile tokenizer Unicode regex");
@@ -275,8 +276,9 @@ std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max
         const json *match = nullptr;
         for (const auto &s : special) {
             const auto p = text.find(s.at("content").get<std::string>(), pos);
-            if (p < next || (p == next && match && s.at("content").get<std::string>().size() >
-                                                     match->at("content").get<std::string>().size())) {
+            if (p < next ||
+                (p == next && match &&
+                 s.at("content").get<std::string>().size() > match->at("content").get<std::string>().size())) {
                 next = p;
                 match = &s;
             }

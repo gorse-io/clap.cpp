@@ -51,8 +51,8 @@ ggml_type target_type(const ggml_tensor *w, Preset preset, const std::string &ar
     };
     // Encoder adaptation of llama.cpp's sensitive V/FFN-down roles: protect
     // ALL such layers rather than its decoder-specific layer-index schedule.
-    const bool value = ends(".attention.self.value.weight") ||
-                       (architecture == "qwen3" && ends(".self_attn.v_proj.weight"));
+    const bool value =
+        ends(".attention.self.value.weight") || (architecture == "qwen3" && ends(".self_attn.v_proj.weight"));
     const bool down = ends(".output.dense.weight") && !ends(".attention.output.dense.weight");
     const bool projection = architecture == "clap"
                                 ? (name.rfind("text_proj.", 0) == 0 || name.rfind("audio_proj.", 0) == 0) &&
