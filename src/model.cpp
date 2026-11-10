@@ -10,7 +10,9 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
     const int threads = options.threads;
     loader.load(path);
     const auto name = loader.metadata("general.architecture");
-    if (name == "clap")
+    if (name == "qwen3")
+        architecture = std::make_unique<Qwen3Model>(loader, threads);
+    else if (name == "clap")
         architecture = std::make_unique<ClapModel>(loader, threads);
     else if (name == "clap2")
         architecture = std::make_unique<Clap2Model>(loader, threads);

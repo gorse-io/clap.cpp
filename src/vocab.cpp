@@ -1,5 +1,6 @@
 #include "vocab.h"
 
+#include <unicode/normalizer2.h>
 #include <unicode/uchar.h>
 #include <unicode/unistr.h>
 
@@ -112,9 +113,63 @@ std::vector<int32_t> normalizer_boundaries(const icu::UnicodeString &text) {
 
 ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length,
                                      bool split_special_tokens)
-    : bos(bos), eos(eos), context_length(context_length) {
+    : bos(bos), eos(eos), qwen(bos < 0), context_length(context_length) {
     if (tokenizer.at("model").at("type") != "BPE")
         throw std::runtime_error("CLAP: expected byte-level BPE");
+    // The pinned unsloth export uses Qwen's Split + ByteLevel sequence,
+    // NFC normalization, and an explicit EOS-only postprocessor.
+    static const std::string qwen_regex =
+        R"((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
+    if (qwen) {
+        const auto expect = [](const json &object, const char *key, const json &value) {
+            if (!object.is_object() || !object.contains(key) || object.at(key) != value)
+                throw std::runtime_error(std::string("CLAP: unsupported Qwen3 tokenizer ") + key);
+        };
+        expect(tokenizer, "normalizer", json{{"type", "NFC"}});
+        const auto &pre = tokenizer.at("pre_tokenizer");
+        expect(pre, "type", "Sequence");
+        const auto &parts = pre.at("pretokenizers");
+        if (!parts.is_array() || parts.size() != 2)
+            throw std::runtime_error("CLAP: unsupported Qwen3 pretokenizer");
+        expect(parts.at(0), "type", "Split");
+        expect(parts.at(0), "pattern", json{{"Regex", qwen_regex}});
+        expect(parts.at(0), "behavior", "Isolated");
+        expect(parts.at(0), "invert", false);
+        expect(parts.at(1), "type", "ByteLevel");
+        expect(parts.at(1), "add_prefix_space", false);
+        expect(parts.at(1), "use_regex", false);
+        const auto &m = tokenizer.at("model");
+        expect(m, "dropout", nullptr);
+        expect(m, "unk_token", nullptr);
+        expect(m, "byte_fallback", false);
+        expect(m, "ignore_merges", false);
+        for (const char *field : {"continuing_subword_prefix", "end_of_word_suffix"})
+            if (!m.at(field).is_null() && m.at(field) != "")
+                throw std::runtime_error("CLAP: unsupported Qwen3 BPE affix");
+        expect(tokenizer.at("decoder"), "type", "ByteLevel");
+        const auto &post = tokenizer.at("post_processor");
+        expect(post, "type", "Sequence");
+        const auto &processors = post.at("processors");
+        if (!processors.is_array() || processors.size() != 2)
+            throw std::runtime_error("CLAP: unsupported Qwen3 postprocessor");
+        expect(processors.at(0), "type", "ByteLevel");
+        expect(processors.at(0), "add_prefix_space", false);
+        expect(processors.at(0), "use_regex", false);
+        const auto &templ = processors.at(1);
+        expect(templ, "type", "TemplateProcessing");
+        expect(templ, "single", json::array({json{{"Sequence", {{"id", "A"}, {"type_id", 0}}}},
+                                            json{{"SpecialToken", {{"id", "<|endoftext|>"}, {"type_id", 0}}}}}));
+        const auto &end = templ.at("special_tokens").at("<|endoftext|>");
+        expect(end, "ids", json::array({eos}));
+        expect(end, "tokens", json::array({"<|endoftext|>"}));
+        for (const auto &a : tokenizer.at("added_tokens")) {
+            for (const char *field : {"single_word", "lstrip", "rstrip", "normalized"})
+                expect(a, field, false);
+            if (!a.at("id").is_number_integer() || a.at("id").get<int64_t>() < 0 ||
+                a.at("id").get<int64_t>() > std::numeric_limits<int>::max())
+                throw std::runtime_error("CLAP: invalid Qwen3 added token ID");
+        }
+    }
     for (auto it = tokenizer["model"]["vocab"].begin(); it != tokenizer["model"]["vocab"].end(); ++it)
         vocab.emplace(it.key(), it.value().get<int>());
     int rank = 0;
@@ -147,17 +202,25 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
         byte_chars[i] = utf8(regular ? i : extra++);
     }
     UErrorCode status = U_ZERO_ERROR;
-    pattern.reset(icu::RegexPattern::compile(
-        icu::UnicodeString::fromUTF8(
-            "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"),
-        0, status));
+    const std::string regex = qwen ? qwen_regex :
+        "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
+    pattern.reset(icu::RegexPattern::compile(icu::UnicodeString::fromUTF8(regex), 0, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: cannot compile tokenizer Unicode regex");
 }
 
 void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &ids) const {
     UErrorCode status = U_ZERO_ERROR;
-    const auto unicode = icu::UnicodeString::fromUTF8(text);
+    auto unicode = icu::UnicodeString::fromUTF8(text);
+    if (qwen) {
+        const auto *normalizer = icu::Normalizer2::getNFCInstance(status);
+        icu::UnicodeString normalized;
+        if (U_SUCCESS(status))
+            normalizer->normalize(unicode, normalized, status);
+        if (U_FAILURE(status))
+            throw std::runtime_error("CLAP: Qwen3 NFC normalization failed");
+        unicode = std::move(normalized);
+    }
     std::unique_ptr<icu::RegexMatcher> matcher(pattern->matcher(unicode, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: tokenizer regex failed");
@@ -201,16 +264,19 @@ void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &
 }
 
 std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max_length) const {
-    if (!(max_length >= 2 && max_length <= context_length))
+    if (!(max_length >= (qwen ? 1u : 2u) && max_length <= context_length))
         throw std::runtime_error("CLAP: invalid maximum text length");
-    std::vector<int> ids{bos};
+    std::vector<int> ids;
+    if (bos >= 0)
+        ids.push_back(bos);
     size_t pos = 0;
     while (pos < text.size()) {
         size_t next = std::string::npos;
         const json *match = nullptr;
         for (const auto &s : special) {
             const auto p = text.find(s.at("content").get<std::string>(), pos);
-            if (p < next) {
+            if (p < next || (p == next && match && s.at("content").get<std::string>().size() >
+                                                     match->at("content").get<std::string>().size())) {
                 next = p;
                 match = &s;
             }

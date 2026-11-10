@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
 
     EmbeddingOptions options;
     auto *embedding = app.add_subcommand("embedding", "Generate native text or audio embeddings");
-    embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
+    embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan/Qwen3 GGUF")
         ->required()
         ->check(CLI::ExistingFile);
     embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: hardware concurrency)")
@@ -92,7 +92,7 @@ int main(int argc, char **argv) {
     quantize->add_option("--type", quantize_type, "Quantization preset")
         ->check(CLI::IsMember({"BF16", "Q8_0", "Q4_K_M"}, CLI::ignore_case))
         ->capture_default_str();
-    quantize->add_option("INPUT.gguf", quantize_input, "F32/F16/BF16 CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan model")
+    quantize->add_option("INPUT.gguf", quantize_input, "F32/F16/BF16 CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan/Qwen3 model")
         ->required();
     quantize->add_option("OUTPUT.gguf", quantize_output, "Output model (must not exist)")->required();
 

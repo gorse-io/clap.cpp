@@ -45,6 +45,7 @@ class ByteBpeVocabulary final : public Vocabulary {
   private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos;
+    bool qwen; // Negative BOS selects the Qwen NFC/regex/no-BOS postprocessor.
     size_t context_length;
     std::unordered_map<std::string, int> vocab;
     std::map<std::pair<std::string, std::string>, int> ranks;

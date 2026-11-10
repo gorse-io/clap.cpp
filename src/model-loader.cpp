@@ -64,7 +64,7 @@ void ModelLoader::norm_shape(const std::string &name, int dim) const {
 }
 
 void ModelLoader::validate_tensor_coverage() const {
-    if (!f32_activations && !bundled)
+    if (!f32_activations && !bundled && metadata("general.architecture") != "qwen3")
         return;
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         const std::string name = gguf_get_tensor_name(gguf, i);
