@@ -294,10 +294,10 @@ def write_qwen3(destination, checkpoint, metadata, c, dtype):
 @ModelBase.register('qwen3')
 class Qwen3Model(ModelBase):
     def write(self):
-        c = json.loads((self.source / 'config.json').read_text())
+        c = json.loads((self.source / 'config.json').read_text(encoding='utf-8'))
         validate_config(c)
         path = self.options.get('tokenizer') or self.source / 'tokenizer.json'
-        t = json.loads(Path(path).read_text())
+        t = json.loads(Path(path).read_text(encoding='utf-8'))
         validate_tokenizer(t, c)
         metadata = {
             'general.architecture': 'qwen3',

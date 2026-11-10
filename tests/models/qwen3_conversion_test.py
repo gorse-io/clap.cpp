@@ -91,6 +91,34 @@ with tempfile.TemporaryDirectory() as tmp:
     output = source / 'bare.gguf'
     cls(source, output, 'f32').write()
     assert set(read_gguf(output)[1]) == set(tensors)
+    # UTF-8 checkpoint JSON must not depend on the process locale (e.g. Windows).
+    import os
+    import subprocess
+
+    unicode_config = dict(c, _source_description='\u4e2d\u6587')
+    unicode_tokenizer = dict(t, _source_description='\u4e2d\u6587')
+    (source / 'config.json').write_text(
+        json.dumps(unicode_config, ensure_ascii=False), encoding='utf-8'
+    )
+    (source / 'tokenizer.json').write_text(
+        json.dumps(unicode_tokenizer, ensure_ascii=False), encoding='utf-8'
+    )
+    subprocess.run(
+        [
+            sys.executable, '-X', 'utf8=0', '-c',
+            'from pathlib import Path; from conversion import get_model_class; '
+            'import sys; get_model_class("qwen3")(Path(sys.argv[1]), '
+            'Path(sys.argv[2]), "f32").write()',
+            str(source), str(source / 'locale.gguf'),
+        ],
+        cwd=Path(__file__).resolve().parents[2],
+        env=dict(os.environ, LC_ALL='C', PYTHONUTF8='0', PYTHONCOERCECLOCALE='0'),
+        check=True,
+    )
+    locale_metadata, _ = read_gguf(source / 'locale.gguf')
+    assert json.loads(locale_metadata['qwen3.tokenizer']) == unicode_tokenizer
+    (source / 'config.json').write_text(json.dumps(c), encoding='utf-8')
+    (source / 'tokenizer.json').write_text(json.dumps(t), encoding='utf-8')
     # Validate the safetensors schema and offsets before publishing any output.
     original = output.read_bytes()
     for field, value in [('dtype', 'I32'), ('shape', [1]), ('data_offsets', [0, 1])]:
