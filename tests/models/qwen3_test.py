@@ -15,7 +15,7 @@ for dtype in ['f32', 'f16']:
                     str(output / f'fixture-{dtype}.json')], check=True)
 # Exercise the checkpoint harness's model-default activation policy as well as
 # explicit F32; the scalar fixture remains independently storage-rounded.
-default_fixture = json.loads((output / 'fixture-f16.json').read_text())
+default_fixture = json.loads((output / 'fixture-f16.json').read_text(encoding='utf-8'))
 default_fixture['model_default_activations'] = True
 (output / 'fixture-default.json').write_text(json.dumps(default_fixture))
 subprocess.run([str(build / 'test-qwen3-model'), str(output / 'model-f16.gguf'),
@@ -32,7 +32,7 @@ for label, layout in [
     for dtype in ['f32', 'f16']:
         subprocess.run([str(build / 'test-qwen3-model'), str(directory / f'model-{dtype}.gguf'),
                         str(directory / f'fixture-{dtype}.json')], check=True)
-f = json.loads((output / 'fixture-f32.json').read_text())
+f = json.loads((output / 'fixture-f32.json').read_text(encoding='utf-8'))
 
 # These standard metadata errors must not become accepted for larger layouts.
 for label, layout in [('4B', dict(width=40, heads=16, kv_heads=4, head_dim=4, depth=36, ffn=152)),
@@ -57,7 +57,7 @@ def embedding(path, text='ab'):
 
 # Compare the CLI to the public API under the same default policy. Explicit F32
 # remains checked above; the independent default-attention oracle has its own test.
-actual_default = json.loads((output / 'actual-default.json').read_text())
+actual_default = json.loads((output / 'actual-default.json').read_text(encoding='utf-8'))
 for i, case in enumerate(f['text_cases']):
     p = embedding(output / 'model-f16.gguf', case['text'])
     assert p.returncode == 0, p.stderr
