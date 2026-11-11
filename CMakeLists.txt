@@ -186,6 +186,10 @@ if(BUILD_TESTING)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/qwen3_test.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/qwen3-fixture")
         set_tests_properties(test-qwen3-native PROPERTIES TIMEOUT 180)
+        add_test(NAME test-qwen3-attention
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/qwen3_attention_test.py"
+                    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/qwen3-attention-fixture")
+        set_tests_properties(test-qwen3-attention PROPERTIES TIMEOUT 180)
     endif()
     add_executable(test-feature-input tests/models/test-feature-input.cpp)
     target_link_libraries(test-feature-input PRIVATE clap nlohmann_json::nlohmann_json)

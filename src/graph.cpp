@@ -1,4 +1,5 @@
 #include "graph.h"
+#include "qwen3-attention.h"
 
 #include <ggml-cpu.h>
 
@@ -461,6 +462,30 @@ ggml_tensor *Graph::attention(ggml_tensor *q, ggml_tensor *k, ggml_tensor *v, in
     if (padded_tokens != tokens || padded_dim != dim)
         out = ggml_view_4d(ctx(), out, dim, tokens, heads, windows, out->nb[1], out->nb[2], out->nb[3], 0);
     return ggml_reshape_2d(ctx(), ggml_cont(ctx(), ggml_permute(ctx(), out, 0, 2, 1, 3)), width, rows);
+}
+ggml_tensor *Graph::qwen3_attention(ggml_tensor *q, ggml_tensor *k, ggml_tensor *v, int heads, int kv_heads,
+                                    ggml_tensor *mask) {
+    const int64_t dim = q->ne[0] / heads, tokens = q->ne[1], width = q->ne[0];
+    if (runtime.f32_activations) {
+        const auto expand = [&](ggml_tensor *x) {
+            x = ggml_reshape_4d(ctx(), x, dim, 1, kv_heads, tokens);
+            x = ggml_repeat_4d(ctx(), x, dim, heads / kv_heads, kv_heads, tokens);
+            return ggml_reshape_2d(ctx(), x, width, tokens);
+        };
+        return attention(q, expand(k), expand(v), heads, mask);
+    }
+    q = ggml_permute(ctx(), ggml_reshape_3d(ctx(), q, dim, heads, tokens), 0, 2, 1, 3);
+    k = ggml_cast(ctx(), ggml_permute(ctx(), ggml_reshape_3d(ctx(), k, dim, kv_heads, tokens), 0, 2, 1, 3),
+                  GGML_TYPE_F16);
+    v = ggml_cast(ctx(), ggml_permute(ctx(), ggml_reshape_3d(ctx(), v, dim, kv_heads, tokens), 0, 2, 1, 3),
+                  GGML_TYPE_F16);
+    mask = ggml_cast(ctx(), ggml_pad(ctx(), mask, 0, int((32 - tokens % 32) % 32), 0, 0), GGML_TYPE_F16);
+    auto *out = qwen3_attention_cpu(ctx(), q, k, v, mask);
+    // This mixed-precision policy is a CPU specialization. Explicit placement
+    // lets the scheduler transfer GPU projections safely rather than submitting
+    // unsupported flash shapes/types to a GPU backend.
+    cpu_nodes.push_back(out);
+    return ggml_reshape_2d(ctx(), out, width, tokens);
 }
 ggml_tensor *Graph::rope(ggml_tensor *x, int heads, float base) {
     const int64_t width = x->ne[0], tokens = x->ne[1], dim = width / heads;

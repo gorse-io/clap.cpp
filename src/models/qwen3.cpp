@@ -93,12 +93,7 @@ void Qwen3Model::bind_tensors() {
 ggml_tensor *Qwen3Model::rms(Graph &g, ggml_tensor *x, const LayerWeights &norm) const {
     return ggml_mul(g.ctx(), ggml_rms_norm(g.ctx(), x, h.epsilon), g.weight(norm.weight));
 }
-ggml_tensor *Qwen3Model::expand_kv(Graph &g, ggml_tensor *x, int tokens) const {
-    // Repeat each KV head contiguously (0,0,1,1), not modulo the head count.
-    auto *split = ggml_reshape_4d(g.ctx(), x, h.head_dim, 1, h.kv_heads, tokens);
-    auto *repeated = ggml_repeat_4d(g.ctx(), split, h.head_dim, h.heads / h.kv_heads, h.kv_heads, tokens);
-    return ggml_reshape_2d(g.ctx(), repeated, h.heads * h.head_dim, tokens);
-}
+
 std::vector<float> Qwen3Model::text(const std::vector<int> &ids) const {
     if (ids.empty() || ids.size() > size_t(h.context))
         throw std::runtime_error("CLAP: Qwen3 token count is outside context length");
@@ -134,7 +129,7 @@ std::vector<float> Qwen3Model::text(const std::vector<int> &ids) const {
                             q = g.rope(q, h.heads, h.theta);
                             k = g.rope(k, h.kv_heads, h.theta);
                             auto *v = g.linear(z, layer.value);
-                            auto *attn = g.attention(q, expand_kv(g, k, n), expand_kv(g, v, n), h.heads, causal);
+                            auto *attn = g.qwen3_attention(q, k, v, h.heads, h.kv_heads, causal);
                             x = ggml_add(ctx, x, g.linear(attn, layer.output));
                             z = rms(g, x, layer.post_norm);
                             auto *gated = ggml_mul(ctx, ggml_silu(ctx, g.linear(z, layer.gate)), g.linear(z, layer.up));

@@ -156,7 +156,8 @@ def model_data(width=32, *, heads=4, kv_heads=2, head_dim=None, depth=2, ffn=Non
     return c, tok, tensors
 
 
-def oracle(c, tensors, ids, *, causal=True, qknorm=True, rope=True, gqa=True, last=True):
+def oracle(c, tensors, ids, *, causal=True, qknorm=True, rope=True, gqa=True, last=True,
+           attention_precision=None):
     # Padding is a masked key, and pooling selects the final nonpadding query.
     w = c['hidden_size']
     d = c['head_dim']
@@ -210,6 +211,13 @@ def oracle(c, tensors, ids, *, causal=True, qknorm=True, rope=True, gqa=True, la
                 allrows.append(parts)
             qkv.append(allrows)
         q, k, v = qkv
+        half = lambda x: struct.unpack('<e', struct.pack('<e', x))[0]
+        f32 = lambda x: struct.unpack('<f', struct.pack('<f', x))[0]
+        if attention_precision:
+            k = [[[half(x) for x in head] for head in row] for row in k]
+            v = [[[half(x) for x in head] for head in row] for row in v]
+            if attention_precision == 'rounded-query':
+                q = [[[half(x) for x in head] for head in row] for row in q]
         att = []
         for i in range(len(ids)):
             row = []
@@ -223,6 +231,23 @@ def oracle(c, tensors, ids, *, causal=True, qknorm=True, rope=True, gqa=True, la
                     )
                     for j in range(len(ids))
                 ]
+                if attention_precision and len(ids) < 64:
+                    # Independent online-softmax oracle: F16 value accumulator,
+                    # F32 query and half-rounded K/V (llama.cpp CPU default).
+                    accum, total, top = [0.0] * d, 0.0, -math.inf
+                    for j, score in enumerate(scores):
+                        if score == -math.inf:
+                            continue
+                        score = f32(score)
+                        rescale = f32(math.exp(f32(top - score))) if score > top else 1.0
+                        prob = 1.0 if score > top else f32(math.exp(f32(score - top)))
+                        if score > top:
+                            accum = [half(f32(a * rescale)) for a in accum]
+                            top = score
+                        accum = [half(f32(a + f32(b * prob))) for a, b in zip(accum, v[j][kh])]
+                        total = f32(f32(total * rescale) + prob)
+                    row.extend([f32(a * f32(1.0 / total)) for a in accum])
+                    continue
                 top = max(scores)
                 if top == -math.inf:
                     row.extend([0.0] * d)

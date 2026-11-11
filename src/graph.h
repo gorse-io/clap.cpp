@@ -94,6 +94,8 @@ class Graph {
     ggml_tensor *attention(ggml_tensor *q, ggml_tensor *k, ggml_tensor *v, int heads, ggml_tensor *mask = nullptr,
                            float scale = 0, int window_tokens = 0);
     ggml_tensor *rope(ggml_tensor *x, int heads, float base);
+    ggml_tensor *qwen3_attention(ggml_tensor *q, ggml_tensor *k, ggml_tensor *v, int heads, int kv_heads,
+                                 ggml_tensor *mask);
     void compute(const std::vector<ggml_tensor *> &outputs);
     std::vector<float> read(ggml_tensor *output) const;
     std::vector<float> run(ggml_tensor *output);

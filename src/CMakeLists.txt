@@ -17,6 +17,19 @@ add_library(clap
     ${CLAP_CORE_SOURCES}
     ${CLAP_MODELS_SOURCES})
 
+# The operation-local CPU specialization must use the same SIMD/rounding policy
+# as the pinned GGML CPU backend, without changing its global F16 dot traits.
+add_library(clap-qwen3-attention OBJECT qwen3-attention.cpp)
+set_target_properties(clap-qwen3-attention PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_features(clap-qwen3-attention PRIVATE cxx_std_17)
+target_compile_options(clap-qwen3-attention PRIVATE "$<TARGET_PROPERTY:ggml-cpu,COMPILE_OPTIONS>")
+target_compile_definitions(clap-qwen3-attention PRIVATE "$<TARGET_PROPERTY:ggml-cpu,COMPILE_DEFINITIONS>")
+target_include_directories(clap-qwen3-attention SYSTEM PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ggml/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ggml/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../ggml/src/ggml-cpu")
+target_sources(clap PRIVATE $<TARGET_OBJECTS:clap-qwen3-attention>)
+
 target_compile_features(clap PRIVATE cxx_std_20)
 if(BUILD_SHARED_LIBS)
     target_compile_definitions(clap PUBLIC CLAP_SHARED PRIVATE CLAP_BUILD)

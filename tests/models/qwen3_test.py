@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import wave
-from qwen3_fixture import generate, model_data, standard_metadata, write_gguf
+from qwen3_fixture import generate, model_data, standard_metadata, write_gguf, oracle
 
 build, output = map(Path, sys.argv[1:])
 generate(output)
@@ -19,7 +19,7 @@ default_fixture = json.loads((output / 'fixture-f16.json').read_text())
 default_fixture['model_default_activations'] = True
 (output / 'fixture-default.json').write_text(json.dumps(default_fixture))
 subprocess.run([str(build / 'test-qwen3-model'), str(output / 'model-f16.gguf'),
-                str(output / 'fixture-default.json')], check=True)
+                str(output / 'fixture-default.json'), str(output / 'actual-default.json')], check=True)
 # Characterize already parameterized production code: preserve each published
 # head/hidden and FFN/hidden ratio, GQA grouping and full block count at tiny widths.
 for label, layout in [
@@ -55,11 +55,15 @@ def embedding(path, text='ab'):
                           capture_output=True, text=True)
 
 
-for case in f['text_cases']:
-    p = embedding(output / 'model-f32.gguf', case['text'])
+# Compare the CLI to the public API under the same default policy. Explicit F32
+# remains checked above; the independent default-attention oracle has its own test.
+actual_default = json.loads((output / 'actual-default.json').read_text())
+for i, case in enumerate(f['text_cases']):
+    p = embedding(output / 'model-f16.gguf', case['text'])
     assert p.returncode == 0, p.stderr
     actual = json.loads(p.stdout)
-    assert len(actual) == 32 and max(abs(a - b) for a, b in zip(actual, case['expected'])) < 3e-5
+    expected = actual_default[2 * i]['actual']
+    assert len(actual) == 32 and max(abs(a - b) for a, b in zip(actual, expected)) < 3e-5
 wav = output / 'unsupported.wav'
 with wave.open(str(wav), 'wb') as audio:
     audio.setnchannels(1)
@@ -118,10 +122,23 @@ for bos, eos in [(False, False), (True, False), (True, True)]:
     meta = dict(base, **{'tokenizer.ggml.add_bos_token': bos, 'tokenizer.ggml.add_eos_token': eos})
     path = output / f'special-{bos}-{eos}.gguf'
     write_gguf(path, meta, tensors)
-    expected = oracle(c, tensors, ([256] if bos else []) + [265] + ([256] if eos else []))
+    ids = ([256] if bos else []) + [265] + ([256] if eos else [])
+    expected = oracle(c, tensors, ids)
+    special_fixture = dict(f, text_cases=[dict(text='ab', tokens=ids, expected=expected)],
+                           token_cases=[], tiny_contract=False)
+    fixture_path = output / f'special-{bos}-{eos}.json'
+    fixture_path.write_text(json.dumps(special_fixture))
+    subprocess.run([str(build / 'test-qwen3-model'), str(path), str(fixture_path)], check=True)
     p = embedding(path)
     assert p.returncode == 0, p.stderr
-    assert max(abs(a - b) for a, b in zip(json.loads(p.stdout), expected)) < 3e-5
+    actual = json.loads(p.stdout)
+    assert len(actual) == 32
+    # Check default CLI output against the explicit, independently specified IDs,
+    # without confusing default mixed attention with the F32 scalar oracle above.
+    special_fixture['model_default_activations'] = True
+    special_fixture['text_cases'][0]['expected'] = actual
+    fixture_path.write_text(json.dumps(special_fixture))
+    subprocess.run([str(build / 'test-qwen3-model'), str(path), str(fixture_path)], check=True)
     if not bos and not eos:
         p = embedding(path, '')
         assert p.returncode != 0 and 'token count' in p.stderr, p.stderr

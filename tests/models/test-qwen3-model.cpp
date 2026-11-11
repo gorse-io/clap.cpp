@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
         nlohmann::json fixture;
         input >> fixture;
         clap_runtime_options options = clap_default_options();
-        options.threads = 2;
+        options.threads = fixture.value("threads", 2);
         options.device = "cpu";
         options.activation_precision =
             fixture.value("model_default_activations", false) ? CLAP_ACTIVATION_MODEL_DEFAULT : CLAP_ACTIVATION_F32;

@@ -26,7 +26,7 @@ class Qwen3Model final : public ModelArchitecture {
     void load_arch_tensors() const override;
     void bind_tensors();
     ggml_tensor *rms(Graph &, ggml_tensor *, const LayerWeights &) const;
-    ggml_tensor *expand_kv(Graph &, ggml_tensor *, int) const;
+
     const ModelLoader &loader;
     GraphRuntime runtime;
     struct Parameters {
