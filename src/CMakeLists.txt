@@ -23,7 +23,11 @@ add_library(clap-qwen3-attention OBJECT qwen3-attention.cpp)
 set_target_properties(clap-qwen3-attention PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(clap-qwen3-attention PRIVATE cxx_std_17)
 target_compile_options(clap-qwen3-attention PRIVATE "$<TARGET_PROPERTY:ggml-cpu,COMPILE_OPTIONS>")
-target_compile_definitions(clap-qwen3-attention PRIVATE "$<TARGET_PROPERTY:ggml-cpu,COMPILE_DEFINITIONS>")
+# Copy backend policy, but never its DLL producer/export ownership. Linking the
+# object target as a consumer supplies GGML_SHARED/GGML_BACKEND_SHARED correctly.
+target_compile_definitions(clap-qwen3-attention PRIVATE
+    "$<FILTER:$<TARGET_PROPERTY:ggml-cpu,COMPILE_DEFINITIONS>,EXCLUDE,^GGML_(BACKEND_)?BUILD(=|$)>")
+target_link_libraries(clap-qwen3-attention PRIVATE ggml-cpu ggml-base)
 target_include_directories(clap-qwen3-attention SYSTEM PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../ggml/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../ggml/src"

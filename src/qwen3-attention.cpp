@@ -3,6 +3,15 @@
 // Keep this operation-local: changing GGML's F16 traits also changes weight matmuls.
 #include "qwen3-attention.h"
 
+// Keep the backend's native half conversions where available. Otherwise use
+// the public API, not its private lookup table (unavailable across Windows DLLs).
+// Define this before the SIMD headers: their inline vector helpers also widen
+// scalar halves and must not capture references to ggml_table_f32_f16.
+#if !(defined(__ARM_NEON) && defined(__ARM_FP16_FORMAT_IEEE) &&                                                        \
+      !(defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11) && !defined(__MUSACC__)) &&                                 \
+    !defined(__POWER9_VECTOR__) && !(defined(__riscv) && defined(__riscv_zfhmin))
+#define GGML_CPU_FP16_TO_FP32(x) ggml_fp16_to_fp32(x)
+#endif
 #include "ggml-cpu/common.h"
 #include "ggml-cpu/vec.h"
 #include <ggml-cpu.h>
