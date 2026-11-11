@@ -5,7 +5,7 @@
 [![CI](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml/badge.svg)](https://github.com/gorse-io/clap.cpp/actions/workflows/ci.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/gorse-io/clap.cpp)](https://github.com/gorse-io/clap.cpp/releases/latest)
 
-C++20/ggml implementations of text and audio embedding inference:
+C++20/ggml implementations of audio embedding inference features:
 
 - Supports WAV, MP3, and FLAC audio input.
 - Automatically resamples audio to the model's required.
@@ -15,7 +15,6 @@ C++20/ggml implementations of text and audio embedding inference:
 
 | Model | Text | Audio | Embedding dimensions | Sample rate |
 | --- | --- | --- | --- | --- |
-| [Qwen3 Embedding 0.6B](https://huggingface.co/unsloth/Qwen3-Embedding-0.6B) | ✅ | ❌ | 1,024 | — |
 | [CLAP](https://huggingface.co/laion/larger_clap_music) | ✅ | ✅ | 512 | 48 kHz |
 | [CLAP2 Large](https://huggingface.co/laion/clap2-large-audioxl-s1B) | ✅ | ✅ | 960 | 32 kHz |
 | [CLAP2 Medium](https://huggingface.co/laion/clap2-medium-audioxl-s1B) | ✅ | ✅ | 640 | 32 kHz |
@@ -49,36 +48,6 @@ Load a converted GGUF and generate real native text or audio embeddings:
 clap embedding --model larger_clap_general-q4_k_m.gguf --text 'Sound of a dog'
 clap embedding --model larger_clap_general-q4_k_m.gguf --audio dog.wav
 ```
-
-### Qwen3 text embeddings
-
-Download the published checkpoint, then convert and run it natively:
-
-```sh
-hf download unsloth/Qwen3-Embedding-0.6B \
-  --revision f2fddb42505bde9feaf19f0967b01dce52e764c6 \
-  --include config.json tokenizer.json model.safetensors \
-  --local-dir models/Qwen3-Embedding-0.6B
-python3 convert_hf_to_gguf.py models/Qwen3-Embedding-0.6B qwen3-embedding-f16.gguf --dtype f16
-clap embedding --model qwen3-embedding-f16.gguf --text '中国的首都是北京。'
-clap quantize qwen3-embedding-f16.gguf qwen3-embedding-q8_0.gguf --type Q8_0
-clap embedding --model qwen3-embedding-q8_0.gguf --text 'The capital of China is Beijing.'
-```
-
-Conversion accepts the published BF16 safetensors and writes F16 or F32 GGUF;
-NumPy accelerates conversion when installed. Inference uses the existing native
-GGML runtime and C API, with no Python or llama.cpp runtime dependency. BF16,
-Q8_0 and Q4_K_M storage presets use the existing `clap quantize` command.
-Use this repository's converter: llama.cpp-format GGUF uses different metadata
-and tensor names.
-
-Qwen3 returns 1024-dimensional, L2-normalized embeddings from the last token.
-Its exported tokenizer applies NFC and byte BPE and appends endoftext, without
-BOS. No chat template or retrieval instruction is added; include any desired
-instruction literally in your text. Audio and frame APIs return unsupported
-modality errors. `clap_encode_tokens` takes an **unpadded** sequence for this
-checkpoint, whose external batch-padding ID also denotes EOS. See the pinned
-[source contract and test notes](tests/models/QWEN3_SOURCE.md).
 
 ### Embeddings server
 
