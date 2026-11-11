@@ -180,19 +180,12 @@ if(BUILD_TESTING)
         endif()
     endif()
     if(CLAP_BUILD_CLI)
-        add_executable(test-qwen3-tokenizer tests/models/test-qwen3-tokenizer.cpp)
-        target_include_directories(test-qwen3-tokenizer PRIVATE src)
-        target_link_libraries(test-qwen3-tokenizer PRIVATE clap nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
-        add_test(NAME test-qwen3-tokenizer COMMAND test-qwen3-tokenizer
-            "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/qwen3_tokenizer.json")
         add_executable(test-qwen3-model tests/models/test-qwen3-model.cpp)
         target_link_libraries(test-qwen3-model PRIVATE clap nlohmann_json::nlohmann_json)
         add_test(NAME test-qwen3-native
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/qwen3_test.py"
                     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/qwen3-fixture")
         set_tests_properties(test-qwen3-native PROPERTIES TIMEOUT 180)
-        add_test(NAME test-qwen3-conversion
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/qwen3_conversion_test.py")
     endif()
     add_executable(test-feature-input tests/models/test-feature-input.cpp)
     target_link_libraries(test-feature-input PRIVATE clap nlohmann_json::nlohmann_json)

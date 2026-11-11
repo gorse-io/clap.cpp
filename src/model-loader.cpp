@@ -83,6 +83,50 @@ std::string ModelLoader::metadata(const char *key) const {
     return std::string(gguf_get_val_str(gguf, id));
 }
 
+bool ModelLoader::has_metadata(const char *key) const {
+    return source ? source->has_metadata((metadata_prefix + key).c_str()) : gguf_find_key(gguf, key) >= 0;
+}
+int64_t ModelLoader::metadata_key(const char *key, gguf_type type) const {
+    const auto id = gguf_find_key(gguf, key);
+    if (id < 0 || gguf_get_kv_type(gguf, id) != type)
+        throw std::runtime_error(std::string("CLAP: missing or incorrectly typed GGUF metadata: ") + key);
+    return id;
+}
+uint32_t ModelLoader::metadata_u32(const char *key) const {
+    return source ? source->metadata_u32((metadata_prefix + key).c_str())
+                  : gguf_get_val_u32(gguf, metadata_key(key, GGUF_TYPE_UINT32));
+}
+float ModelLoader::metadata_f32(const char *key) const {
+    return source ? source->metadata_f32((metadata_prefix + key).c_str())
+                  : gguf_get_val_f32(gguf, metadata_key(key, GGUF_TYPE_FLOAT32));
+}
+bool ModelLoader::metadata_bool(const char *key) const {
+    return source ? source->metadata_bool((metadata_prefix + key).c_str())
+                  : gguf_get_val_bool(gguf, metadata_key(key, GGUF_TYPE_BOOL));
+}
+std::vector<std::string> ModelLoader::metadata_strings(const char *key) const {
+    if (source)
+        return source->metadata_strings((metadata_prefix + key).c_str());
+    const auto id = metadata_key(key, GGUF_TYPE_ARRAY);
+    if (gguf_get_arr_type(gguf, id) != GGUF_TYPE_STRING)
+        throw std::runtime_error(std::string("CLAP: incorrectly typed GGUF array: ") + key);
+    std::vector<std::string> result;
+    result.reserve(gguf_get_arr_n(gguf, id));
+    for (size_t i = 0; i < gguf_get_arr_n(gguf, id); ++i)
+        result.emplace_back(gguf_get_arr_str(gguf, id, i));
+    return result;
+}
+std::vector<int32_t> ModelLoader::metadata_ints(const char *key) const {
+    if (source)
+        return source->metadata_ints((metadata_prefix + key).c_str());
+    const auto id = metadata_key(key, GGUF_TYPE_ARRAY);
+    if (gguf_get_arr_type(gguf, id) != GGUF_TYPE_INT32)
+        throw std::runtime_error(std::string("CLAP: incorrectly typed GGUF array: ") + key);
+    const auto *data = static_cast<const int32_t *>(gguf_get_arr_data(gguf, id));
+    return gguf_get_arr_n(gguf, id) ? std::vector<int32_t>(data, data + gguf_get_arr_n(gguf, id))
+                                    : std::vector<int32_t>{};
+}
+
 bool ModelLoader::has_metadata_prefix(const std::string &prefix) const {
     if (source)
         return source->has_metadata_prefix(metadata_prefix + prefix);

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Convert local Hugging Face CLAP, CLAP2, CLaMP3, MERT-v1, MERT2, MuQ, MuQ-MuLan or Qwen3 Embedding weights to native GGUF.
+"""Convert local Hugging Face CLAP, CLAP2, CLaMP3, MERT-v1, MERT2, MuQ or MuQ-MuLan weights to native GGUF.
 
 Conversion is the only step requiring Python; most architectures also use torch.
 PyTorch checkpoints are loaded with weights_only=True and mmap=True. CLaMP3
 symbolic encoder tensors are not written because native symbolic input is not supported. MERT2 safetensors are
 streamed one tensor at a time so the published 632M-parameter checkpoint can be
 converted on memory-constrained hosts.
-Qwen3 reads F32/F16/BF16 safetensors in bounded chunks without torch.
 CLAP2 reads the HF model.safetensors in bounded chunks without requiring torch.
 """
 import argparse
@@ -28,12 +27,12 @@ def convert(source, destination, dtype='f32', clamp3_config=None, tokenizer=None
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', type=Path, help='CLAP/CLAP2/MERT/MuQ/MuLan/Qwen3 directory or CLaMP3 .pth checkpoint')
+    parser.add_argument('source', type=Path, help='CLAP/CLAP2/MERT/MuQ/MuLan directory or CLaMP3 .pth checkpoint')
     parser.add_argument('destination', type=Path)
     parser.add_argument('--dtype', choices=['f32', 'f16'], default='f32')
     parser.add_argument('--clamp3-config', type=Path,
                         help='CLaMP3 combined config JSON (otherwise infer from sibling XLM-R config)')
-    parser.add_argument('--tokenizer', type=Path, help='CLAP2/CLaMP3/MuLan/Qwen3 local tokenizer.json (default: beside checkpoint)')
+    parser.add_argument('--tokenizer', type=Path, help='CLAP2/CLaMP3/MuLan local tokenizer.json (default: beside checkpoint)')
     parser.add_argument('--clap2-revision', help='full HF revision SHA for CLAP2 metadata (default: pinned revision for the detected model size)')
     parser.add_argument('--mert2-revision', help='full pinned Hugging Face revision SHA for MERT2 metadata')
     parser.add_argument('--muq-revision', help='full pinned Hugging Face revision SHA for MuQ metadata')

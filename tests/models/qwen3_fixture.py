@@ -5,10 +5,78 @@ import math
 from pathlib import Path
 import random
 import struct
-from clap2_fixture import byte_encoder, write_gguf
+from clap2_fixture import byte_encoder
 
-QWEN_REGEX = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
 
+def standard_name(name):
+    name = name.replace('model.embed_tokens', 'token_embd').replace('model.norm', 'output_norm')
+    name = name.replace('model.layers.', 'blk.')
+    for source, target in [('input_layernorm', 'attn_norm'), ('post_attention_layernorm', 'ffn_norm'),
+                           ('self_attn.q_norm', 'attn_q_norm'), ('self_attn.k_norm', 'attn_k_norm'),
+                           ('self_attn.q_proj', 'attn_q'), ('self_attn.k_proj', 'attn_k'),
+                           ('self_attn.v_proj', 'attn_v'), ('self_attn.o_proj', 'attn_output'),
+                           ('mlp.gate_proj', 'ffn_gate'), ('mlp.up_proj', 'ffn_up'), ('mlp.down_proj', 'ffn_down')]:
+        name = name.replace(source, target)
+    return name
+
+
+def standard_metadata(c, t):
+    tokens = [''] * c['vocab_size']
+    for token, index in t['model']['vocab'].items():
+        tokens[index] = token
+    return {
+        'general.architecture': 'qwen3',
+        'qwen3.context_length': c['max_position_embeddings'],
+        'qwen3.embedding_length': c['hidden_size'],
+        'qwen3.block_count': c['num_hidden_layers'],
+        'qwen3.feed_forward_length': c['intermediate_size'],
+        'qwen3.attention.head_count': c['num_attention_heads'],
+        'qwen3.attention.head_count_kv': c['num_key_value_heads'],
+        'qwen3.attention.key_length': c['head_dim'],
+        'qwen3.attention.value_length': c['head_dim'],
+        'qwen3.rope.dimension_count': c['head_dim'],
+        'qwen3.rope.freq_base': c['rope_theta'],
+        'qwen3.attention.layer_norm_rms_epsilon': c['rms_norm_eps'],
+        'qwen3.pooling_type': 3,
+        'tokenizer.ggml.model': 'gpt2', 'tokenizer.ggml.pre': 'qwen2',
+        'tokenizer.ggml.tokens': tokens,
+        'tokenizer.ggml.token_type': [3 if 256 <= i < 260 else 1 for i in range(len(tokens))],
+        'tokenizer.ggml.merges': [' '.join(m) for m in t['model']['merges']],
+        'tokenizer.ggml.eos_token_id': 256, 'tokenizer.ggml.bos_token_id': 256,
+        'tokenizer.ggml.padding_token_id': 257,
+        'tokenizer.ggml.add_bos_token': False, 'tokenizer.ggml.add_eos_token': True,
+    }
+
+
+def write_gguf(path, metadata, tensors, half=False):
+    # Test-only serializer of standard typed metadata, not a product converter.
+    def string(s):
+        b = s.encode('utf-8')
+        return struct.pack('<Q', len(b)) + b
+    def value(v):
+        if isinstance(v, str): return 8, string(v)
+        if isinstance(v, bool): return 7, struct.pack('<?', v)
+        if isinstance(v, int): return 4, struct.pack('<I', v)
+        if isinstance(v, float): return 6, struct.pack('<f', v)
+        if isinstance(v, list):
+            typ = 8 if not v else value(v[0])[0]
+            return 9, struct.pack('<IQ', typ, len(v)) + b''.join(value(x)[1] for x in v)
+        raise TypeError(v)
+    header = bytearray(b'GGUF' + struct.pack('<IQQ', 3, len(tensors), len(metadata)))
+    for k, v in metadata.items():
+        typ, raw = value(v)
+        if k == 'tokenizer.ggml.token_type' and all(isinstance(x, int) for x in v):
+            raw = struct.pack('<IQ', 5, len(v)) + struct.pack('<' + 'i' * len(v), *v)
+        header += string(k) + struct.pack('<I', typ) + raw
+    body = bytearray()
+    for name, (shape, values) in sorted(tensors.items()):
+        half_tensor = half and len(shape) == 2
+        header += string(standard_name(name)) + struct.pack('<I', len(shape))
+        header += struct.pack('<' + 'Q' * len(shape), *reversed(shape))
+        header += struct.pack('<IQ', int(half_tensor), len(body))
+        body += struct.pack('<' + ('e' if half_tensor else 'f') * len(values), *values)
+        body += b'\0' * (-len(body) % 32)
+    Path(path).write_bytes(header + b'\0' * (-len(header) % 32) + body)
 
 def model_data(width=32):
     c = dict(
@@ -50,51 +118,7 @@ def model_data(width=32):
         for i, s in enumerate(['<|endoftext|>', '<|pad|>', '<|im_start|>', '<|im_end|>'], 256)
     ]
     vocab.update({a['content']: a['id'] for a in added})
-    tok = dict(
-        version='1.0',
-        normalizer=dict(type='NFC'),
-        added_tokens=added,
-        pre_tokenizer=dict(
-            type='Sequence',
-            pretokenizers=[
-                dict(
-                    type='Split', pattern=dict(Regex=QWEN_REGEX), behavior='Isolated', invert=False
-                ),
-                dict(type='ByteLevel', add_prefix_space=False, use_regex=False, trim_offsets=False),
-            ],
-        ),
-        post_processor=dict(
-            type='Sequence',
-            processors=[
-                dict(type='ByteLevel', add_prefix_space=False, use_regex=False, trim_offsets=False),
-                dict(
-                    type='TemplateProcessing',
-                    single=[
-                        {'Sequence': {'id': 'A', 'type_id': 0}},
-                        {'SpecialToken': {'id': '<|endoftext|>', 'type_id': 0}},
-                    ],
-                    special_tokens={
-                        '<|endoftext|>': dict(
-                            id='<|endoftext|>', ids=[256], tokens=['<|endoftext|>']
-                        )
-                    },
-                ),
-            ],
-        ),
-        decoder=dict(type='ByteLevel', add_prefix_space=False, use_regex=False, trim_offsets=False),
-        model=dict(
-            type='BPE',
-            vocab=vocab,
-            merges=[list(m) for m in merges],
-            dropout=None,
-            unk_token=None,
-            continuing_subword_prefix='',
-            end_of_word_suffix='',
-            fuse_unk=False,
-            byte_fallback=False,
-            ignore_merges=False,
-        ),
-    )
+    tok = dict(model=dict(vocab=vocab, merges=merges))
     rng = random.Random(571)
     tensors = {}
 
@@ -228,17 +252,13 @@ def generate(output, width=32):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     c, t, tensors = model_data(width)
-    metadata = {
-        'general.architecture': 'qwen3',
-        'qwen3.config': json.dumps(c),
-        'qwen3.tokenizer': json.dumps(t),
-    }
+    metadata = standard_metadata(c, t)
     texts = [
         ('', [256]),
         ('<|endoftext|>', [256, 256]),
         ('ab12', [265, 49, 50, 256]),
         ("I'RE_a\n\n", [73, 262, 263, 264, 256]),
-        ('e\u0301 中文🙂', list('é 中文🙂'.encode()) + [256]),
+        ('e\u0301 中文🙂', list('e\u0301 中文🙂'.encode()) + [256]),
         ('<|im_start|>ab<|im_end|>', [258, 265, 259, 256]),
         ('<|im_start|><|im_end|>', [258, 259, 256]),
     ]
@@ -254,6 +274,7 @@ def generate(output, width=32):
         [3, 7, 9],
     ]
     fixture = dict(
+        tiny_contract=True,
         sample_rate=0,
         projection_dim=width,
         context_length=128,

@@ -1,6 +1,6 @@
+#include "model-loader.h"
 #include "vocab.h"
 
-#include <unicode/normalizer2.h>
 #include <unicode/uchar.h>
 #include <unicode/unistr.h>
 
@@ -109,68 +109,58 @@ std::vector<int32_t> normalizer_boundaries(const icu::UnicodeString &text) {
     boundaries.push_back(text.length());
     return boundaries;
 }
+json standard_bpe(const ModelLoader &loader) {
+    if (loader.metadata("tokenizer.ggml.model") != "gpt2" || loader.metadata("tokenizer.ggml.pre") != "qwen2")
+        throw std::runtime_error("CLAP: unsupported Qwen3 GGUF tokenizer/pre-tokenizer");
+    const auto tokens = loader.metadata_strings("tokenizer.ggml.tokens");
+    const auto types = loader.metadata_ints("tokenizer.ggml.token_type");
+    const auto merges = loader.metadata_strings("tokenizer.ggml.merges");
+    if (tokens.empty() || tokens.size() != types.size() ||
+        tokens.size() != size_t(loader.weight("token_embd.weight")->ne[1]))
+        throw std::runtime_error("CLAP: invalid Qwen3 GGUF vocabulary length");
+    json vocab = json::object(), special = json::array();
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        const auto text = tokens.at(i);
+        const int type = types.at(i);
+        if (text.empty() || type < 1 || type > 6 || vocab.contains(text))
+            throw std::runtime_error("CLAP: invalid Qwen3 GGUF token/type");
+        vocab[text] = i;
+        if (type == 2 || type == 3 || type == 4)
+            special.push_back(json{{"id", i}, {"content", text}});
+    }
+    for (const auto &entry : merges) {
+        const auto merge = entry;
+        const auto space = merge.find(' ');
+        if (space == std::string::npos || !vocab.contains(merge.substr(0, space)) ||
+            !vocab.contains(merge.substr(space + 1)) ||
+            !vocab.contains(merge.substr(0, space) + merge.substr(space + 1)))
+            throw std::runtime_error("CLAP: invalid Qwen3 GGUF merge");
+    }
+    return json{{"model", {{"type", "BPE"}, {"vocab", vocab}, {"merges", merges}}}, {"added_tokens", special}};
+}
+int standard_special(const ModelLoader &loader, const char *flag, const char *key) {
+    if (!loader.has_metadata(flag) || !loader.metadata_bool(flag))
+        return -1;
+    const auto id = loader.metadata_u32(key);
+    if (id >= uint64_t(loader.weight("token_embd.weight")->ne[1]))
+        throw std::runtime_error("CLAP: invalid Qwen3 GGUF special token ID");
+    return int(id);
+}
 } // namespace
 
+ByteBpeVocabulary::ByteBpeVocabulary(const ModelLoader &loader, size_t context_length)
+    : ByteBpeVocabulary(standard_bpe(loader),
+                        standard_special(loader, "tokenizer.ggml.add_bos_token", "tokenizer.ggml.bos_token_id"),
+                        standard_special(loader, "tokenizer.ggml.add_eos_token", "tokenizer.ggml.eos_token_id"),
+                        context_length, false, true) {}
+
 ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length,
-                                     bool split_special_tokens)
-    : bos(bos), eos(eos), qwen(bos < 0), context_length(context_length) {
+                                     bool split_special_tokens, bool qwen_rules)
+    : bos(bos), eos(eos), qwen(qwen_rules), context_length(context_length) {
     if (tokenizer.at("model").at("type") != "BPE")
         throw std::runtime_error("CLAP: expected byte-level BPE");
-    // The pinned unsloth export uses Qwen's Split + ByteLevel sequence,
-    // NFC normalization, and an explicit EOS-only postprocessor.
     static const std::string qwen_regex =
-        R"((?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
-    if (qwen) {
-        const auto expect = [](const json &object, const char *key, const json &value) {
-            if (!object.is_object() || !object.contains(key) || object.at(key) != value)
-                throw std::runtime_error(std::string("CLAP: unsupported Qwen3 tokenizer ") + key);
-        };
-        expect(tokenizer, "normalizer", json{{"type", "NFC"}});
-        const auto &pre = tokenizer.at("pre_tokenizer");
-        expect(pre, "type", "Sequence");
-        const auto &parts = pre.at("pretokenizers");
-        if (!parts.is_array() || parts.size() != 2)
-            throw std::runtime_error("CLAP: unsupported Qwen3 pretokenizer");
-        expect(parts.at(0), "type", "Split");
-        expect(parts.at(0), "pattern", json{{"Regex", qwen_regex}});
-        expect(parts.at(0), "behavior", "Isolated");
-        expect(parts.at(0), "invert", false);
-        expect(parts.at(1), "type", "ByteLevel");
-        expect(parts.at(1), "add_prefix_space", false);
-        expect(parts.at(1), "use_regex", false);
-        const auto &m = tokenizer.at("model");
-        expect(m, "dropout", nullptr);
-        expect(m, "unk_token", nullptr);
-        expect(m, "byte_fallback", false);
-        expect(m, "ignore_merges", false);
-        for (const char *field : {"continuing_subword_prefix", "end_of_word_suffix"})
-            if (!m.at(field).is_null() && m.at(field) != "")
-                throw std::runtime_error("CLAP: unsupported Qwen3 BPE affix");
-        expect(tokenizer.at("decoder"), "type", "ByteLevel");
-        const auto &post = tokenizer.at("post_processor");
-        expect(post, "type", "Sequence");
-        const auto &processors = post.at("processors");
-        if (!processors.is_array() || processors.size() != 2)
-            throw std::runtime_error("CLAP: unsupported Qwen3 postprocessor");
-        expect(processors.at(0), "type", "ByteLevel");
-        expect(processors.at(0), "add_prefix_space", false);
-        expect(processors.at(0), "use_regex", false);
-        const auto &templ = processors.at(1);
-        expect(templ, "type", "TemplateProcessing");
-        expect(templ, "single",
-               json::array({json{{"Sequence", {{"id", "A"}, {"type_id", 0}}}},
-                            json{{"SpecialToken", {{"id", "<|endoftext|>"}, {"type_id", 0}}}}}));
-        const auto &end = templ.at("special_tokens").at("<|endoftext|>");
-        expect(end, "ids", json::array({eos}));
-        expect(end, "tokens", json::array({"<|endoftext|>"}));
-        for (const auto &a : tokenizer.at("added_tokens")) {
-            for (const char *field : {"single_word", "lstrip", "rstrip", "normalized"})
-                expect(a, field, false);
-            if (!a.at("id").is_number_integer() || a.at("id").get<int64_t>() < 0 ||
-                a.at("id").get<int64_t>() > std::numeric_limits<int>::max())
-                throw std::runtime_error("CLAP: invalid Qwen3 added token ID");
-        }
-    }
+        R"((?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
     for (auto it = tokenizer["model"]["vocab"].begin(); it != tokenizer["model"]["vocab"].end(); ++it)
         vocab.emplace(it.key(), it.value().get<int>());
     int rank = 0;
@@ -212,16 +202,7 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
 
 void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &ids) const {
     UErrorCode status = U_ZERO_ERROR;
-    auto unicode = icu::UnicodeString::fromUTF8(text);
-    if (qwen) {
-        const auto *normalizer = icu::Normalizer2::getNFCInstance(status);
-        icu::UnicodeString normalized;
-        if (U_SUCCESS(status))
-            normalizer->normalize(unicode, normalized, status);
-        if (U_FAILURE(status))
-            throw std::runtime_error("CLAP: Qwen3 NFC normalization failed");
-        unicode = std::move(normalized);
-    }
+    const auto unicode = icu::UnicodeString::fromUTF8(text);
     std::unique_ptr<icu::RegexMatcher> matcher(pattern->matcher(unicode, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: tokenizer regex failed");
@@ -309,9 +290,11 @@ std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max
                 ++pos;
         }
     }
-    if (ids.size() > max_length - 1)
-        ids.resize(max_length - 1);
-    ids.push_back(eos);
+    const size_t limit = max_length - (eos >= 0 ? 1 : 0);
+    if (ids.size() > limit)
+        ids.resize(limit);
+    if (eos >= 0)
+        ids.push_back(eos);
     return ids;
 }
 

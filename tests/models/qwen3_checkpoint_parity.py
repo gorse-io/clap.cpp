@@ -1,10 +1,12 @@
-"""Optional published-weight parity against upstream Transformers Qwen3 modules.
+"""Optional standard-GGUF parity against a separately built, pinned llama.cpp.
 
-Usage: python qwen3_checkpoint_parity.py BUILD LOCAL_HF_DIRECTORY OUTPUT.json
-No downloads. The reference worker loads one decoder layer at a time in F32,
-then exits before native inference starts, keeping heavyweight jobs serialized.
+Usage: python qwen3_checkpoint_parity.py BUILD MODEL.gguf LLAMA_REFERENCE OUTPUT.json
+Build qwen3-llama-reference.cpp against external llama.cpp as documented in
+QWEN3_SOURCE.md. No downloads, Python ML packages, conversion or quantization.
+The independent reference process exits before native model execution begins.
 """
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -12,149 +14,60 @@ import subprocess
 import sys
 
 TEXTS = [
+    '',
     'The capital of China is Beijing.',
     '中国的首都是北京。',
     'café cafe\u0301 🙂',
     '<|im_start|>user\nhello<|im_end|>',
+    '<|endoftext|>',
+    '<|im_start|><|im_end|>',
+    "I'RE_a\n\n12345",
+    ' العربية हिन्दी 日本語 한글\t\r\n',
 ]
 
 
-def reference(source, output):
-    import torch
-    from safetensors import safe_open
-    from tokenizers import Tokenizer
-    from transformers import AutoTokenizer, Qwen3Config
-    from transformers.models.qwen3.modeling_qwen3 import (
-        Qwen3DecoderLayer,
-        Qwen3RMSNorm,
-        Qwen3RotaryEmbedding,
-    )
-
-    torch.set_num_threads(2)
-    config = Qwen3Config.from_json_file(str(source / 'config.json'))
-    config._attn_implementation = 'eager'
-    tokenizer = Tokenizer.from_file(str(source / 'tokenizer.json'))
-    hf_tokenizer = AutoTokenizer.from_pretrained(source, local_files_only=True)
-    results = []
-    with torch.inference_mode(), safe_open(
-        source / 'model.safetensors', framework='pt', device='cpu'
-    ) as weights:
-        prefix = '' if 'embed_tokens.weight' in weights.keys() else 'model.'
-        states = []
-        table = weights.get_slice(prefix + 'embed_tokens.weight')
-        rope = Qwen3RotaryEmbedding(config=config)
-        for text in TEXTS:
-            ids = tokenizer.encode(text).ids
-            assert ids == hf_tokenizer(text)['input_ids']
-            # Gather only used rows; keep the four short sequences in memory.
-            x = torch.stack(
-                [table[token : token + 1].squeeze(0).float() for token in ids]
-            ).unsqueeze(0)
-            pos = torch.arange(len(ids)).unsqueeze(0)
-            mask = torch.full((len(ids), len(ids)), float('-inf')).triu(1)[None, None]
-            states.append(
-                dict(
-                    text=text, tokens=ids, x=x, pos=pos, mask=mask, position_embeddings=rope(x, pos)
-                )
-            )
-        # Read each large layer exactly once for all texts, then release it.
-        for i in range(config.num_hidden_layers):
-            layer = Qwen3DecoderLayer(config, i).float().eval()
-            p = prefix + f'layers.{i}.'
-            layer.load_state_dict(
-                {name: weights.get_tensor(p + name).float() for name in layer.state_dict()},
-                strict=True,
-            )
-            for state in states:
-                state['x'] = layer(
-                    state['x'],
-                    attention_mask=state['mask'],
-                    position_ids=state['pos'],
-                    position_embeddings=state['position_embeddings'],
-                    use_cache=False,
-                )[0]
-            del layer
-            if (i + 1) % 7 == 0:
-                print('Transformers reference layers completed:', i + 1, flush=True)
-        norm = Qwen3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        norm.weight.copy_(weights.get_tensor(prefix + 'norm.weight').float())
-        for state in states:
-            embedding = (
-                torch.nn.functional.normalize(norm(state['x'])[:, -1], dim=-1).squeeze(0).tolist()
-            )
-            results.append(dict(text=state['text'], tokens=state['tokens'], embedding=embedding))
-    output.write_text(
-        json.dumps(
-            dict(
-                transformers=__import__('transformers').__version__,
-                torch=torch.__version__,
-                cases=results,
-            ),
-            ensure_ascii=False,
-        )
-    )
-
-
 def main():
-    build, source, output = map(Path, sys.argv[1:4])
-    if len(sys.argv) == 5 and sys.argv[4] == '--reference':
-        reference(source, output)
-        return
-    reference_path = output.with_suffix('.reference.json')
-    subprocess.run(
-        [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            str(build),
-            str(source),
-            str(reference_path),
-            '--reference',
-        ],
-        check=True,
-    )
-    refs = json.loads(reference_path.read_text())
+    build, model, reference, output = map(lambda x: Path(x).resolve(), sys.argv[1:])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    corpus = output.with_suffix('.texts.json')
+    corpus.write_text(json.dumps(TEXTS, ensure_ascii=False), encoding='utf-8')
+    run = subprocess.run([str(reference), str(model), str(corpus)], capture_output=True, text=True)
+    output.with_suffix('.llama.log').write_text(run.stderr, encoding='utf-8')
+    if run.returncode:
+        raise RuntimeError(run.stderr)
+    cases = json.loads(run.stdout)
+    assert len(cases) == len(TEXTS) and [c['text'] for c in cases] == TEXTS
+    fixture = output.with_suffix('.fixture.json')
+    fixture.write_text(json.dumps(dict(sample_rate=0, projection_dim=1024, context_length=32768,
+                                      tolerance=0.003, text_cases=cases, token_cases=[])), encoding='utf-8')
+    # Exact llama.cpp token IDs plus real string/token C API embeddings and modality errors.
+    subprocess.run([str(build / 'test-qwen3-model'), str(model), str(fixture)], check=True)
     results = []
-    for case in refs['cases']:
-        run = subprocess.run(
-            [
-                str(build / 'clap'),
-                'embedding',
-                '--model',
-                str(source / 'model-f16.gguf'),
-                '--text',
-                case['text'],
-            ],
-            text=True,
-            capture_output=True,
-        )
+    for case in cases:
+        run = subprocess.run([str(build / 'clap'), 'embedding', '--model', str(model), '--text', case['text']],
+                             capture_output=True, text=True)
         if run.returncode:
             raise RuntimeError(run.stderr)
         actual = json.loads(run.stdout)
-        ref = case['embedding']
+        ref = case['expected']
         assert len(actual) == len(ref) == 1024
         error = max(abs(a - b) for a, b in zip(actual, ref))
         norm = math.sqrt(sum(v * v for v in actual))
         ref_norm = math.sqrt(sum(v * v for v in ref))
         cosine = sum(a * b for a, b in zip(actual, ref)) / (norm * ref_norm)
-        record = dict(
-            text=case['text'],
-            tokens=case['tokens'],
-            dimension=len(actual),
-            max_abs_error=error,
-            cosine_similarity=cosine,
-            norm=norm,
-        )
+        record = dict(text=case['text'], tokens=case['tokens'], dimension=len(actual), max_abs_error=error,
+                      cosine_similarity=cosine, norm=norm)
         print(json.dumps(record, ensure_ascii=False), flush=True)
         results.append(record)
         assert error < 0.003 and cosine > 0.9999 and abs(norm - 1) < 2e-5, record
-    output.write_text(
-        json.dumps(
-            dict(transformers=refs['transformers'], torch=refs['torch'], cases=results),
-            ensure_ascii=False,
-            indent=2,
-        )
-        + '\n'
-    )
+    hasher = hashlib.sha256()
+    with model.open('rb') as f:
+        for chunk in iter(lambda: f.read(8 * 1024 * 1024), b''):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
+    output.write_text(json.dumps(dict(model=str(model), bytes=model.stat().st_size, sha256=digest,
+                                      reference=str(reference), cases=results), ensure_ascii=False, indent=2) + '\n',
+                      encoding='utf-8')
 
 
 if __name__ == '__main__':

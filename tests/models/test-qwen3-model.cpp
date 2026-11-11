@@ -88,13 +88,16 @@ int main(int argc, char **argv) {
         clap_audio_frames frames{};
         require(clap_get_audio_frames(model.get(), pcm, 2, 16000, &frames) == CLAP_ERROR && !frames.values,
                 "Qwen3 must reject frames");
-        for (const auto &ids : std::vector<std::vector<int>>{{-1}, {266}, {257, 257}, std::vector<int>(129, 3)}) {
-            require(clap_encode_tokens(model.get(), ids.data(), ids.size(), &out, &count) != CLAP_OK && !out && !count,
-                    "Qwen3 must reject invalid tokens");
+        if (fixture.value("tiny_contract", false)) {
+            for (const auto &ids : std::vector<std::vector<int>>{{-1}, {266}, {257, 257}, std::vector<int>(129, 3)}) {
+                require(clap_encode_tokens(model.get(), ids.data(), ids.size(), &out, &count) != CLAP_OK && !out &&
+                            !count,
+                        "Qwen3 must reject invalid tokens");
+            }
+            const auto short_ids = take_buffer<int>(
+                [&](int **out, size_t *count) { return clap_tokenize(model.get(), "ab12", 2, out, count); });
+            require(short_ids == std::vector<int>({265, 256}), "Qwen3 truncation must retain EOS");
         }
-        const auto short_ids = take_buffer<int>(
-            [&](int **out, size_t *count) { return clap_tokenize(model.get(), "ab12", 2, out, count); });
-        require(short_ids == std::vector<int>({265, 256}), "Qwen3 truncation must retain EOS");
         std::cout << "Native Qwen3 scalar oracle and public API passed\n";
         return 0;
     } catch (const std::exception &error) {

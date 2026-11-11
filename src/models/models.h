@@ -29,7 +29,6 @@ class Qwen3Model final : public ModelArchitecture {
     ggml_tensor *expand_kv(Graph &, ggml_tensor *, int) const;
     const ModelLoader &loader;
     GraphRuntime runtime;
-    nlohmann::json config;
     struct Parameters {
         int width, ffn, depth, heads, kv_heads, head_dim, vocab, context, eos, pad;
         float epsilon, theta;

@@ -1,84 +1,96 @@
-Qwen3 Embedding source contract
-==============================
+Qwen3 Embedding GGUF source contract
+===================================
 
-Implementation references (read at immutable revisions):
+The runtime reads standard llama.cpp Qwen3 GGUF directly. This project does not
+convert or quantize Qwen3 models, does not require embedded Hugging Face
+configuration/tokenizer JSON, and rejects the former native-format metadata.
+Existing converters and quantizers for other architectures are unchanged.
 
-- llama.cpp [`202c1a229f5a83d1c9d758ed0f2d43760fa4bab0`](https://github.com/ggml-org/llama.cpp/tree/202c1a229f5a83d1c9d758ed0f2d43760fa4bab0):
-  `src/models/qwen3.cpp` (`load_arch_tensors`, `build_backbone`) and
-  `conversion/qwen.py` (`Qwen3Model` / `Qwen2Model` converter),
-  `conversion/base.py` (`_set_vocab_gpt2`, `_try_set_pooling_type`),
-  `src/llama-vocab.cpp` (Qwen BPE pretokenization).
-  The backbone uses causal grouped query attention, separate per-head Q/K
-  RMSNorm, NeoX (half split) RoPE, pre-RMSNorm residual blocks, SiLU gated FFN,
-  and final RMSNorm. The LM head is irrelevant for embeddings.
-- [`unsloth/Qwen3-Embedding-0.6B`, revision
-  `f2fddb42505bde9feaf19f0967b01dce52e764c6`](https://huggingface.co/unsloth/Qwen3-Embedding-0.6B/tree/f2fddb42505bde9feaf19f0967b01dce52e764c6):
-  `config.json`, `tokenizer.json`, `tokenizer_config.json`, `README.md`,
-  `modules.json`, `1_Pooling/config.json`. The published configuration is
-  width 1024, FFN 3072, 28 blocks, 16 Q heads, 8 KV heads, head dimension 128,
-  RMS epsilon 1e-6, RoPE base 1e6, context 32768, vocabulary 151669.
-  In particular Q width is 2048, independent of hidden width 1024.
-  Sentence Transformers modules specify last-token pooling followed by L2
-  normalization; the README's Transformers example uses the same calculation.
+Immutable references:
 
-The actual unsloth tokenizer.json uses NFC normalization, Qwen's Unicode regex
-(including single digits), GPT2 byte BPE, recognition of added tokens, and a
-postprocessor appending `<|endoftext|>` (151643). It does not prepend BOS.
-This differs from assuming a generic generation tokenizer with no terminal token.
-The native converter preserves that tokenizer, including its postprocessor;
-chat templates and retrieval instructions are never inserted. Supply desired
-instructions as literal input yourself.
+- llama.cpp `202c1a229f5a83d1c9d758ed0f2d43760fa4bab0`:
+  `src/models/qwen3.cpp`, `src/llama-model.cpp`, `src/llama-vocab.cpp`,
+  `gguf-py/gguf/constants.py`, and `conversion/qwen.py`/`conversion/base.py`.
+  Source: https://github.com/ggml-org/llama.cpp/tree/202c1a229f5a83d1c9d758ed0f2d43760fa4bab0
+- Official `Qwen/Qwen3-Embedding-0.6B-GGUF`, revision
+  `370f27d7550e0def9b39c1f16d3fbaa13aa67728`:
+  `Qwen3-Embedding-0.6B-f16.gguf`, 1197629632 bytes,
+  SHA-256 `421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340`.
+  Source: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/tree/370f27d7550e0def9b39c1f16d3fbaa13aa67728
 
-Native GGUF uses HF tensor names and embedded JSON metadata, following this
-repository's converters. llama.cpp-format GGUF with renamed tensors/typed
-metadata is not the native converter format. There is no llama.cpp dependency.
-F32/F16 conversion streams F32/F16/BF16 safetensors in bounded chunks. The
-published single-file model.safetensors is supported. Arbitrary sharded, scaled
-RoPE, sliding-window, biased or multimodal variants are rejected.
+Metadata and tensors
+--------------------
 
-The C API accepts one token sequence, without an attention-mask argument. When
-config.json defines a distinct pad_token_id, native encoding masks that ID and
-pools the last nonpadding token. The target config has no pad_token_id, and its
-external tokenizer uses endoftext both as EOS and batch padding. Supply unpadded
-sequences for this checkpoint: an EOS token cannot be distinguished from external
-padding by token ID alone. Native text tokenization never pads.
+The model uses typed `qwen3.*` hyperparameters and `tokenizer.ggml.*` arrays.
+Integer dimensions/IDs are UINT32, RMS epsilon/RoPE base are FLOAT32, tokenizer
+flags are BOOL, tokens/merges are STRING arrays and token types are INT32 arrays.
+Tensor names are `token_embd.weight`, `output_norm.weight`, and `blk.N.*`
+(`attn_norm`, `attn_q/k/v`, `attn_output`, `attn_q/k_norm`, `ffn_norm`,
+`ffn_gate/up/down`). An optional correctly shaped `output.weight` is accepted
+but unused for embeddings. Unknown, missing and incorrectly shaped tensors fail.
 
-Default regression tests generate GGUF and safetensors in their build/temp
-folders. Their independent Python scalar decoder uses two nonzero deterministic
-blocks, asymmetric Q/hidden widths and GQA. Mutating causal attention, Q/K norm,
-RoPE, KV-head assignment or pooling demonstrably changes the expected result.
-Storage tests reuse the existing `test-q8` canonical GGML storage decoder, then
-compare the independent scalar backbone against the decoded BF16/Q8/K weights.
-No binary fixture, model download, torch or transformers is needed.
+The official model has hidden width 1024, FFN width 3072, 28 blocks, 16 query
+heads, 8 KV heads, head dimension 128, context 32768 and vocabulary 151669.
+Query width 2048 is independent of hidden width. The runtime retains causal
+contiguous GQA, weighted per-head Q/K RMSNorm, half-split RoPE with base 1e6,
+pre-RMSNorm residual blocks, SiLU gated FFN, final RMSNorm and last-token/L2
+pooling. Unsupported pooling, noncausal/sliding-window attention and scaled
+RoPE are rejected. The existing generic storage reader accepts its supported
+F32/F16/BF16/Q8_0/Q4_K/Q6_K types; that is not Qwen3 quantization functionality.
 
-Reproduce default verification with generated fixtures:
+Tokenization follows llama.cpp's `gpt2`/`qwen2` pre-tokenizer and GGUF token types,
+merges, IDs and add-BOS/add-EOS flags. In particular it does **not** apply the
+NFC normalizer from some HF tokenizer exports. The official GGUF appends EOS
+151643 and does not prepend BOS. No chat template or instruction is inserted.
+Its padding ID equals EOS; callers of the token API must supply unpadded input,
+since an EOS token cannot be distinguished from external batch padding by ID.
+Distinct padding IDs are compacted before attention and last-nonpadding pooling.
+
+Verification
+------------
+
+Default CTest generates F32/F16 GGUF fixtures in the build directory using only
+Python's standard library. An independent scalar decoder covers two nonzero
+blocks, asymmetric head/hidden dimensions, GQA, causal masking, Q/K RMSNorm,
+RoPE and pooling. It also covers Unicode without NFC, literal special tokens,
+BOS/EOS flag combinations, malformed typed metadata, tensor coverage, API/CLI
+embeddings and unsupported audio/frame/quantization requests. No weights,
+downloads, torch or transformers are required by the default suite.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 cmake --build build -j1
 ctest --test-dir build --output-on-failure
-cmake -S . -B build-shared -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_SHARED_LIBS=ON
+cmake -S . -B build-shared -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_SHARED_LIBS=ON -DCLAP_USE_SYSTEM_ICU=ON
 cmake --build build-shared -j1
 ctest --test-dir build-shared --output-on-failure
 ```
 
-`qwen3_checkpoint_parity.py BUILD LOCAL_HF_DIRECTORY REPORT.json` is an optional
-real-checkpoint comparison using upstream Transformers Qwen3 modules. Put native
-`model-f16.gguf` beside the local safetensors/config/tokenizer. The harness gathers
-only the required embedding rows and loads one decoder layer at a time in F32.
-It checks the actual exported tokenizer against Hugging Face AutoTokenizer and
-compares all 1024 output coordinates. The reference worker processes all four
-short texts for each loaded layer, then exits before native inference begins.
+For independent published-GGUF verification, build the pinned external
+llama.cpp as a shared library and compile the optional reference helper:
 
-Published-checkpoint CPU comparison: native F16 GGUF against Transformers 4.53.2
-Qwen3 modules with F32 arithmetic (torch 2.6.0+cpu), for English, Chinese,
-combining-accent/emoji and literal-special-token texts, returned 1024-dimensional
-unit vectors. Worst maximum absolute coordinate error was 0.0001178831; minimum
-cosine similarity was 0.9999993997. GPU execution and maximum-context inference
-were not exercised. F32/BF16/Q8_0/Q4_K_M storage arithmetic is covered separately
-by the generated default fixtures.
+```sh
+cmake -S "$LLAMA_SOURCE" -B "$LLAMA_BUILD" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLAMA_BUILD_TESTS=OFF
+cmake --build "$LLAMA_BUILD" --target llama -j1
+c++ -std=c++17 tests/models/qwen3-llama-reference.cpp \
+  -I"$LLAMA_SOURCE/include" -I"$LLAMA_SOURCE/ggml/include" -Ithirdparty/json/include \
+  -L"$LLAMA_BUILD/bin" -Wl,-rpath,"$LLAMA_BUILD/bin" -lllama -o "$LLAMA_BUILD/qwen3-reference"
+python3 tests/models/qwen3_checkpoint_parity.py build "$OFFICIAL_GGUF" "$LLAMA_BUILD/qwen3-reference" report.json
+```
 
-The recorded default suites passed 38/38 static and 37/37 shared tests. Static
-used pinned bundled ICU 78.3; the shared run added `-DCLAP_USE_SYSTEM_ICU=ON`
-(system ICU 78.2) to the shared configure command above. Both were Release
-builds compiled serially with `-j1`.
+The reference helper calls llama.cpp tokenization with both add-special and
+parse-special enabled, then runs its own last-pooled embeddings. It never calls
+clap. Its process exits before native inference starts, avoiding simultaneous
+model residency. The harness checks exact token IDs and native C API text/token
+embeddings, then CLI embeddings, across English, Chinese, combining accents,
+emoji, contractions, whitespace and special-token inputs; it records model
+size/SHA-256 and numerical errors. GPU and maximum-context execution are not
+covered by this CPU harness.
+
+Verified on the pinned official F16 file above: static bundled-ICU CTest 36/36
+and shared system-ICU CTest 35/35 passed. Both builds matched llama.cpp token
+IDs for all nine published-model corpus entries. CLI embeddings had worst
+absolute coordinate error 0.000879910 and minimum cosine similarity
+0.999998666; C API F32-activation text/token embeddings had worst absolute
+coordinate error 0.000097471. These compare the same GGUF and the same token
+IDs, not differently normalized HF-tokenizer inputs.

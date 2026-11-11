@@ -8,7 +8,6 @@ __all__ = ['ModelBase', 'get_model_architecture', 'get_model_class']
 
 
 MODEL_MAP = {
-    'qwen3': 'qwen3',
     'clap': 'clap',
     'clap2': 'clap2',
     'clamp3': 'clamp3',
