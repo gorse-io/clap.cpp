@@ -13,7 +13,41 @@ generate(output)
 for dtype in ['f32', 'f16']:
     subprocess.run([str(build / 'test-qwen3-model'), str(output / f'model-{dtype}.gguf'),
                     str(output / f'fixture-{dtype}.json')], check=True)
+# Exercise the checkpoint harness's model-default activation policy as well as
+# explicit F32; the scalar fixture remains independently storage-rounded.
+default_fixture = json.loads((output / 'fixture-f16.json').read_text())
+default_fixture['model_default_activations'] = True
+(output / 'fixture-default.json').write_text(json.dumps(default_fixture))
+subprocess.run([str(build / 'test-qwen3-model'), str(output / 'model-f16.gguf'),
+                str(output / 'fixture-default.json')], check=True)
+# Characterize already parameterized production code: preserve each published
+# head/hidden and FFN/hidden ratio, GQA grouping and full block count at tiny widths.
+for label, layout in [
+    ('0.6B', dict(width=16, heads=8, kv_heads=4, head_dim=4, depth=28, ffn=48)),
+    ('4B', dict(width=40, heads=16, kv_heads=4, head_dim=4, depth=36, ffn=152)),
+    ('8B', dict(width=64, heads=16, kv_heads=4, head_dim=4, depth=36, ffn=192, output_head=True)),
+]:
+    directory = output / label
+    generate(directory, compact=True, **layout)
+    for dtype in ['f32', 'f16']:
+        subprocess.run([str(build / 'test-qwen3-model'), str(directory / f'model-{dtype}.gguf'),
+                        str(directory / f'fixture-{dtype}.json')], check=True)
 f = json.loads((output / 'fixture-f32.json').read_text())
+
+# These standard metadata errors must not become accepted for larger layouts.
+for label, layout in [('4B', dict(width=40, heads=16, kv_heads=4, head_dim=4, depth=36, ffn=152)),
+                      ('8B', dict(width=64, heads=16, kv_heads=4, head_dim=4, depth=36, ffn=192, output_head=True))]:
+    config, tokenizer, weights = model_data(**layout)
+    metadata = standard_metadata(config, tokenizer)
+    for key, value in [('qwen3.embedding_length', config['hidden_size'] + 1),
+                       ('qwen3.attention.head_count_kv', 3),
+                       ('qwen3.block_count', config['num_hidden_layers'] + 1),
+                       ('qwen3.attention.key_length', '4')]:
+        path = output / label / f'invalid-{key}.gguf'
+        write_gguf(path, dict(metadata, **{key: value}), weights)
+        p = subprocess.run([str(build / 'clap'), 'embedding', '--model', str(path), '--text', 'ab'],
+                           capture_output=True, text=True)
+        assert p.returncode != 0 and 'CLAP:' in p.stderr, (label, key, p.stderr)
 
 
 def embedding(path, text='ab'):

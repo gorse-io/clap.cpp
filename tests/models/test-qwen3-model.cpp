@@ -20,7 +20,7 @@ static void require(bool condition, const std::string &message) {
 }
 
 static void compare(const std::vector<float> &actual, const std::vector<float> &expected, float tolerance,
-                    const std::string &name) {
+                    const std::string &name, nlohmann::json &records) {
     require(actual.size() == expected.size(), name + " shape mismatch");
     float error = 0;
     double squared_norm = 0;
@@ -29,14 +29,30 @@ static void compare(const std::vector<float> &actual, const std::vector<float> &
         error = std::max(error, std::abs(actual[i] - expected[i]));
         squared_norm += double(actual[i]) * actual[i];
     }
+    double dot = 0, reference_squared = 0, difference_squared = 0;
+    for (size_t i = 0; i < actual.size(); ++i) {
+        dot += double(actual[i]) * expected[i];
+        reference_squared += double(expected[i]) * expected[i];
+        const double delta = double(actual[i]) - expected[i];
+        difference_squared += delta * delta;
+    }
+    records.push_back({{"name", name},
+                       {"actual", actual},
+                       {"expected", expected},
+                       {"max_abs_error", error},
+                       {"cosine_similarity", dot / std::sqrt(squared_norm * reference_squared)},
+                       {"relative_l2", std::sqrt(difference_squared / reference_squared)}});
     std::cout << name << " max_abs_error=" << error << '\n';
     require(error <= tolerance, name + " numerical mismatch");
+    require(dot / std::sqrt(squared_norm * reference_squared) > 0.9999, name + " cosine mismatch");
+    require(std::sqrt(difference_squared / reference_squared) < 0.02, name + " relative L2 mismatch");
     require(std::abs(squared_norm - 1.0) < 2e-5, name + " must be unit normalized");
 }
 
 int main(int argc, char **argv) {
+    auto records = nlohmann::json::array();
     try {
-        require(argc == 3, "usage: test-qwen3-model MODEL.gguf FIXTURE.json");
+        require(argc == 3 || argc == 4, "usage: test-qwen3-model MODEL.gguf FIXTURE.json [ACTUAL.json]");
         std::ifstream input(argv[2]);
         require(bool(input), "cannot open fixture");
         nlohmann::json fixture;
@@ -44,7 +60,8 @@ int main(int argc, char **argv) {
         clap_runtime_options options = clap_default_options();
         options.threads = 2;
         options.device = "cpu";
-        options.activation_precision = CLAP_ACTIVATION_F32;
+        options.activation_precision =
+            fixture.value("model_default_activations", false) ? CLAP_ACTIVATION_MODEL_DEFAULT : CLAP_ACTIVATION_F32;
         CLAP *raw = nullptr;
         check(clap_create(argv[1], &options, &raw));
         Model model(raw, clap_destroy);
@@ -67,18 +84,18 @@ int main(int argc, char **argv) {
             compare(take_buffer<float>([&](float **out, size_t *count) {
                         return clap_encode_text(model.get(), text.c_str(), out, count);
                     }),
-                    expected, tolerance, "text " + text);
+                    expected, tolerance, "text " + text, records);
             compare(take_buffer<float>([&](float **out, size_t *count) {
                         return clap_encode_tokens(model.get(), ids.data(), ids.size(), out, count);
                     }),
-                    expected, tolerance, "explicit text tokens");
+                    expected, tolerance, "explicit text tokens", records);
         }
         for (const auto &test : fixture.at("token_cases")) {
             const auto ids = test.at("tokens").get<std::vector<int>>();
             compare(take_buffer<float>([&](float **out, size_t *count) {
                         return clap_encode_tokens(model.get(), ids.data(), ids.size(), out, count);
                     }),
-                    test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"));
+                    test.at("expected").get<std::vector<float>>(), tolerance, test.at("name"), records);
         }
         float pcm[2] = {0.1f, -0.1f};
         float *out = nullptr;
@@ -98,9 +115,17 @@ int main(int argc, char **argv) {
                 [&](int **out, size_t *count) { return clap_tokenize(model.get(), "ab12", 2, out, count); });
             require(short_ids == std::vector<int>({265, 256}), "Qwen3 truncation must retain EOS");
         }
+        if (argc == 4) {
+            std::ofstream output(argv[3]);
+            output << records.dump(2) << '\n';
+            require(bool(output), "cannot write actual embeddings");
+        }
         std::cout << "Native Qwen3 scalar oracle and public API passed\n";
         return 0;
     } catch (const std::exception &error) {
+        // Keep the failing raw vector/metrics; strict parity failures stay failures.
+        if (argc == 4)
+            std::ofstream(argv[3]) << records.dump(2) << '\n';
         std::cerr << error.what() << '\n';
         return 1;
     }

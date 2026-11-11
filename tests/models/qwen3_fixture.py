@@ -78,15 +78,15 @@ def write_gguf(path, metadata, tensors, half=False):
         body += b'\0' * (-len(body) % 32)
     Path(path).write_bytes(header + b'\0' * (-len(header) % 32) + body)
 
-def model_data(width=32):
+def model_data(width=32, *, heads=4, kv_heads=2, head_dim=None, depth=2, ffn=None, output_head=False):
     c = dict(
         model_type='qwen3',
         hidden_size=width,
-        intermediate_size=width * 2,
-        num_hidden_layers=2,
-        num_attention_heads=4,
-        num_key_value_heads=2,
-        head_dim=width // 2,
+        intermediate_size=ffn if ffn is not None else width * 2,
+        num_hidden_layers=depth,
+        num_attention_heads=heads,
+        num_key_value_heads=kv_heads,
+        head_dim=head_dim if head_dim is not None else width // 2,
         vocab_size=266,
         max_position_embeddings=128,
         rms_norm_eps=1e-6,
@@ -98,7 +98,7 @@ def model_data(width=32):
         bos_token_id=256,
         eos_token_id=256,
         pad_token_id=257,
-        tie_word_embeddings=True,
+        tie_word_embeddings=not output_head,
     )
     enc = byte_encoder()
     vocab = {v: k for k, v in enc.items()}
@@ -132,25 +132,27 @@ def model_data(width=32):
     add('model.embed_tokens.weight', (266, width))
     add('model.norm.weight', (width,), True)
     d = c['head_dim']
-    for i in range(2):
+    for i in range(depth):
         p = f'model.layers.{i}.'
         for n in ('input_layernorm', 'post_attention_layernorm'):
             add(p + n + '.weight', (width,), True)
         for n in ('q_norm', 'k_norm'):
             add(p + 'self_attn.' + n + '.weight', (d,), True)
         for n, out, inp in [
-            ('q_proj', 4 * d, width),
-            ('k_proj', 2 * d, width),
-            ('v_proj', 2 * d, width),
-            ('o_proj', width, 4 * d),
+            ('q_proj', heads * d, width),
+            ('k_proj', kv_heads * d, width),
+            ('v_proj', kv_heads * d, width),
+            ('o_proj', width, heads * d),
         ]:
             add(p + 'self_attn.' + n + '.weight', (out, inp))
         for n, out, inp in [
-            ('gate_proj', width * 2, width),
-            ('up_proj', width * 2, width),
-            ('down_proj', width, width * 2),
+            ('gate_proj', c['intermediate_size'], width),
+            ('up_proj', c['intermediate_size'], width),
+            ('down_proj', width, c['intermediate_size']),
         ]:
             add(p + 'mlp.' + n + '.weight', (out, inp))
+    if output_head:
+        add('output.weight', (266, width))
     return c, tok, tensors
 
 
@@ -248,10 +250,10 @@ def oracle(c, tensors, ids, *, causal=True, qknorm=True, rope=True, gqa=True, la
     return [v / scale for v in pooled]
 
 
-def generate(output, width=32):
+def generate(output, width=32, *, compact=False, **layout):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    c, t, tensors = model_data(width)
+    c, t, tensors = model_data(width, **layout)
     metadata = standard_metadata(c, t)
     texts = [
         ('', [256]),
@@ -262,6 +264,8 @@ def generate(output, width=32):
         ('<|im_start|>ab<|im_end|>', [258, 265, 259, 256]),
         ('<|im_start|><|im_end|>', [258, 259, 256]),
     ]
+    if compact:
+        texts = texts[2:3]
     cases = [dict(text=s, tokens=ids, expected=oracle(c, tensors, ids)) for s, ids in texts]
     token_ids = [
         [3, 7, 9, 256],
@@ -273,6 +277,8 @@ def generate(output, width=32):
         [3, 7],
         [3, 7, 9],
     ]
+    if compact:
+        token_ids = token_ids[:5]
     fixture = dict(
         tiny_contract=True,
         sample_rate=0,
