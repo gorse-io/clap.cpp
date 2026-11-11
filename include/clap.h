@@ -91,7 +91,9 @@ CLAP_API int clap_projection_dimension(const CLAP *model);
  * projections and requires a bundled MERT frontend. MERT/MERT2/MuQ audio embeddings
  * mean-pool final-layer frames; their frame API returns the unpooled sequence.
  * MuQ-MuLan text is L2-normalized; audio averages normalized 10-second clips
- * without final normalization and exposes no frames or crop offsets. */
+ * without final normalization and exposes no frames or crop offsets. Qwen3 text
+ * pools the last nonpadding token and L2-normalizes it; audio is unsupported.
+ * Qwen3 token input must be unpadded when the checkpoint shares EOS/padding IDs. */
 
 #ifdef __cplusplus
 }

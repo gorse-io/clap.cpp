@@ -10,7 +10,9 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
     const int threads = options.threads;
     loader.load(path);
     const auto name = loader.metadata("general.architecture");
-    if (name == "clap")
+    if (name == "qwen3")
+        architecture = std::make_unique<Qwen3Model>(loader, threads);
+    else if (name == "clap")
         architecture = std::make_unique<ClapModel>(loader, threads);
     else if (name == "clap2")
         architecture = std::make_unique<Clap2Model>(loader, threads);
@@ -29,6 +31,10 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
     loader.validate_tensor_coverage();
     if (architecture->has_text_encoder()) {
         const auto text = architecture->text_parameters();
+        if (name == "qwen3") {
+            vocabulary = std::make_unique<ByteBpeVocabulary>(loader, text.context_length);
+            return;
+        }
         const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
         if (name == "clamp3" || name == "muq_mulan")
             vocabulary = std::make_unique<UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
