@@ -21,7 +21,8 @@ jobs:
       - name: Check C/C++ formatting
         run: git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' | xargs -0 -r clang-format --dry-run --Werror
 
-  build:
+  test:
+    name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +38,14 @@ jobs:
           - os: windows-11-arm
             runtime: win32-arm64
     runs-on: ${{ matrix.os }}
+    env:
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,13 +80,26 @@ jobs:
         shell: bash
         run: |
           printf '%s\n' 'MACOSX_DEPLOYMENT_TARGET=11.0' >> "$GITHUB_ENV"
+      - name: Configure remote compiler cache
+        if: env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != ''
+        shell: bash
+        env:
+          SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+          SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+          SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+        run: |
+          printf '%s\n' "SCCACHE_BUCKET=$SCCACHE_BUCKET" "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT" "SCCACHE_REGION=$SCCACHE_REGION" >> "$GITHUB_ENV"
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
       - name: build-libraries
         uses: ./.github/actions/build-libraries
         with:
           target: ${{ matrix.runtime }}
           targets: all
           cmake-args: >-
-            -DBUILD_TESTING=ON -DCLAP_BUILD_CLI=ON
+            -DBUILD_TESTING=ON -DCLAP_BUILD_CLI=ON -DGGML_CCACHE=OFF
             ${{ matrix.os == 'windows-11-arm' && '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl' || '' }}
       - name: Test C++
         run: ctest --test-dir build/libraries -C Release --output-on-failure
