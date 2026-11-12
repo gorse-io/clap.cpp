@@ -27,7 +27,6 @@
 #include <vector>
 
 namespace clap::detail {
-class ModelLoader;
 
 class Vocabulary {
   public:
@@ -40,14 +39,12 @@ class Vocabulary {
 class ByteBpeVocabulary final : public Vocabulary {
   public:
     ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length,
-                      bool split_special_tokens = false, bool qwen_rules = false);
-    ByteBpeVocabulary(const ModelLoader &loader, size_t context_length);
+                      bool split_special_tokens = false);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
 
   private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos;
-    bool qwen; // Standard GGUF qwen2 pre-tokenizer; no HF NFC normalization.
     size_t context_length;
     std::unordered_map<std::string, int> vocab;
     std::map<std::pair<std::string, std::string>, int> ranks;

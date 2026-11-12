@@ -1,4 +1,3 @@
-#include "model-loader.h"
 #include "vocab.h"
 
 #include <unicode/uchar.h>
@@ -109,58 +108,13 @@ std::vector<int32_t> normalizer_boundaries(const icu::UnicodeString &text) {
     boundaries.push_back(text.length());
     return boundaries;
 }
-json standard_bpe(const ModelLoader &loader) {
-    if (loader.metadata("tokenizer.ggml.model") != "gpt2" || loader.metadata("tokenizer.ggml.pre") != "qwen2")
-        throw std::runtime_error("CLAP: unsupported Qwen3 GGUF tokenizer/pre-tokenizer");
-    const auto tokens = loader.metadata_strings("tokenizer.ggml.tokens");
-    const auto types = loader.metadata_ints("tokenizer.ggml.token_type");
-    const auto merges = loader.metadata_strings("tokenizer.ggml.merges");
-    if (tokens.empty() || tokens.size() != types.size() ||
-        tokens.size() != size_t(loader.weight("token_embd.weight")->ne[1]))
-        throw std::runtime_error("CLAP: invalid Qwen3 GGUF vocabulary length");
-    json vocab = json::object(), special = json::array();
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        const auto text = tokens.at(i);
-        const int type = types.at(i);
-        if (text.empty() || type < 1 || type > 6 || vocab.contains(text))
-            throw std::runtime_error("CLAP: invalid Qwen3 GGUF token/type");
-        vocab[text] = i;
-        if (type == 2 || type == 3 || type == 4)
-            special.push_back(json{{"id", i}, {"content", text}});
-    }
-    for (const auto &entry : merges) {
-        const auto merge = entry;
-        const auto space = merge.find(' ');
-        if (space == std::string::npos || !vocab.contains(merge.substr(0, space)) ||
-            !vocab.contains(merge.substr(space + 1)) ||
-            !vocab.contains(merge.substr(0, space) + merge.substr(space + 1)))
-            throw std::runtime_error("CLAP: invalid Qwen3 GGUF merge");
-    }
-    return json{{"model", {{"type", "BPE"}, {"vocab", vocab}, {"merges", merges}}}, {"added_tokens", special}};
-}
-int standard_special(const ModelLoader &loader, const char *flag, const char *key) {
-    if (!loader.has_metadata(flag) || !loader.metadata_bool(flag))
-        return -1;
-    const auto id = loader.metadata_u32(key);
-    if (id >= uint64_t(loader.weight("token_embd.weight")->ne[1]))
-        throw std::runtime_error("CLAP: invalid Qwen3 GGUF special token ID");
-    return int(id);
-}
 } // namespace
 
-ByteBpeVocabulary::ByteBpeVocabulary(const ModelLoader &loader, size_t context_length)
-    : ByteBpeVocabulary(standard_bpe(loader),
-                        standard_special(loader, "tokenizer.ggml.add_bos_token", "tokenizer.ggml.bos_token_id"),
-                        standard_special(loader, "tokenizer.ggml.add_eos_token", "tokenizer.ggml.eos_token_id"),
-                        context_length, false, true) {}
-
 ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length,
-                                     bool split_special_tokens, bool qwen_rules)
-    : bos(bos), eos(eos), qwen(qwen_rules), context_length(context_length) {
+                                     bool split_special_tokens)
+    : bos(bos), eos(eos), context_length(context_length) {
     if (tokenizer.at("model").at("type") != "BPE")
         throw std::runtime_error("CLAP: expected byte-level BPE");
-    static const std::string qwen_regex =
-        R"((?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+)";
     for (auto it = tokenizer["model"]["vocab"].begin(); it != tokenizer["model"]["vocab"].end(); ++it)
         vocab.emplace(it.key(), it.value().get<int>());
     int rank = 0;
@@ -193,9 +147,10 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
         byte_chars[i] = utf8(regular ? i : extra++);
     }
     UErrorCode status = U_ZERO_ERROR;
-    const std::string regex =
-        qwen ? qwen_regex : "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
-    pattern.reset(icu::RegexPattern::compile(icu::UnicodeString::fromUTF8(regex), 0, status));
+    pattern.reset(icu::RegexPattern::compile(
+        icu::UnicodeString::fromUTF8(
+            "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"),
+        0, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: cannot compile tokenizer Unicode regex");
 }
@@ -246,20 +201,16 @@ void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &
 }
 
 std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max_length) const {
-    if (!(max_length >= (qwen ? 1u : 2u) && max_length <= context_length))
+    if (!(max_length >= 2 && max_length <= context_length))
         throw std::runtime_error("CLAP: invalid maximum text length");
-    std::vector<int> ids;
-    if (bos >= 0)
-        ids.push_back(bos);
+    std::vector<int> ids{bos};
     size_t pos = 0;
     while (pos < text.size()) {
         size_t next = std::string::npos;
         const json *match = nullptr;
         for (const auto &s : special) {
             const auto p = text.find(s.at("content").get<std::string>(), pos);
-            if (p < next ||
-                (p == next && match &&
-                 s.at("content").get<std::string>().size() > match->at("content").get<std::string>().size())) {
+            if (p < next) {
                 next = p;
                 match = &s;
             }
@@ -290,11 +241,9 @@ std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max
                 ++pos;
         }
     }
-    const size_t limit = max_length - (eos >= 0 ? 1 : 0);
-    if (ids.size() > limit)
-        ids.resize(limit);
-    if (eos >= 0)
-        ids.push_back(eos);
+    if (ids.size() > max_length - 1)
+        ids.resize(max_length - 1);
+    ids.push_back(eos);
     return ids;
 }
 

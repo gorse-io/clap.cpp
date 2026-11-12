@@ -9,39 +9,6 @@
 
 namespace clap::detail {
 
-// Qwen3 causal decoder used by Qwen3 Embedding (no language-model output head).
-class Qwen3Model final : public ModelArchitecture {
-  public:
-    Qwen3Model(const ModelLoader &, int);
-    std::vector<float> text(const std::vector<int> &) const override;
-    AudioFrames audio_frames(const std::vector<float> &) const override;
-    TextParameters text_parameters() const override { return {-1, h.eos, size_t(h.context)}; }
-    int projection_dimension() const override { return h.width; }
-    int mel_bins() const override { return 0; }
-    int sample_rate() const override { return 0; }
-    bool is_waveform_encoder() const override { return false; }
-
-  private:
-    void load_arch_hparams() override;
-    void load_arch_tensors() const override;
-    void bind_tensors();
-    ggml_tensor *rms(Graph &, ggml_tensor *, const LayerWeights &) const;
-    ggml_tensor *expand_kv(Graph &, ggml_tensor *, int) const;
-    const ModelLoader &loader;
-    GraphRuntime runtime;
-    struct Parameters {
-        int width, ffn, depth, heads, kv_heads, head_dim, vocab, context, eos, pad;
-        float epsilon, theta;
-    } h{};
-    struct Layer {
-        LayerWeights input_norm, post_norm, q_norm, k_norm;
-        LayerWeights query, key, value, output, gate, up, down;
-    };
-    ggml_tensor *embeddings = nullptr;
-    LayerWeights final_norm;
-    std::vector<Layer> layers;
-};
-
 // Per-architecture declarations belong here, following llama.cpp/src/models.
 // GGUF I/O, tokenizer ownership, generic tensor operations and the public CLAP
 // facade are implemented in the core src/ files, not in this specialization.
