@@ -146,16 +146,37 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 3
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      RUSTC_WRAPPER: sccache
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+      SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+      SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Use ClangCL on Windows ARM64
-        if: matrix.os == 'windows-11-arm'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
+      - name: Select Windows native compiler
+        if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          COMPILER: ${{ runner.arch == 'ARM64' && 'clang-cl' || 'cl' }}
         run: |
-          'CMAKE_GENERATOR=Visual Studio 18 2026' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          'CMAKE_GENERATOR_TOOLSET=ClangCL' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CC=$env:COMPILER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CXX=$env:COMPILER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
