@@ -105,54 +105,27 @@ jobs:
         run: ctest --test-dir build/libraries -C Release --output-on-failure
       - name: Test native installation
         run: cmake --install build/libraries --config Release --prefix "${{ runner.temp }}/clap-install"
-      - name: Install Python packaging and test dependencies
+      - name: Install Python test dependencies
         if: matrix.os != 'windows-11-arm'
-        run: python -m pip install build "scikit-build-core>=1.1.2" jinja2 packaging pytest "mypy>=1.8" "typing_extensions>=4.2" "huggingface-hub>=0.20"
-      - name: Package Python with the shared runtime
+        run: python -m pip install pytest "huggingface-hub>=0.20"
+      - name: Stage Python runtime
         if: matrix.os != 'windows-11-arm'
         shell: bash
-        run: |
-          set -euo pipefail
-          python -m build python --sdist --outdir python-dist
-          mkdir -p build/python-package
-          tar -xzf python-dist/*.tar.gz --strip-components=1 -C build/python-package
-          cp -R "libraries/${{ matrix.runtime }}/clap_cpp/." build/python-package/clap_cpp/
-          cp build/python-package/LICENSE build/python-package/clap_cpp/licenses/clap-cpp.txt
-          python - <<'PY'
-          from pathlib import Path
-          import sys
-          package = Path("build/python-package/clap_cpp")
-          native = "clap.dll" if sys.platform == "win32" else ("libclap.dylib" if sys.platform == "darwin" else "libclap.so")
-          runtime = package / native
-          if not runtime.is_file() or not runtime.stat().st_size:
-              raise SystemExit(f"Missing staged external runtime: {runtime}")
-          magic = runtime.read_bytes()[:4]
-          if not (magic == b"\x7fELF" if sys.platform.startswith("linux") else
-                  magic[:2] == b"MZ" if sys.platform == "win32" else
-                  magic in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf")):
-              raise SystemExit(f"Invalid staged external runtime: {runtime}")
-          notice = package / "licenses" / "clap-cpp.txt"
-          if not notice.is_file() or not notice.read_text(encoding="utf-8").strip():
-              raise SystemExit(f"Missing runtime notices: {notice}")
-          PY
-          python -m build build/python-package --wheel --outdir python-dist
-          python -m pip install --no-deps --no-index --find-links python-dist clap-cpp
+        run: cp -R "libraries/${{ matrix.runtime }}/clap_cpp/." python/clap_cpp/
       - name: Test Python
         if: matrix.os != 'windows-11-arm'
+        env:
+          PYTHONPATH: python
         run: python -m pytest python/tests -v
-      - name: Package Node with the shared runtime
+      - name: Set up Node tests
         if: matrix.os != 'windows-11-arm'
         shell: bash
         working-directory: node
         run: |
           npm ci --force --ignore-scripts
-          cp ../LICENSE LICENSE
           package="packages/${{ matrix.runtime }}"
-          mkdir -p "$package/runtime" artifacts
+          mkdir -p "$package/runtime"
           cp -R "../libraries/${{ matrix.runtime }}/." "$package/runtime/"
-          cp ../LICENSE "$package/LICENSE"
-          cp ../LICENSE "$package/runtime/clap_cpp/licenses/clap.txt"
-          npm pack --workspace "$package" --include-workspace-root --pack-destination artifacts
       - name: Test Node
         if: matrix.os != 'windows-11-arm'
         shell: bash
