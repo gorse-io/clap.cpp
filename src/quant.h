@@ -16,6 +16,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -23,6 +24,9 @@
 struct ggml_tensor;
 
 namespace clap::detail {
+float scalar(const ggml_tensor *tensor, size_t index);
+void tensor_row(const ggml_tensor *tensor, int64_t row, float *output);
+
 bool encoder_architecture(const std::string &architecture);
 bool encoder_quantizable(const ggml_tensor *w, const std::string &architecture);
 

@@ -41,6 +41,12 @@ std::vector<DeviceInfo> available_devices() {
 } // namespace clap
 
 namespace clap::detail {
+HostMatrix::HostMatrix(int r, int c) : rows(r), cols(c), data() {
+    if (!(r > 0 && c > 0))
+        throw std::runtime_error("CLAP: invalid matrix shape");
+    data.resize(static_cast<size_t>(r) * c);
+}
+
 namespace {
 using Context = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
 using Buffer = std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)>;

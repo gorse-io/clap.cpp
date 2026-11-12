@@ -10,7 +10,6 @@ set(CLAP_CORE_SOURCES
     quant.h
     quant.cpp
     graph.cpp
-    tensor-data.cpp
     audio.cpp
     vocab.cpp)
 

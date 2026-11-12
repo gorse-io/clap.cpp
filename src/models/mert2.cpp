@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "models.h"
+#include "quant.h"
 
 #include <algorithm>
 #include <cmath>

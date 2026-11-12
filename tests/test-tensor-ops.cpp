@@ -1,4 +1,5 @@
 #include "graph-test-helpers.h"
+#include "quant.h"
 
 #include <gguf.h>
 
