@@ -1,4 +1,4 @@
-#include "models/embeddinggemma2-audio.h"
+#include "model.h"
 
 #include <nlohmann/json.hpp>
 

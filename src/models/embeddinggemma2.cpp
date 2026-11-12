@@ -1,5 +1,5 @@
 #include "audio.h"
-#include "embeddinggemma2-audio.h"
+#include "model.h"
 #include "models.h"
 
 #include <ggml-cpu.h>

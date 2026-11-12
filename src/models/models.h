@@ -137,7 +137,6 @@ class Clamp3Model final : public ModelArchitecture {
     int chunk_length = 128, projection_dim = 0;
 };
 
-class GemmaAudioEncoder;
 // Gemma-embedding2 GGUF shared text/soft-token transformer.
 class EmbeddingGemma2Model final : public ModelArchitecture {
   public:
