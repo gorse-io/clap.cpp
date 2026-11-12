@@ -2,7 +2,6 @@
 
 #include "graph.h"
 #include "model-loader.h"
-#include "model-weights.h"
 #include "model.h"
 
 #include <nlohmann/json.hpp>

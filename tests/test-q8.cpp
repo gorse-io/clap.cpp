@@ -1,5 +1,6 @@
 #include "graph-test-helpers.h"
 #include "model-loader.h"
+#include "quant.h"
 
 #include <ggml.h>
 #include <gguf.h>

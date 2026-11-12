@@ -22,6 +22,41 @@ struct AudioFrames {
 } // namespace clap
 
 namespace clap::detail {
+// Shared model tensors, bound once after GGUF shape validation. Architecture
+// graphs consume these pointers without resolving tensor names.
+struct AttentionWeights {
+    LayerWeights query, key, value, output;
+    ggml_tensor *relative_bias = nullptr;
+};
+struct TransformerWeights {
+    AttentionWeights attention;
+    LayerWeights attention_norm, output_norm, intermediate, output;
+};
+struct EmbeddingWeights {
+    ggml_tensor *word = nullptr, *position = nullptr, *type = nullptr;
+    LayerWeights norm;
+};
+EmbeddingWeights bind_embeddings(const ModelLoader &loader, const std::string &prefix, bool word = true);
+TransformerWeights bind_bert_layer(const ModelLoader &loader, const std::string &prefix);
+struct BatchNormWeights {
+    LayerWeights affine;
+    ggml_tensor *mean = nullptr, *variance = nullptr;
+    static BatchNormWeights bind(const ModelLoader &loader, const std::string &prefix);
+};
+struct FeedForwardWeights {
+    LayerWeights norm, input, output;
+};
+struct ConvolutionWeights {
+    LayerWeights norm, input, depthwise, output_norm, output;
+    BatchNormWeights batch_norm;
+};
+struct ConformerWeights {
+    FeedForwardWeights ffn1, ffn2;
+    LayerWeights attention_norm, final_norm;
+    AttentionWeights attention;
+    ConvolutionWeights convolution;
+};
+
 struct TextParameters {
     int bos;
     int eos;

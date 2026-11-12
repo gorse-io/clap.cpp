@@ -1,4 +1,5 @@
 #include "graph.h"
+#include "quant.h"
 
 #include <gguf.h>
 

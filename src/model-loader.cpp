@@ -1,6 +1,5 @@
 #include "model-loader.h"
-#include "quantization-policy.h"
-#include "tensor-data.h"
+#include "quant.h"
 
 #include <cmath>
 #include <cstring>

@@ -1,17 +1,172 @@
 #include "model-loader.h"
-#include "quantization-policy.h"
-#include "quantize-output.h"
-#include "quantize.h"
+#include "quant.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <fcntl.h>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <random>
+#include <regex>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
+#include <system_error>
 #include <vector>
+#ifdef _WIN32
+#include <io.h>
+#include <share.h>
+#else
+#include <unistd.h>
+#endif
+
+namespace clap::detail {
+float scalar(const ggml_tensor *t, size_t i) {
+    if (t->type == GGML_TYPE_F32)
+        return static_cast<const float *>(t->data)[i];
+    if (t->type == GGML_TYPE_F16)
+        return ggml_fp16_to_fp32(static_cast<const ggml_fp16_t *>(t->data)[i]);
+    if (t->type == GGML_TYPE_BF16)
+        return ggml_bf16_to_fp32(static_cast<const ggml_bf16_t *>(t->data)[i]);
+    if (!(t->type == GGML_TYPE_Q8_0 || t->type == GGML_TYPE_Q4_K || t->type == GGML_TYPE_Q6_K))
+        throw std::runtime_error("CLAP: unsupported scalar tensor type");
+    // Decode only the containing block (embeddings, relative biases, or norms),
+    // never expand an entire mapped weight tensor/model.
+    float block[256];
+    const size_t width = static_cast<size_t>(ggml_blck_size(t->type));
+    const auto *data = static_cast<const uint8_t *>(t->data) + (i / width) * ggml_type_size(t->type);
+    ggml_get_type_traits(t->type)->to_float(data, block, width);
+    return block[i % width];
+}
+void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
+    if (!(row >= 0 && row < ggml_nrows(t)))
+        throw std::runtime_error("CLAP: embedding row out of range");
+    const auto *data = static_cast<const uint8_t *>(t->data) + row * t->nb[1];
+    if (t->type == GGML_TYPE_F32)
+        std::copy_n(reinterpret_cast<const float *>(data), t->ne[0], output);
+    else if (t->type == GGML_TYPE_F16)
+        ggml_fp16_to_fp32_row(reinterpret_cast<const ggml_fp16_t *>(data), output, t->ne[0]);
+    else {
+        const auto *traits = ggml_get_type_traits(t->type);
+        if (!(traits && traits->to_float))
+            throw std::runtime_error("CLAP: unsupported embedding tensor type");
+        traits->to_float(data, output, t->ne[0]);
+    }
+}
+
+bool encoder_architecture(const std::string &architecture) {
+    return architecture == "mert" || architecture == "mert2" || architecture == "muq" || architecture == "muq_mulan";
+}
+// Only native dense/embedding layouts are block quantizable. In particular,
+// Conv1d [kernel,in,out], Conv2d, GRN and mel filters must remain floating point,
+// even when their leading dimension happens to be divisible by a block size.
+bool encoder_quantizable(const ggml_tensor *w, const std::string &architecture) {
+    if (ggml_n_dims(w) != 2)
+        return false;
+    const std::string name(w->name);
+    static const std::regex mert(
+        R"((projection\.projection|layers\.[0-9]+\.(attention\.(q_proj|k_proj|v_proj|out_proj)|ffn\.(in|out)))\.weight)");
+    static const std::regex mert2(
+        R"((subsampling_module\.[0-9]+\.convnext_layers\.[0-9]+\.pointwise_block\.(1|4)|layers\.[0-9]+\.(attn\.(query_proj|key_proj|value_proj|out_proj)|ffn[12]\.w_[12]))\.weight)");
+    static const std::regex muq(
+        R"((conv\.linear|conformer\.layers\.[0-9]+\.(self_attn\.linear_(q|k|v|out)|ffn[12]\.(intermediate_dense|output_dense)))\.weight)");
+    static const std::regex joint(
+        R"((text\.embeddings\.(word_embeddings|position_embeddings|token_type_embeddings)|text\.encoder\.layer\.[0-9]+\.(attention\.self\.(query|key|value)|attention\.output\.dense|intermediate\.dense|output\.dense)|adapter\.layers\.[0-9]+\.(0\.(to_q|to_kv|to_out\.0)|1\.(1|4))|audio_proj|audio_latent|text_proj)\.weight)");
+    if (architecture == "mert")
+        return std::regex_match(name, mert);
+    if (architecture == "mert2")
+        return std::regex_match(name, mert2);
+    if (architecture == "muq" || architecture == "muq_mulan")
+        return std::regex_match(name, muq) || (architecture == "muq_mulan" && std::regex_match(name, joint));
+    return false;
+}
+static bool encoder_sensitive(const std::string &name, const std::string &architecture) {
+    const auto ends = [&](const std::string &suffix) {
+        return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    if (architecture == "mert")
+        return name == "projection.projection.weight" || ends(".attention.v_proj.weight") || ends(".ffn.out.weight");
+    if (architecture == "mert2")
+        return ends(".attn.value_proj.weight") || ends(".ffn1.w_2.weight") || ends(".ffn2.w_2.weight") ||
+               ends(".pointwise_block.4.weight");
+    return name == "conv.linear.weight" || ends(".self_attn.linear_v.weight") || ends(".ffn1.output_dense.weight") ||
+           ends(".ffn2.output_dense.weight") || ends(".attention.self.value.weight") ||
+           (ends(".output.dense.weight") && !ends(".attention.output.dense.weight")) || ends(".0.to_kv.weight") ||
+           ends(".1.4.weight") || name == "audio_proj.weight" || name == "audio_latent.weight" ||
+           name == "text_proj.weight";
+}
+
+QuantizeOutput::QuantizeOutput(const std::filesystem::path &destination) : destination_(destination) {
+    std::random_device random;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        temporary_ = destination;
+        temporary_ += ".tmp-" + std::to_string(random()) + "-" + std::to_string(random());
+        int fd = -1;
+#ifdef _WIN32
+        const int error = _wsopen_s(&fd, temporary_.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY, _SH_DENYRW,
+                                    _S_IREAD | _S_IWRITE);
+#else
+        fd = ::open(temporary_.c_str(), O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+        const int error = fd < 0 ? errno : 0;
+#endif
+        if (fd < 0) {
+            if (error == EEXIST)
+                continue;
+            throw std::system_error(error, std::generic_category(), "cannot create temporary output");
+        }
+#ifdef _WIN32
+        stream_ = _fdopen(fd, "wb");
+#else
+        stream_ = ::fdopen(fd, "wb");
+#endif
+        if (!stream_) {
+            const int error = errno;
+#ifdef _WIN32
+            _close(fd);
+#else
+            ::close(fd);
+#endif
+            std::error_code ignored;
+            std::filesystem::remove(temporary_, ignored);
+            throw std::system_error(error, std::generic_category(), "cannot open temporary stream");
+        }
+        return;
+    }
+    throw std::runtime_error("cannot create a unique temporary output");
+}
+
+QuantizeOutput::~QuantizeOutput() {
+    if (stream_)
+        std::fclose(stream_);
+    std::error_code ignored;
+    std::filesystem::remove(temporary_, ignored);
+}
+
+void QuantizeOutput::write(const void *data, size_t size) {
+    if (!stream_ || std::fwrite(data, 1, size, stream_) != size)
+        throw std::runtime_error("cannot write output");
+}
+
+void QuantizeOutput::close() {
+    if (!stream_)
+        throw std::runtime_error("output already closed");
+    auto *stream = stream_;
+    stream_ = nullptr;
+    if (std::fclose(stream) != 0)
+        throw std::runtime_error("cannot finish output");
+}
+
+void QuantizeOutput::publish() {
+    if (stream_)
+        throw std::runtime_error("output must be closed before publication");
+    std::filesystem::create_hard_link(temporary_, destination_);
+    std::filesystem::remove(temporary_);
+    temporary_.clear();
+}
+} // namespace clap::detail
 
 namespace {
 using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;

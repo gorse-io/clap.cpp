@@ -1,10 +1,11 @@
 #pragma once
 
 #include "model-loader.h"
-#include "tensor-data.h"
 
 #include <ggml-backend.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -13,6 +14,15 @@
 #include <vector>
 
 namespace clap::detail {
+
+// Host storage for audio frontends and public API boundaries.
+struct HostMatrix {
+    int rows, cols;
+    std::vector<float> data;
+    HostMatrix(int rows, int cols);
+    float *operator[](int row) { return data.data() + size_t(row) * cols; }
+    const float *operator[](int row) const { return data.data() + size_t(row) * cols; }
+};
 
 struct LayerWeights {
     ggml_tensor *weight = nullptr;
