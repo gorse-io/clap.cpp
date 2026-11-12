@@ -1,4 +1,4 @@
-#include "quantize-output.h"
+#include "quant.h"
 
 #include <fstream>
 #include <iostream>

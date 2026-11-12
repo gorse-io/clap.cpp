@@ -15,7 +15,7 @@
  */
 #include "clap.h"
 #include "embedding.h"
-#include "quantize.h"
+#include "quant.h"
 #include "search.h"
 #include "server.h"
 

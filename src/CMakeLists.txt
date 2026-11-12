@@ -7,6 +7,8 @@ set(CLAP_CORE_SOURCES
     model.h
     model.cpp
     model-loader.cpp
+    quant.h
+    quant.cpp
     graph.cpp
     tensor-data.cpp
     audio.cpp
