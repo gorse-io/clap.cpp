@@ -37,6 +37,12 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio/miniaudio.h")
         "miniaudio submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb/stb_image.h")
+    message(FATAL_ERROR
+        "stb submodule is missing. Run: git submodule update --init --recursive")
+endif()
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb/LICENSE" DESTINATION share/licenses/clap/stb)
+
 
 # Scope BUILD_SHARED_LIBS to dependency creation: the core still honors the
 # caller's setting, without forcing cache values or duplicating its build graph.
@@ -102,6 +108,25 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(test-clap-conversion-imports PROPERTIES TIMEOUT 30)
     find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)
+    add_executable(test-image tests/test-image.cpp)
+    target_include_directories(test-image PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-image PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-clap-image
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image.py"
+                "$<TARGET_FILE:test-image>" "${FFMPEG_EXECUTABLE}")
+    set_tests_properties(test-clap-image PROPERTIES TIMEOUT 60)
+    if(BUILD_SHARED_LIBS)
+        if(CLAP_BUILD_CLI)
+            add_test(NAME test-clap-image-api
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_api.py"
+                        "$<TARGET_FILE:clap>" "$<TARGET_FILE:clap-cli>")
+        else()
+            add_test(NAME test-clap-image-api
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_api.py"
+                        "$<TARGET_FILE:clap>")
+        endif()
+        set_tests_properties(test-clap-image-api PROPERTIES TIMEOUT 60)
+    endif()
     set(CLAP_AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/audio")
     set(CLAP_AUDIO_FIXTURES
         mono.wav stereo.wav mono.flac stereo.flac mono.mp3 stereo.mp3
@@ -116,6 +141,79 @@ if(BUILD_TESTING)
         COMMENT "Generating audio test fixtures"
         VERBATIM)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
+    add_executable(test-embeddinggemma2-image tests/models/test-embeddinggemma2-image.cpp)
+    target_include_directories(test-embeddinggemma2-image PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-embeddinggemma2-image PRIVATE clap nlohmann_json::nlohmann_json)
+    if(CLAP_BUILD_CLI)
+        add_test(NAME test-embeddinggemma2-image
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_image.py"
+                    "$<TARGET_FILE:test-embeddinggemma2-image>" "$<TARGET_FILE:clap-cli>")
+    else()
+        add_test(NAME test-embeddinggemma2-image
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_image.py"
+                    "$<TARGET_FILE:test-embeddinggemma2-image>")
+    endif()
+    set_tests_properties(test-embeddinggemma2-image PROPERTIES TIMEOUT 180)
+    add_executable(test-gemma-audio-integration tests/models/test-gemma-audio-integration.cpp)
+    target_include_directories(test-gemma-audio-integration PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-gemma-audio-integration PRIVATE clap nlohmann_json::nlohmann_json)
+    if(CLAP_BUILD_CLI)
+        add_test(NAME test-embeddinggemma2-audio-integration
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_audio_integration.py"
+                    "$<TARGET_FILE:test-gemma-audio-integration>" "$<TARGET_FILE:clap-cli>")
+        set_tests_properties(test-embeddinggemma2-audio-integration PROPERTIES TIMEOUT 120)
+    endif()
+    add_executable(test-gemma-audio tests/models/test-embeddinggemma2-audio.cpp)
+    target_include_directories(test-gemma-audio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-gemma-audio PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-embeddinggemma2-audio
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_audio.py"
+                --test "$<TARGET_FILE:test-gemma-audio>")
+    set_tests_properties(test-embeddinggemma2-audio PROPERTIES TIMEOUT 180)
+    add_executable(test-gemma-soft tests/models/test-gemma-soft.cpp)
+    target_include_directories(test-gemma-soft PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-gemma-soft PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-embeddinggemma2-soft
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_soft.py"
+                "$<TARGET_FILE:test-gemma-soft>")
+    add_executable(test-embeddinggemma2 tests/models/test-embeddinggemma2.cpp)
+    target_link_libraries(test-embeddinggemma2 PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-embeddinggemma2-model
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2.py"
+                --test "$<TARGET_FILE:test-embeddinggemma2>")
+    set_tests_properties(test-embeddinggemma2-model PROPERTIES TIMEOUT 120)
+    if(CLAP_BUILD_CLI)
+        add_test(NAME test-embeddinggemma2-cli
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_cli.py"
+                    "$<TARGET_FILE:clap-cli>")
+        set_tests_properties(test-embeddinggemma2-cli PROPERTIES TIMEOUT 120)
+    endif()
+    add_executable(test-gemma-tokenizer tests/models/test-gemma-tokenizer.cpp)
+    target_include_directories(test-gemma-tokenizer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-gemma-tokenizer PRIVATE clap nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
+    add_test(NAME test-gemma-tokenizer COMMAND test-gemma-tokenizer)
+    set(CLAP_GEMMA_TOKENIZER_JSON "" CACHE FILEPATH "Pinned EmbeddingGemma2 tokenizer.json for optional HF parity (Python tokenizers required)")
+    if(CLAP_GEMMA_TOKENIZER_JSON)
+        if(NOT EXISTS "${CLAP_GEMMA_TOKENIZER_JSON}")
+            message(FATAL_ERROR "CLAP_GEMMA_TOKENIZER_JSON does not exist")
+        endif()
+        set(GEMMA_TOKENIZER_FIXTURE "${CMAKE_CURRENT_BINARY_DIR}/gemma-tokenizer-parity")
+        add_test(NAME test-gemma-tokenizer-hf-fixture
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/gemma_tokenizer_parity.py"
+                    "${CLAP_GEMMA_TOKENIZER_JSON}" "${GEMMA_TOKENIZER_FIXTURE}")
+        set_tests_properties(test-gemma-tokenizer-hf-fixture PROPERTIES FIXTURES_SETUP test-gemma-tokenizer-hf TIMEOUT 120)
+        add_test(NAME test-gemma-tokenizer-hf
+            COMMAND test-gemma-tokenizer "${GEMMA_TOKENIZER_FIXTURE}/metadata.json" "${GEMMA_TOKENIZER_FIXTURE}/cases.json")
+        set_tests_properties(test-gemma-tokenizer-hf PROPERTIES FIXTURES_REQUIRED test-gemma-tokenizer-hf TIMEOUT 120)
+    endif()
+    add_executable(test-gemma-storage tests/test-gemma-storage.cpp)
+    target_include_directories(test-gemma-storage PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-gemma-storage PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-gemma-storage COMMAND test-gemma-storage "${CMAKE_CURRENT_BINARY_DIR}/gemma-storage-")
+    add_executable(test-metadata tests/test-metadata.cpp)
+    target_include_directories(test-metadata PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-metadata PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-clap-metadata COMMAND test-metadata "${CMAKE_CURRENT_BINARY_DIR}/metadata.gguf")
     add_executable(test-audio tests/test-audio.cpp)
     target_link_libraries(test-audio PRIVATE clap GTest::gtest)
     if(WIN32 AND BUILD_SHARED_LIBS)
@@ -140,17 +238,17 @@ if(BUILD_TESTING)
         COMMAND test-quantize-output "${CMAKE_CURRENT_BINARY_DIR}/quantize-publication-fixture")
     add_executable(test-bf16 tests/test-bf16.cpp src/quantize.cpp)
     target_include_directories(test-bf16 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-bf16 PRIVATE clap)
+    target_link_libraries(test-bf16 PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME test-clap-bf16 COMMAND test-bf16 "${CMAKE_CURRENT_BINARY_DIR}/bf16-fixture")
     set_tests_properties(test-clap-bf16 PROPERTIES TIMEOUT 120)
     add_executable(test-all-quantization tests/test-all-quantization.cpp src/quantize.cpp)
     target_include_directories(test-all-quantization PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-all-quantization PRIVATE clap)
+    target_link_libraries(test-all-quantization PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME test-all-architecture-quantization COMMAND test-all-quantization "${CMAKE_CURRENT_BINARY_DIR}/all-quantization-fixture")
     set_tests_properties(test-all-architecture-quantization PROPERTIES TIMEOUT 120)
     add_executable(test-q8 tests/test-q8.cpp)
     target_include_directories(test-q8 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-q8 PRIVATE clap)
+    target_link_libraries(test-q8 PRIVATE clap nlohmann_json::nlohmann_json)
     if(CLAP_BUILD_CLI)
         add_test(NAME test-clap-bf16-cli
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/bf16_cli.py"
@@ -239,12 +337,12 @@ if(BUILD_TESTING)
     add_test(NAME test-clap-model-unit COMMAND test-model)
     add_executable(test-graph-pipeline tests/test-graph-pipeline.cpp)
     target_include_directories(test-graph-pipeline PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-graph-pipeline PRIVATE clap)
+    target_link_libraries(test-graph-pipeline PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME test-clap-graph-pipeline
         COMMAND test-graph-pipeline "${CMAKE_CURRENT_BINARY_DIR}/graph-pipeline.gguf")
     add_executable(test-tensor-ops tests/test-tensor-ops.cpp)
     target_include_directories(test-tensor-ops PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-    target_link_libraries(test-tensor-ops PRIVATE clap)
+    target_link_libraries(test-tensor-ops PRIVATE clap nlohmann_json::nlohmann_json)
     add_test(NAME test-clap-tensor-ops
         COMMAND test-tensor-ops "${CMAKE_CURRENT_BINARY_DIR}/tensor-ops-auto.gguf")
     add_test(NAME test-clap-tensor-ops-cpu
@@ -462,7 +560,7 @@ endif()
 # Keep development archives and headers out of binary-only distributions.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/clap.h"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT development)
-foreach(dependency IN ITEMS ggml miniaudio icu json)
+foreach(dependency IN ITEMS ggml miniaudio icu json stb)
     if(dependency STREQUAL "ggml")
         set(license "ggml/LICENSE")
     elseif(dependency STREQUAL "json")

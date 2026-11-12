@@ -60,3 +60,15 @@ TEST(ABI, OutOfMemory) {
     EXPECT_EQ(nullptr, model);
     EXPECT_TRUE(valid_error);
 }
+
+TEST(ABI, ProjectorArguments) {
+    CLAP *model = reinterpret_cast<CLAP *>(1);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, clap_create_with_mmproj(nullptr, "audio.gguf", nullptr, &model));
+    EXPECT_EQ(nullptr, model);
+    model = reinterpret_cast<CLAP *>(1);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, clap_create_with_mmproj("model.gguf", nullptr, nullptr, &model));
+    EXPECT_EQ(nullptr, model);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, clap_create_with_mmproj("model.gguf", "", nullptr, &model));
+    EXPECT_EQ(nullptr, model);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, clap_create_with_mmproj("model.gguf", "audio.gguf", nullptr, nullptr));
+}

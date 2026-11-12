@@ -52,6 +52,7 @@ _Size = C.c_size_t
 _bind("clap_default_options", _Options)
 _bind("clap_last_error", C.c_char_p)
 _bind("clap_create", C.c_int, C.c_char_p, C.POINTER(_Options), C.POINTER(_Handle))
+_bind("clap_create_with_mmproj", C.c_int, C.c_char_p, C.c_char_p, C.POINTER(_Options), C.POINTER(_Handle))
 _bind("clap_destroy", None, _Handle)
 _bind("clap_available_devices", C.c_int, C.POINTER(C.POINTER(_Device)), C.POINTER(_Size))
 _bind("clap_free_devices", None, C.POINTER(_Device), _Size)
@@ -62,6 +63,7 @@ _bind("clap_encode_text", C.c_int, _Handle, C.c_char_p, C.POINTER(_Floats), C.PO
 _bind("clap_encode_tokens", C.c_int, _Handle, _Ints, _Size, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_encode_audio", C.c_int, _Handle, _Floats, _Size, C.c_int, _Size, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_encode_audio_file", C.c_int, _Handle, C.c_char_p, _Size, C.POINTER(_Floats), C.POINTER(_Size))
+_bind("clap_encode_image_file", C.c_int, _Handle, C.c_char_p, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_get_audio_frames", C.c_int, _Handle, _Floats, _Size, C.c_int, C.POINTER(_Frames))
 _bind("clap_audio_sample_rate", C.c_int, _Handle)
 _bind("clap_projection_dimension", C.c_int, _Handle)
@@ -139,7 +141,7 @@ def _pcm(value):
 class CLAP:
     """Own one native model; all access, including close, is serialized."""
 
-    def __init__(self, path, threads=0):
+    def __init__(self, path, threads=0, *, mmproj=None):
         if hasattr(self, "_lock"):
             raise RuntimeError("CLAP is already initialized")
         self._lock = threading.Lock()
@@ -147,11 +149,17 @@ class CLAP:
         # Keep the CDLL alive even during interpreter shutdown/finalization.
         self._native = _lib
         filename = _path(path)
+        projector = None if mmproj is None else _path(mmproj)
+        if projector == b"":
+            raise ValueError("mmproj path must be nonempty")
         threads = _integer(threads, "threads")
         with self._lock:
             options = self._native.clap_default_options()
             options.threads = threads
-            _check(self._native.clap_create(filename, C.byref(options), C.byref(self._handle)))
+            if projector is None:
+                _check(self._native.clap_create(filename, C.byref(options), C.byref(self._handle)))
+            else:
+                _check(self._native.clap_create_with_mmproj(filename, projector, C.byref(options), C.byref(self._handle)))
 
     def __copy__(self):
         raise TypeError("CLAP owns a native model and cannot be copied")
@@ -240,6 +248,10 @@ class CLAP:
         rate = _integer(kwargs.get("sample_rate", 48000), "sample_rate", 1)
         samples = _pcm(value)
         return self._buffer(self._native.clap_encode_audio, samples, len(samples), rate, crop)
+
+    def encode_image(self, path):
+        """Decode an image file and return an owning embedding list."""
+        return self._buffer(self._native.clap_encode_image_file, _path(path))
 
     def audio_frames(self, pcm, sample_rate=48000):
         rate = _integer(sample_rate, "sample_rate", 1)

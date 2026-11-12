@@ -10,6 +10,7 @@ set(CLAP_CORE_SOURCES
     graph.cpp
     tensor-data.cpp
     audio.cpp
+    image.cpp
     vocab.cpp)
 
 add_library(clap
@@ -26,7 +27,8 @@ target_include_directories(clap
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(clap SYSTEM PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/miniaudio")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/miniaudio"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/stb")
 target_link_libraries(clap PUBLIC ggml
     PRIVATE ggml-cpu nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
 set_target_properties(clap PROPERTIES CXX_EXTENSIONS OFF)
