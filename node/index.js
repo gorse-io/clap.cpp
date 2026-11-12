@@ -38,7 +38,6 @@ const optionsType = koffi.struct({ threads: 'int', device: 'str', activation_pre
 const defaults = lib.func('clap_default_options', optionsType, []);
 const lastError = lib.func('clap_last_error', 'str', []);
 const create = lib.func('clap_create', 'int', ['str', koffi.pointer(optionsType), koffi.out(koffi.pointer(handle))]);
-const createWithMmproj = lib.func('clap_create_with_mmproj', 'int', ['str', 'str', koffi.pointer(optionsType), koffi.out(koffi.pointer(handle))]);
 const destroy = lib.func('clap_destroy', 'void', [handle]);
 const free = lib.func('clap_free', 'void', ['void *']);
 const outputs = [koffi.out(koffi.pointer('float', 2)), koffi.out(koffi.pointer('size_t'))];
@@ -46,7 +45,6 @@ const text = lib.func('clap_encode_text', 'int', [handle, 'str', ...outputs]);
 const tokens = lib.func('clap_encode_tokens', 'int', [handle, 'const int *', 'size_t', ...outputs]);
 const audio = lib.func('clap_encode_audio', 'int', [handle, 'const float *', 'size_t', 'int', 'size_t', ...outputs]);
 const audioFile = lib.func('clap_encode_audio_file', 'int', [handle, 'str', 'size_t', ...outputs]);
-const imageFile = lib.func('clap_encode_image_file', 'int', [handle, 'str', ...outputs]);
 const maxInt = 2147483647;
 const maxSize = koffi.sizeof('size_t') === 4 ? 4294967295 : Number.MAX_SAFE_INTEGER;
 const typedArrayPrototype = Object.getPrototypeOf(Float32Array.prototype);
@@ -133,23 +131,14 @@ class CLAP {
 
   constructor(modelPath, threads = 0) {
     const filename = string(modelPath, 'path', true);
-    let mmproj;
-    if (threads !== null && typeof threads === 'object' && !Array.isArray(threads)) {
-      const opts = threads;
-      threads = opts.threads;
-      mmproj = opts.mmproj;
-      if (threads === undefined) threads = 0;
-    }
     const threadCount = integer(threads, 'threads', 0, maxInt);
-    const projector = mmproj === undefined ? undefined : string(mmproj, 'mmproj', true);
     const options = defaults(); // Returned by value, not a pointer.
     options.threads = threadCount;
     const output = [null];
     const state = { pointer: null };
     const token = Object.create(null);
     try {
-      check(projector === undefined ? create(filename, options, output)
-        : createWithMmproj(filename, projector, options, output));
+      check(create(filename, options, output));
       state.pointer = output[0];
       this.#state = state;
       this.#token = token;
@@ -187,13 +176,6 @@ class CLAP {
     const offset = integer(cropOffset, 'cropOffset', 0, maxSize);
     if (state.pointer === null) throw new Error('CLAP is closed');
     return embedding(audio, [state.pointer, pcm, lengthOf(pcm), rate, offset]);
-  }
-
-  encodeImage(value) {
-    const state = this.#state;
-    const filename = string(value, 'path', true);
-    if (state.pointer === null) throw new Error('CLAP is closed');
-    return embedding(imageFile, [state.pointer, filename]);
   }
 
   close() {

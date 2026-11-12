@@ -18,7 +18,6 @@ include = [
     "/ggml/CMakeLists.txt", "/ggml/cmake/**", "/ggml/include/**", "/ggml/src/**", "/ggml/LICENSE",
     "/thirdparty/json/CMakeLists.txt", "/thirdparty/json/cmake/**",
     "/thirdparty/json/include/**", "/thirdparty/json/nlohmann_json.natvis", "/thirdparty/json/LICENSE.MIT",
-    "/thirdparty/stb/stb_image.h", "/thirdparty/stb/LICENSE",
     "/thirdparty/miniaudio/miniaudio.h", "/thirdparty/miniaudio/LICENSE", "/thirdparty/icu/LICENSE",
     "/thirdparty/icu/icu4c/source/common/**", "/thirdparty/icu/icu4c/source/i18n/**",
     "/thirdparty/icu/icu4c/source/stubdata/**",

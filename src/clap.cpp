@@ -103,28 +103,6 @@ clap_status clap_create(const char *path, const clap_runtime_options *options, C
         *out = new CLAP(path, native);
     });
 }
-clap_status clap_create_with_mmproj(const char *path, const char *mmproj_path, const clap_runtime_options *options,
-                                    CLAP **out) {
-    if (out)
-        *out = nullptr;
-    return protect([&] {
-        require(path && *path && out, "CLAP: nonempty model path and output slot are required");
-        require(mmproj_path && *mmproj_path, "CLAP: nonempty mmproj path is required");
-        clap::RuntimeOptions native;
-        if (options) {
-            require(options->threads >= 0, "CLAP: threads must be nonnegative");
-            require(options->activation_precision == CLAP_ACTIVATION_MODEL_DEFAULT ||
-                        options->activation_precision == CLAP_ACTIVATION_F32,
-                    "CLAP: invalid activation precision");
-            native.threads = options->threads;
-            if (options->device)
-                native.device = options->device;
-            if (options->activation_precision == CLAP_ACTIVATION_F32)
-                native.activation_precision = clap::ActivationPrecision::F32;
-        }
-        *out = new CLAP(path, native, mmproj_path);
-    });
-}
 void clap_destroy(CLAP *model) { delete model; }
 void clap_free(void *allocation) { std::free(allocation); }
 void clap_free_devices(clap_device *devices, size_t count) {
@@ -193,23 +171,6 @@ clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop, f
     return embedding(model, out, count, [&] {
         require(path && *path, "CLAP: audio path is required");
         return clap::detail::encode_audio_file(*model, path, crop);
-    });
-}
-clap_status clap_encode_image(CLAP *model, const unsigned char *rgb, size_t bytes, int width, int height, float **out,
-                              size_t *count) {
-    return embedding(model, out, count, [&] {
-        require(rgb && width > 0 && height > 0 && width <= 16384 && height <= 16384,
-                "CLAP: RGB data and positive image dimensions up to 16384 are required");
-        const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
-        require(pixels <= (size_t{64} << 20) && bytes == pixels * 3,
-                "CLAP: image exceeds 64 Mi pixels or RGB byte count does not match dimensions");
-        return clap::detail::encode_image(*model, {width, height, {rgb, rgb + bytes}});
-    });
-}
-clap_status clap_encode_image_file(CLAP *model, const char *path, float **out, size_t *count) {
-    return embedding(model, out, count, [&] {
-        require(path && *path, "CLAP: image path is required");
-        return clap::detail::encode_image_file(*model, path);
     });
 }
 clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int rate, clap_audio_frames *out) {

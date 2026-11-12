@@ -60,11 +60,6 @@ CLAP_API clap_runtime_options clap_default_options(void);
  * Success clears it. Reading it and freeing outputs never change it. */
 CLAP_API const char *clap_last_error(void);
 CLAP_API clap_status clap_create(const char *gguf_path, const clap_runtime_options *options, CLAP **out);
-/* Optional EmbeddingGemma2 audio/vision towers and projectors. mmproj_path is
- * required and nonempty. EmbeddingGemma2 loaded with clap_create supports text
- * only; other models retain their existing modalities. */
-CLAP_API clap_status clap_create_with_mmproj(const char *gguf_path, const char *mmproj_path,
-                                             const clap_runtime_options *options, CLAP **out);
 CLAP_API void clap_destroy(CLAP *model);
 CLAP_API clap_status clap_available_devices(clap_device **out, size_t *count);
 /* Frees the list and its strings; count must be the original returned count. */
@@ -84,15 +79,6 @@ CLAP_API clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t sam
 /* Decode WAV/MP3/FLAC by contents, then encode with the same crop semantics. */
 CLAP_API clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop_offset, float **values,
                                             size_t *count);
-/* Packed top-left-origin RGB8, byte_count must equal width * height * 3.
- * Positive dimensions, at most 16384 per axis and 64 Mi pixels, are required.
- * Input bytes are borrowed; free the returned embedding with clap_free. */
-CLAP_API clap_status clap_encode_image(CLAP *model, const unsigned char *rgb, size_t byte_count, int width, int height,
-                                       float **values, size_t *count);
-/* Decode by contents with stb_image (PNG/JPEG/BMP/TGA and other LDR formats).
- * Alpha is discarded; no EXIF orientation transform. Files are limited to
- * 128 MiB and decoded dimensions have the same limits as clap_encode_image. */
-CLAP_API clap_status clap_encode_image_file(CLAP *model, const char *path, float **values, size_t *count);
 CLAP_API clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
                                            clap_audio_frames *out);
 /* Read-only properties; return 0 for a NULL model or an unavailable property.
@@ -107,10 +93,7 @@ CLAP_API int clap_projection_dimension(const CLAP *model);
  * MuQ-MuLan text is L2-normalized; audio averages normalized 10-second clips
  * without final normalization and exposes no frames or crop offsets. Qwen3 text
  * pools the last nonpadding token and L2-normalizes it; audio is unsupported.
- * Qwen3 token input must be unpadded when the checkpoint shares EOS/padding IDs.
- * EmbeddingGemma2 returns normalized 768D text/audio/image embeddings. Audio and
- * images require clap_create_with_mmproj and the matching tower. Audio resamples
- * to 16 kHz and uses the first 30 seconds; it exposes no frames or crop offsets. */
+ * Qwen3 token input must be unpadded when the checkpoint shares EOS/padding IDs. */
 
 #ifdef __cplusplus
 }

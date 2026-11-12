@@ -14,8 +14,6 @@
 import math
 from pathlib import Path
 
-import pytest
-
 from huggingface_hub import hf_hub_download
 
 from clap_cpp import CLAP
@@ -28,10 +26,6 @@ def cosine(a, b):
     return dot / (norm_a * norm_b)
 
 
-def test_image_api():
-    assert callable(getattr(CLAP, "encode_image", None))
-
-
 def test_clap():
     model_path = hf_hub_download(
         repo_id="gorse-io/larger_clap_general-GGUF",
@@ -40,19 +34,9 @@ def test_clap():
 
     audio_path = Path(__file__).resolve().parents[2] / "assets" / "dog.wav"
     with CLAP(model_path) as clap:
-        with pytest.raises(ValueError, match="NUL"):
-            clap.encode_image("bad\0.png")
-        with pytest.raises(TypeError):
-            clap.encode_image(b"image.png")
-        # Unsupported images must not invalidate an audio/text-only model.
-        with pytest.raises(RuntimeError):
-            clap.encode_image(audio_path.parent / "clap.png")
         audio_embedding = clap.encode_audio(audio_path, 0)
         text_embedding_1 = clap.encode_text("Sound of a dog")
         text_embedding_2 = clap.encode_text("Sound of vaccum cleaner")
-
-    with pytest.raises(RuntimeError, match="closed"):
-        clap.encode_image(audio_path.parent / "clap.png")
 
     distance_1 = cosine(audio_embedding, text_embedding_1)
     distance_2 = cosine(audio_embedding, text_embedding_2)

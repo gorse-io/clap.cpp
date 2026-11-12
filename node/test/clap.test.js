@@ -29,10 +29,6 @@ function cosine(a, b) {
   return dot / (normA * normB);
 }
 
-test('image API', () => {
-  assert.equal(typeof CLAP.prototype.encodeImage, 'function');
-});
-
 test('CLAP', async (t) => {
   const filename = 'larger_clap_general-q4_k_m.gguf';
   const modelPath = path.join(__dirname, '..', '..', filename);
@@ -47,11 +43,6 @@ test('CLAP', async (t) => {
 
   const clap = new CLAP(modelPath);
   t.after(() => clap.close());
-  const imagePath = path.join(__dirname, '..', '..', 'assets', 'clap.png');
-  assert.throws(() => clap.encodeImage('bad\0.png'), /NUL/);
-  assert.throws(() => clap.encodeImage({ toString() { clap.close(); return imagePath; } }), TypeError);
-  assert.throws(() => CLAP.prototype.encodeImage.call(Object.create(clap), imagePath), TypeError);
-  assert.throws(() => clap.encodeImage(imagePath));
   const audioEmbedding = clap.encodeAudio(path.join(__dirname, '..', '..', 'assets', 'dog.wav'), 0);
   const textEmbedding1 = clap.encodeText('Sound of a dog');
   const textEmbedding2 = clap.encodeText('Sound of vaccum cleaner');
@@ -70,6 +61,4 @@ test('CLAP', async (t) => {
   const score2 = exp2 / (exp1 + exp2);
   assert.ok(score1 > 0.99, `Expected dog score > 0.99, got ${score1}`);
   assert.ok(score2 < 0.01, `Expected vacuum cleaner score < 0.01, got ${score2}`);
-  clap.close();
-  assert.throws(() => clap.encodeImage(imagePath), /closed/);
 });
