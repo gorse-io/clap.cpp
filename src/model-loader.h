@@ -2,7 +2,6 @@
 
 #include <ggml.h>
 #include <gguf.h>
-#include <nlohmann/json.hpp>
 
 #include <cstdint>
 #include <initializer_list>
@@ -50,25 +49,14 @@ class ModelLoader {
     // Storage tools must not promote F16 bytes before conversion/copying.
     void load(const std::string &path, bool inference = true);
     std::string metadata(const char *key) const;
-    bool has_metadata(const char *key) const;
-    uint32_t metadata_u32(const char *key) const;
-    float metadata_f32(const char *key) const;
-    bool metadata_bool(const char *key) const;
-    std::vector<std::string> metadata_strings(const char *key) const;
-    std::vector<int32_t> metadata_ints(const char *key) const;
-    nlohmann::json metadata_value(const char *key) const;
-    int64_t integer(const char *key) const;
-    double number(const char *key) const;
-    bool boolean(const char *key) const;
     ggml_tensor *weight(const std::string &name) const;
     void shape(const std::string &name, std::initializer_list<int64_t> dims) const;
     void linear_shape(const std::string &name, int in, int out, bool bias = true) const;
     void norm_shape(const std::string &name, int dim) const;
     bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
-    void validate_tensor_coverage(const std::string &prefix = "", const std::string &ignored_prefix = "") const;
+    void validate_tensor_coverage() const;
 
   private:
-    int64_t metadata_key(const char *key, gguf_type type) const;
     RuntimeOptions options;
     std::unordered_map<std::string, ggml_tensor *> tensor_index;
     const ModelLoader *source = nullptr;

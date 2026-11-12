@@ -9,39 +9,6 @@
 
 namespace clap::detail {
 
-// Qwen3 causal decoder used by Qwen3 Embedding (no language-model output head).
-class Qwen3Model final : public ModelArchitecture {
-  public:
-    Qwen3Model(const ModelLoader &, int);
-    std::vector<float> text(const std::vector<int> &) const override;
-    AudioFrames audio_frames(const std::vector<float> &) const override;
-    TextParameters text_parameters() const override { return {-1, h.eos, size_t(h.context)}; }
-    int projection_dimension() const override { return h.width; }
-    int mel_bins() const override { return 0; }
-    int sample_rate() const override { return 0; }
-    bool is_waveform_encoder() const override { return false; }
-
-  private:
-    void load_arch_hparams() override;
-    void load_arch_tensors() const override;
-    void bind_tensors();
-    ggml_tensor *rms(Graph &, ggml_tensor *, const LayerWeights &) const;
-    ggml_tensor *expand_kv(Graph &, ggml_tensor *, int) const;
-    const ModelLoader &loader;
-    GraphRuntime runtime;
-    struct Parameters {
-        int width, ffn, depth, heads, kv_heads, head_dim, vocab, context, eos, pad;
-        float epsilon, theta;
-    } h{};
-    struct Layer {
-        LayerWeights input_norm, post_norm, q_norm, k_norm;
-        LayerWeights query, key, value, output, gate, up, down;
-    };
-    ggml_tensor *embeddings = nullptr;
-    LayerWeights final_norm;
-    std::vector<Layer> layers;
-};
-
 // Per-architecture declarations belong here, following llama.cpp/src/models.
 // GGUF I/O, tokenizer ownership, generic tensor operations and the public CLAP
 // facade are implemented in the core src/ files, not in this specialization.
@@ -135,42 +102,6 @@ class Clamp3Model final : public ModelArchitecture {
     };
     Branch audio_branch, text_branch;
     int chunk_length = 128, projection_dim = 0;
-};
-
-// Gemma-embedding2 GGUF shared text/soft-token transformer.
-class EmbeddingGemma2Model final : public ModelArchitecture {
-  public:
-    EmbeddingGemma2Model(const ModelLoader &loader, int threads, const ModelLoader *audio_loader = nullptr);
-    ~EmbeddingGemma2Model() override;
-    std::vector<float> text(const std::vector<int> &ids) const override;
-    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
-    std::vector<float> image_embedding(const clap::Image &image) const override;
-    bool has_waveform_embeddings() const override { return true; }
-    AudioFrames audio_frames(const std::vector<float> &) const override;
-    TextParameters text_parameters() const override;
-    int projection_dimension() const override { return output; }
-    int mel_bins() const override { return 0; }
-    int sample_rate() const override { return 16000; }
-    bool is_waveform_encoder() const override { return false; }
-
-  private:
-    void load_arch_hparams() override;
-    void load_arch_tensors() const override;
-    HostMatrix rms(const HostMatrix &x, const std::string &name, int width = 0) const;
-    HostMatrix attention(const HostMatrix &x, int layer, const std::vector<int> &mask) const;
-    friend struct FeatureTestAccess;
-    std::vector<float> encode(HostMatrix x, const std::vector<int> &mask) const;
-    const ModelLoader &loader;
-    GraphRuntime runtime;
-    HostMatrix linear(const HostMatrix &x, const std::string &name, bool bias = false) const;
-    std::unique_ptr<GemmaAudioEncoder> audio_encoder;
-    std::unique_ptr<GemmaVisionEncoder> vision_encoder;
-    int begin_audio = -1, end_audio = -1, begin_image = -1, end_image = -1;
-    int hidden = 0, output = 0, layers = 0, per_layer = 0, vocab = 0, context = 0, window = 0;
-    int bos = 2, eos = 1, pad = 0;
-    float epsilon = 0, rope_base = 0, rope_base_swa = 0, rope_scale = 1;
-    std::vector<int> heads, kv_heads, dimensions, rotations, ffn;
-    std::vector<bool> local;
 };
 
 // Official m-a-p/MERT-v2-FullSong waveform encoder: checkpoint frontend,

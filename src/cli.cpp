@@ -45,19 +45,17 @@ int main(int argc, char **argv) {
     serve->add_option("--port", port, "Listen port")->check(CLI::Range(1, 65535))->capture_default_str();
 
     EmbeddingOptions options;
-    auto *embedding = app.add_subcommand("embedding", "Generate native text, audio or image embeddings");
-    embedding->add_option("-m,--model", options.model_path, "Model GGUF")->required()->check(CLI::ExistingFile);
-    embedding->add_option("--mmproj", options.mmproj_path, "EmbeddingGemma2 audio/vision tower and projector GGUF")
+    auto *embedding = app.add_subcommand("embedding", "Generate native text or audio embeddings");
+    embedding->add_option("-m,--model", options.model_path, "Converted CLAP/CLaMP3/MERT/MERT2/MuQ/MuLan GGUF")
+        ->required()
         ->check(CLI::ExistingFile);
     embedding->add_option("-t,--threads", options.threads, "ggml CPU threads (0: hardware concurrency)")
         ->check(CLI::NonNegativeNumber)
         ->capture_default_str();
     embedding->add_option("--device", options.device, "GGML device name, auto or cpu (default: CLAP_DEVICE or auto)");
-    auto *input = embedding->add_option_group("Input", "Choose one text, audio file or image file");
+    auto *input = embedding->add_option_group("Input", "Choose one text or audio file");
     input->require_option(1, 1);
     input->add_option("--text", options.text, "One UTF-8 text (output: flat JSON vector)");
-    input->add_option("--image", options.image_path, "Image decoded with stb (output: flat JSON vector)")
-        ->check(CLI::ExistingFile);
     auto *audio_option =
         input->add_option("-a,--audio", options.audio_path, "WAV, MP3 or FLAC (output: flat JSON vector)")
             ->check(CLI::ExistingFile);

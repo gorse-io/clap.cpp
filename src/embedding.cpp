@@ -1,7 +1,6 @@
 #include "audio.h"
 #include "clap.h"
 #include "embedding.h"
-#include "image.h"
 
 #include <nlohmann/json.hpp>
 
@@ -42,20 +41,15 @@ template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
 
 int cmd_embedding(const EmbeddingOptions &options) {
     try {
-        // Decode media before loading weights, preserving decoder-error precedence.
+        // Preserve native CLI error precedence: decode audio before loading weights.
         clap::Audio decoded;
         if (!options.audio_path.empty())
             decoded = clap::decode_audio(options.audio_path);
-        clap::Image image;
-        if (!options.image_path.empty())
-            image = clap::decode_image(options.image_path);
         auto runtime = clap_default_options();
         runtime.threads = options.threads;
         runtime.device = c_string(options.device);
         CLAP *handle = nullptr;
-        check(options.mmproj_path.empty() ? clap_create(c_string(options.model_path), &runtime, &handle)
-                                          : clap_create_with_mmproj(c_string(options.model_path),
-                                                                    c_string(options.mmproj_path), &runtime, &handle));
+        check(clap_create(c_string(options.model_path), &runtime, &handle));
         const std::unique_ptr<CLAP, decltype(&clap_destroy)> model(handle, clap_destroy);
         if (!options.audio_path.empty()) {
             const int sample_rate = clap_audio_sample_rate(model.get());
@@ -82,12 +76,6 @@ int cmd_embedding(const EmbeddingOptions &options) {
                                         decoded.sample_rate, options.crop_offset, &values, &count));
                 std::cout << json(take_buffer(values, count)).dump() << '\n';
             }
-        } else if (!options.image_path.empty()) {
-            float *values = nullptr;
-            std::size_t count = 0;
-            check(clap_encode_image(model.get(), image.pixels.data(), image.pixels.size(), image.width, image.height,
-                                    &values, &count));
-            std::cout << json(take_buffer(values, count)).dump() << '\n';
         } else {
             float *values = nullptr;
             std::size_t count = 0;

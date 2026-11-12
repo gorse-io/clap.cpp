@@ -25,11 +25,6 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot / (norm_a * norm_b)
 }
 
-#[test]
-fn image_api() {
-    let _encode = |model: &mut CLAP| model.encode_image("image.png");
-}
-
 #[tokio::test]
 async fn clap() -> Result<(), Box<dyn std::error::Error>> {
     let hf = HFClient::new()?;
@@ -47,17 +42,6 @@ async fn clap() -> Result<(), Box<dyn std::error::Error>> {
             .join("larger_clap_general-q4_k_m.gguf"),
         1,
     )?;
-    assert!(clap.encode_image("bad\0.png").is_err());
-    #[cfg(unix)]
-    {
-        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-        assert!(clap
-            .encode_image(OsStr::from_bytes(b"bad\xff.png"))
-            .is_err());
-    }
-    assert!(clap
-        .encode_image(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/clap.png"))
-        .is_err());
     let audio_embedding = clap.encode_audio(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dog.wav"),
         0,

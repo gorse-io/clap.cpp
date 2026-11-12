@@ -27,7 +27,6 @@
 #include <vector>
 
 namespace clap::detail {
-class ModelLoader;
 
 class Vocabulary {
   public:
@@ -40,38 +39,18 @@ class Vocabulary {
 class ByteBpeVocabulary final : public Vocabulary {
   public:
     ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length,
-                      bool split_special_tokens = false, bool qwen_rules = false);
-    ByteBpeVocabulary(const ModelLoader &loader, size_t context_length);
+                      bool split_special_tokens = false);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
 
   private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos;
-    bool qwen; // Standard GGUF qwen2 pre-tokenizer; no HF NFC normalization.
     size_t context_length;
     std::unordered_map<std::string, int> vocab;
     std::map<std::pair<std::string, std::string>, int> ranks;
     std::vector<nlohmann::json> special;
     std::string byte_chars[256];
     std::unique_ptr<icu::RegexPattern> pattern;
-};
-
-// Gemma 4 / EmbeddingGemma 2 GGUF uses SentencePiece-style raw UTF-8 BPE,
-// NOT Unigram or GPT-2 byte encoding. Metadata keys retain tokenizer.ggml.*.
-class GemmaVocabulary final : public Vocabulary {
-  public:
-    GemmaVocabulary(const nlohmann::json &metadata, size_t context_length);
-    std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
-
-  private:
-    void encode_piece(const std::string &text, std::vector<int> &ids) const;
-    int bos, eos, unk;
-    bool add_bos, add_eos;
-    size_t context_length;
-    std::unordered_map<std::string, int> pieces;
-    std::map<std::pair<std::string, std::string>, int> ranks;
-    std::vector<std::pair<std::string, int>> special;
-    int bytes[256];
 };
 
 // XLM-R's tokenizer.json is a SentencePiece Unigram model represented by the
