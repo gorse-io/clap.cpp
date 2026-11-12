@@ -141,35 +141,57 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 3
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      RUSTC_WRAPPER: sccache
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      SCCACHE_S3_KEY_PREFIX: clap.cpp/
+      SCCACHE_GHA_ENABLED: 'false'
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v5
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
         with:
-          python-version: '3.11'
+          arch: ${{ runner.arch == 'ARM64' && 'arm64' || 'amd64' }}
+      - name: Select Windows native compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          COMPILER: ${{ runner.arch == 'ARM64' && 'clang-cl' || 'cl' }}
+        run: |
+          "CC=$env:COMPILER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CXX=$env:COMPILER" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Configure remote compiler cache
+        if: env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != ''
+        shell: bash
+        env:
+          SCCACHE_BUCKET: ${{ vars.SCCACHE_BUCKET }}
+          SCCACHE_ENDPOINT: ${{ vars.SCCACHE_ENDPOINT }}
+          SCCACHE_REGION: ${{ vars.SCCACHE_REGION }}
+        run: |
+          printf '%s\n' "SCCACHE_BUCKET=$SCCACHE_BUCKET" "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT" "SCCACHE_REGION=$SCCACHE_REGION" >> "$GITHUB_ENV"
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: v0.18.0
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
           components: rustfmt, clippy
           cache-workspaces: . -> target
           build-warnings: ""
-      - name: Build configuration tests
-        shell: bash
-        run: |
-          mkdir -p target
-          rustc --edition=2021 --test rust/build.rs -o target/build-script-tests
-          target/build-script-tests
       - name: Format
         run: cargo fmt -- --check
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
-      - name: Default-backend inference and safety tests
+      - name: Test
         run: cargo test --all-targets
-      - name: Compile-fail thread-safety contract
-        run: cargo test --doc

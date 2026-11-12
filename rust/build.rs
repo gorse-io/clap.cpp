@@ -104,6 +104,8 @@ fn main() {
     }
     for var in [
         "CMAKE_GENERATOR",
+        "CMAKE_C_COMPILER_LAUNCHER",
+        "CMAKE_CXX_COMPILER_LAUNCHER",
         "CMAKE_TOOLCHAIN_FILE",
         "CC",
         "CXX",
@@ -229,6 +231,8 @@ fn main() {
     // CMake consumes compiler/SDK environment variables itself. Architecture
     // lists and package roots are cache variables, so pass them explicitly.
     for var in [
+        "CMAKE_C_COMPILER_LAUNCHER",
+        "CMAKE_CXX_COMPILER_LAUNCHER",
         "CUDAToolkit_ROOT",
         "CMAKE_CUDA_ARCHITECTURES",
         "CMAKE_HIP_ARCHITECTURES",
