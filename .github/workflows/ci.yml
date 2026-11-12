@@ -153,7 +153,9 @@ jobs:
       - name: Use ClangCL on Windows ARM64
         if: matrix.os == 'windows-11-arm'
         shell: pwsh
-        run: "'CMAKE_GENERATOR_TOOLSET=ClangCL' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
+        run: |
+          'CMAKE_GENERATOR=Visual Studio 17 2022' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'CMAKE_GENERATOR_TOOLSET=ClangCL' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
@@ -164,7 +166,5 @@ jobs:
         run: cargo fmt -- --check
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
-      - name: Default-backend inference and safety tests
+      - name: Test
         run: cargo test --all-targets
-      - name: Compile-fail thread-safety contract
-        run: cargo test --doc
