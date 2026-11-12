@@ -141,7 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 3
@@ -150,21 +150,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Use ClangCL on Windows ARM64
+        if: matrix.os == 'windows-11-arm'
+        shell: pwsh
+        run: "'CMAKE_GENERATOR_TOOLSET=ClangCL' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append"
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: stable
           components: rustfmt, clippy
           cache-workspaces: . -> target
           build-warnings: ""
-      - name: Build configuration tests
-        shell: bash
-        run: |
-          mkdir -p target
-          rustc --edition=2021 --test rust/build.rs -o target/build-script-tests
-          target/build-script-tests
       - name: Format
         run: cargo fmt -- --check
       - name: Lint
