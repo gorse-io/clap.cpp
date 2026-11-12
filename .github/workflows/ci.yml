@@ -103,15 +103,13 @@ jobs:
             ${{ matrix.os == 'windows-11-arm' && '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl' || '' }}
       - name: Test C++
         run: ctest --test-dir build/libraries -C Release --output-on-failure
-      - name: Test native installation
-        run: cmake --install build/libraries --config Release --prefix "${{ runner.temp }}/clap-install"
       - name: Install Python test dependencies
         if: matrix.os != 'windows-11-arm'
         run: python -m pip install pytest "huggingface-hub>=0.20"
       - name: Stage Python runtime
         if: matrix.os != 'windows-11-arm'
         shell: bash
-        run: cp -R "libraries/${{ matrix.runtime }}/clap_cpp/." python/clap_cpp/
+        run: cmake --install build/libraries --config Release --component runtime --prefix "$GITHUB_WORKSPACE/python"
       - name: Test Python
         if: matrix.os != 'windows-11-arm'
         env:
@@ -123,9 +121,7 @@ jobs:
         working-directory: node
         run: |
           npm ci --force --ignore-scripts
-          package="packages/${{ matrix.runtime }}"
-          mkdir -p "$package/runtime"
-          cp -R "../libraries/${{ matrix.runtime }}/." "$package/runtime/"
+          cmake --install ../build/libraries --config Release --component runtime --prefix "$GITHUB_WORKSPACE/node/packages/${{ matrix.runtime }}/runtime"
       - name: Test Node
         if: matrix.os != 'windows-11-arm'
         shell: bash

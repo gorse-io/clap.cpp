@@ -33,7 +33,7 @@ function(clap_static_development)
     set(dependencies ${archives})
     list(REMOVE_ITEM dependencies clap)
     if(dependencies)
-        install(TARGETS ${dependencies}
+        install(TARGETS ${dependencies} EXCLUDE_FROM_ALL
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT development)
     endif()
     if(CLAP_GENERATE_LINK_METADATA)

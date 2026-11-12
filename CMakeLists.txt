@@ -446,26 +446,3 @@ foreach(target IN LISTS CLAP_LOCAL_TARGETS)
         target_compile_features(${target} PRIVATE cxx_std_20)
     endif()
 endforeach()
-
-if(CLAP_BUILD_CLI)
-    install(TARGETS clap-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()
-
-# The runtime component is also usable by standalone C-library consumers.
-# Keep development archives and headers out of binary-only distributions.
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/clap.h"
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT development)
-foreach(dependency IN ITEMS ggml miniaudio icu json)
-    if(dependency STREQUAL "ggml")
-        set(license "ggml/LICENSE")
-    elseif(dependency STREQUAL "json")
-        set(license "thirdparty/json/LICENSE.MIT")
-    else()
-        set(license "thirdparty/${dependency}/LICENSE")
-    endif()
-    foreach(component IN ITEMS runtime development)
-        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/${license}"
-            DESTINATION ${CMAKE_INSTALL_LIBDIR}/licenses
-            RENAME ${dependency}.txt COMPONENT ${component})
-    endforeach()
-endforeach()

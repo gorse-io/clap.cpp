@@ -35,7 +35,24 @@ if(NOT MSVC)
     target_compile_options(clap PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-install(TARGETS clap
+# Only explicit binding components are installed; there is no general-purpose
+# CLI, header or development-SDK installation.
+install(TARGETS clap EXCLUDE_FROM_ALL
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT runtime
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT development)
+install(FILES "${PROJECT_SOURCE_DIR}/LICENSE"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/licenses
+    RENAME clap.txt COMPONENT runtime EXCLUDE_FROM_ALL)
+foreach(dependency IN ITEMS ggml miniaudio icu json)
+    if(dependency STREQUAL "ggml")
+        set(license "ggml/LICENSE")
+    elseif(dependency STREQUAL "json")
+        set(license "thirdparty/json/LICENSE.MIT")
+    else()
+        set(license "thirdparty/${dependency}/LICENSE")
+    endif()
+    install(FILES "${PROJECT_SOURCE_DIR}/${license}"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/licenses
+        RENAME ${dependency}.txt COMPONENT runtime EXCLUDE_FROM_ALL)
+endforeach()

@@ -65,5 +65,3 @@ endforeach()
 add_library(ICU::data ALIAS clap-icu-data)
 add_library(ICU::uc ALIAS clap-icu-uc)
 add_library(ICU::i18n ALIAS clap-icu-i18n)
-
-install(FILES "${CLAP_ICU_SOURCE}/../../LICENSE" DESTINATION share/licenses/clap/icu)

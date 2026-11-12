@@ -39,6 +39,4 @@ runs:
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
-      run: |
-        cmake --install build/libraries --config Release --component runtime --prefix "$GITHUB_WORKSPACE/libraries/$TARGET"
-        cp LICENSE "libraries/$TARGET/clap_cpp/licenses/clap.txt"
+      run: cmake --install build/libraries --config Release --component runtime --prefix "$GITHUB_WORKSPACE/libraries/$TARGET"
