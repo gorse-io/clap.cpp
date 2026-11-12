@@ -38,6 +38,7 @@ const optionsType = koffi.struct({ threads: 'int', device: 'str', activation_pre
 const defaults = lib.func('clap_default_options', optionsType, []);
 const lastError = lib.func('clap_last_error', 'str', []);
 const create = lib.func('clap_create', 'int', ['str', koffi.pointer(optionsType), koffi.out(koffi.pointer(handle))]);
+const createWithMmproj = lib.func('clap_create_with_mmproj', 'int', ['str', 'str', koffi.pointer(optionsType), koffi.out(koffi.pointer(handle))]);
 const destroy = lib.func('clap_destroy', 'void', [handle]);
 const free = lib.func('clap_free', 'void', ['void *']);
 const outputs = [koffi.out(koffi.pointer('float', 2)), koffi.out(koffi.pointer('size_t'))];
@@ -131,14 +132,23 @@ class CLAP {
 
   constructor(modelPath, threads = 0) {
     const filename = string(modelPath, 'path', true);
+    let mmproj;
+    if (threads !== null && typeof threads === 'object' && !Array.isArray(threads)) {
+      const opts = threads;
+      threads = opts.threads;
+      mmproj = opts.mmproj;
+      if (threads === undefined) threads = 0;
+    }
     const threadCount = integer(threads, 'threads', 0, maxInt);
+    const projector = mmproj === undefined ? undefined : string(mmproj, 'mmproj', true);
     const options = defaults(); // Returned by value, not a pointer.
     options.threads = threadCount;
     const output = [null];
     const state = { pointer: null };
     const token = Object.create(null);
     try {
-      check(create(filename, options, output));
+      check(projector === undefined ? create(filename, options, output)
+        : createWithMmproj(filename, projector, options, output));
       state.pointer = output[0];
       this.#state = state;
       this.#token = token;
