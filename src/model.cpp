@@ -41,6 +41,26 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
 CLAP::~CLAP() = default;
 
 namespace clap::detail {
+EmbeddingWeights bind_embeddings(const ModelLoader &loader, const std::string &prefix, bool word) {
+    return {word ? loader.weight(prefix + ".word_embeddings.weight") : nullptr,
+            loader.weight(prefix + ".position_embeddings.weight"),
+            loader.weight(prefix + ".token_type_embeddings.weight"), LayerWeights::bind(loader, prefix + ".LayerNorm")};
+}
+TransformerWeights bind_bert_layer(const ModelLoader &loader, const std::string &prefix) {
+    return {{LayerWeights::bind(loader, prefix + ".attention.self.query"),
+             LayerWeights::bind(loader, prefix + ".attention.self.key"),
+             LayerWeights::bind(loader, prefix + ".attention.self.value"),
+             LayerWeights::bind(loader, prefix + ".attention.output.dense")},
+            LayerWeights::bind(loader, prefix + ".attention.output.LayerNorm"),
+            LayerWeights::bind(loader, prefix + ".output.LayerNorm"),
+            LayerWeights::bind(loader, prefix + ".intermediate.dense"),
+            LayerWeights::bind(loader, prefix + ".output.dense")};
+}
+BatchNormWeights BatchNormWeights::bind(const ModelLoader &loader, const std::string &prefix) {
+    return {LayerWeights::bind(loader, prefix), loader.weight(prefix + ".running_mean"),
+            loader.weight(prefix + ".running_var")};
+}
+
 std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max_length) {
     if (model.vocabulary == nullptr)
         throw std::runtime_error("CLAP: this model has no text tokenizer");
