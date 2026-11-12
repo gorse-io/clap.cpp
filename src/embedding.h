@@ -25,6 +25,7 @@ struct EmbeddingOptions {
     std::string device;
     std::string text;
     std::string audio_path;
+    std::string image_path;
     std::size_t crop_offset = 0;
     bool crop_requested = false;
     bool frames = false;

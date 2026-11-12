@@ -1,6 +1,7 @@
 #include "audio.h"
 #include "clap.h"
 #include "embedding.h"
+#include "image.h"
 
 #include <nlohmann/json.hpp>
 
@@ -41,10 +42,13 @@ template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
 
 int cmd_embedding(const EmbeddingOptions &options) {
     try {
-        // Preserve native CLI error precedence: decode audio before loading weights.
+        // Decode media before loading weights, preserving decoder-error precedence.
         clap::Audio decoded;
         if (!options.audio_path.empty())
             decoded = clap::decode_audio(options.audio_path);
+        clap::Image image;
+        if (!options.image_path.empty())
+            image = clap::decode_image(options.image_path);
         auto runtime = clap_default_options();
         runtime.threads = options.threads;
         runtime.device = c_string(options.device);
@@ -78,6 +82,12 @@ int cmd_embedding(const EmbeddingOptions &options) {
                                         decoded.sample_rate, options.crop_offset, &values, &count));
                 std::cout << json(take_buffer(values, count)).dump() << '\n';
             }
+        } else if (!options.image_path.empty()) {
+            float *values = nullptr;
+            std::size_t count = 0;
+            check(clap_encode_image(model.get(), image.pixels.data(), image.pixels.size(), image.width, image.height,
+                                    &values, &count));
+            std::cout << json(take_buffer(values, count)).dump() << '\n';
         } else {
             float *values = nullptr;
             std::size_t count = 0;

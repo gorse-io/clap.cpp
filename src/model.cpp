@@ -107,6 +107,12 @@ std::vector<float> encode_audio_file(CLAP &model, const std::string &path, size_
     return encode_audio(model, audio.samples, audio.sample_rate, crop_offset);
 }
 
+std::vector<float> encode_image(CLAP &model, const Image &image) { return model.architecture->image_embedding(image); }
+
+std::vector<float> encode_image_file(CLAP &model, const std::string &path) {
+    return encode_image(model, decode_image(path));
+}
+
 AudioFrames audio_frames(CLAP &model, const std::vector<float> &pcm, int sample_rate) {
     if (!(model.architecture->is_waveform_encoder()))
         throw std::runtime_error("CLAP: this model does not expose frame representations");

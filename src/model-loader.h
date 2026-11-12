@@ -65,7 +65,7 @@ class ModelLoader {
     void linear_shape(const std::string &name, int in, int out, bool bias = true) const;
     void norm_shape(const std::string &name, int dim) const;
     bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
-    void validate_tensor_coverage(const std::string &prefix = "") const;
+    void validate_tensor_coverage(const std::string &prefix = "", const std::string &ignored_prefix = "") const;
 
   private:
     int64_t metadata_key(const char *key, gguf_type type) const;

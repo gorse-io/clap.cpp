@@ -144,6 +144,7 @@ class EmbeddingGemma2Model final : public ModelArchitecture {
     ~EmbeddingGemma2Model() override;
     std::vector<float> text(const std::vector<int> &ids) const override;
     std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+    std::vector<float> image_embedding(const clap::Image &image) const override;
     bool has_waveform_embeddings() const override { return true; }
     AudioFrames audio_frames(const std::vector<float> &) const override;
     TextParameters text_parameters() const override;
@@ -163,7 +164,8 @@ class EmbeddingGemma2Model final : public ModelArchitecture {
     GraphRuntime runtime;
     HostMatrix linear(const HostMatrix &x, const std::string &name, bool bias = false) const;
     std::unique_ptr<GemmaAudioEncoder> audio_encoder;
-    int begin_audio = -1, end_audio = -1;
+    std::unique_ptr<GemmaVisionEncoder> vision_encoder;
+    int begin_audio = -1, end_audio = -1, begin_image = -1, end_image = -1;
     int hidden = 0, output = 0, layers = 0, per_layer = 0, vocab = 0, context = 0, window = 0;
     int bos = 2, eos = 1, pad = 0;
     float epsilon = 0, rope_base = 0, rope_base_swa = 0, rope_scale = 1;

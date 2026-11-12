@@ -46,6 +46,7 @@ const text = lib.func('clap_encode_text', 'int', [handle, 'str', ...outputs]);
 const tokens = lib.func('clap_encode_tokens', 'int', [handle, 'const int *', 'size_t', ...outputs]);
 const audio = lib.func('clap_encode_audio', 'int', [handle, 'const float *', 'size_t', 'int', 'size_t', ...outputs]);
 const audioFile = lib.func('clap_encode_audio_file', 'int', [handle, 'str', 'size_t', ...outputs]);
+const imageFile = lib.func('clap_encode_image_file', 'int', [handle, 'str', ...outputs]);
 const maxInt = 2147483647;
 const maxSize = koffi.sizeof('size_t') === 4 ? 4294967295 : Number.MAX_SAFE_INTEGER;
 const typedArrayPrototype = Object.getPrototypeOf(Float32Array.prototype);
@@ -186,6 +187,13 @@ class CLAP {
     const offset = integer(cropOffset, 'cropOffset', 0, maxSize);
     if (state.pointer === null) throw new Error('CLAP is closed');
     return embedding(audio, [state.pointer, pcm, lengthOf(pcm), rate, offset]);
+  }
+
+  encodeImage(value) {
+    const state = this.#state;
+    const filename = string(value, 'path', true);
+    if (state.pointer === null) throw new Error('CLAP is closed');
+    return embedding(imageFile, [state.pointer, filename]);
   }
 
   close() {

@@ -63,6 +63,7 @@ _bind("clap_encode_text", C.c_int, _Handle, C.c_char_p, C.POINTER(_Floats), C.PO
 _bind("clap_encode_tokens", C.c_int, _Handle, _Ints, _Size, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_encode_audio", C.c_int, _Handle, _Floats, _Size, C.c_int, _Size, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_encode_audio_file", C.c_int, _Handle, C.c_char_p, _Size, C.POINTER(_Floats), C.POINTER(_Size))
+_bind("clap_encode_image_file", C.c_int, _Handle, C.c_char_p, C.POINTER(_Floats), C.POINTER(_Size))
 _bind("clap_get_audio_frames", C.c_int, _Handle, _Floats, _Size, C.c_int, C.POINTER(_Frames))
 _bind("clap_audio_sample_rate", C.c_int, _Handle)
 _bind("clap_projection_dimension", C.c_int, _Handle)
@@ -247,6 +248,10 @@ class CLAP:
         rate = _integer(kwargs.get("sample_rate", 48000), "sample_rate", 1)
         samples = _pcm(value)
         return self._buffer(self._native.clap_encode_audio, samples, len(samples), rate, crop)
+
+    def encode_image(self, path):
+        """Decode an image file and return an owning embedding list."""
+        return self._buffer(self._native.clap_encode_image_file, _path(path))
 
     def audio_frames(self, pcm, sample_rate=48000):
         rate = _integer(sample_rate, "sample_rate", 1)

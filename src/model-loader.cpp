@@ -63,12 +63,14 @@ void ModelLoader::norm_shape(const std::string &name, int dim) const {
     shape(name + ".bias", {dim});
 }
 
-void ModelLoader::validate_tensor_coverage(const std::string &prefix) const {
+void ModelLoader::validate_tensor_coverage(const std::string &prefix, const std::string &ignored_prefix) const {
     if (!f32_activations && !bundled && metadata("general.architecture") != "qwen3")
         return;
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         const std::string name = gguf_get_tensor_name(gguf, i);
         if (!prefix.empty() && name.rfind(prefix, 0) != 0)
+            continue;
+        if (!ignored_prefix.empty() && name.rfind(ignored_prefix, 0) == 0)
             continue;
         if (validated_shapes.count(name) == 0)
             throw std::runtime_error(

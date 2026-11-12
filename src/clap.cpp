@@ -195,6 +195,23 @@ clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop, f
         return clap::detail::encode_audio_file(*model, path, crop);
     });
 }
+clap_status clap_encode_image(CLAP *model, const unsigned char *rgb, size_t bytes, int width, int height, float **out,
+                              size_t *count) {
+    return embedding(model, out, count, [&] {
+        require(rgb && width > 0 && height > 0 && width <= 16384 && height <= 16384,
+                "CLAP: RGB data and positive image dimensions up to 16384 are required");
+        const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+        require(pixels <= (size_t{64} << 20) && bytes == pixels * 3,
+                "CLAP: image exceeds 64 Mi pixels or RGB byte count does not match dimensions");
+        return clap::detail::encode_image(*model, {width, height, {rgb, rgb + bytes}});
+    });
+}
+clap_status clap_encode_image_file(CLAP *model, const char *path, float **out, size_t *count) {
+    return embedding(model, out, count, [&] {
+        require(path && *path, "CLAP: image path is required");
+        return clap::detail::encode_image_file(*model, path);
+    });
+}
 clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int rate, clap_audio_frames *out) {
     if (out)
         *out = {};

@@ -16,7 +16,7 @@
 
 export interface ModelOptions {
   threads?: number;
-  /** Separate audio tower/projector GGUF for EmbeddingGemma2. */
+  /** Separate audio or vision tower/projector GGUF for EmbeddingGemma2. */
   mmproj?: string;
 }
 export class CLAP {
@@ -28,6 +28,8 @@ export class CLAP {
   encodeAudio(pcm: Float32Array, sampleRate?: number, cropOffset?: number): Float32Array;
   /** Decode WAV/MP3/FLAC by contents, downmix and resample internally. */
   encodeAudio(path: string, cropOffset?: number): Float32Array;
+  /** Decode an image file internally and return an owned embedding. */
+  encodeImage(path: string): Float32Array;
   /** Idempotent early release; encoding methods throw after close. */
   close(): void;
 }

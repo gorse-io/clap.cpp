@@ -37,6 +37,12 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniaudio/miniaudio.h")
         "miniaudio submodule is missing. Run: git submodule update --init --recursive")
 endif()
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb/stb_image.h")
+    message(FATAL_ERROR
+        "stb submodule is missing. Run: git submodule update --init --recursive")
+endif()
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/stb/LICENSE" DESTINATION share/licenses/clap/stb)
+
 
 # Scope BUILD_SHARED_LIBS to dependency creation: the core still honors the
 # caller's setting, without forcing cache values or duplicating its build graph.
@@ -102,6 +108,25 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/conversion.py")
     set_tests_properties(test-clap-conversion-imports PROPERTIES TIMEOUT 30)
     find_program(FFMPEG_EXECUTABLE NAMES ffmpeg REQUIRED)
+    add_executable(test-image tests/test-image.cpp)
+    target_include_directories(test-image PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-image PRIVATE clap nlohmann_json::nlohmann_json)
+    add_test(NAME test-clap-image
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image.py"
+                "$<TARGET_FILE:test-image>" "${FFMPEG_EXECUTABLE}")
+    set_tests_properties(test-clap-image PROPERTIES TIMEOUT 60)
+    if(BUILD_SHARED_LIBS)
+        if(CLAP_BUILD_CLI)
+            add_test(NAME test-clap-image-api
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_api.py"
+                        "$<TARGET_FILE:clap>" "$<TARGET_FILE:clap-cli>")
+        else()
+            add_test(NAME test-clap-image-api
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/image_api.py"
+                        "$<TARGET_FILE:clap>")
+        endif()
+        set_tests_properties(test-clap-image-api PROPERTIES TIMEOUT 60)
+    endif()
     set(CLAP_AUDIO_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/audio")
     set(CLAP_AUDIO_FIXTURES
         mono.wav stereo.wav mono.flac stereo.flac mono.mp3 stereo.mp3
@@ -116,6 +141,19 @@ if(BUILD_TESTING)
         COMMENT "Generating audio test fixtures"
         VERBATIM)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
+    add_executable(test-embeddinggemma2-image tests/models/test-embeddinggemma2-image.cpp)
+    target_include_directories(test-embeddinggemma2-image PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-embeddinggemma2-image PRIVATE clap nlohmann_json::nlohmann_json)
+    if(CLAP_BUILD_CLI)
+        add_test(NAME test-embeddinggemma2-image
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_image.py"
+                    "$<TARGET_FILE:test-embeddinggemma2-image>" "$<TARGET_FILE:clap-cli>")
+    else()
+        add_test(NAME test-embeddinggemma2-image
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/models/embeddinggemma2_image.py"
+                    "$<TARGET_FILE:test-embeddinggemma2-image>")
+    endif()
+    set_tests_properties(test-embeddinggemma2-image PROPERTIES TIMEOUT 180)
     add_executable(test-gemma-audio-integration tests/models/test-gemma-audio-integration.cpp)
     target_include_directories(test-gemma-audio-integration PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-gemma-audio-integration PRIVATE clap nlohmann_json::nlohmann_json)
@@ -522,7 +560,7 @@ endif()
 # Keep development archives and headers out of binary-only distributions.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/clap.h"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT development)
-foreach(dependency IN ITEMS ggml miniaudio icu json)
+foreach(dependency IN ITEMS ggml miniaudio icu json stb)
     if(dependency STREQUAL "ggml")
         set(license "ggml/LICENSE")
     elseif(dependency STREQUAL "json")

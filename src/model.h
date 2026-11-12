@@ -2,6 +2,7 @@
 
 #include "clap.h"
 #include "graph.h"
+#include "image.h"
 #include "model-loader.h"
 
 #include <nlohmann/json.hpp>
@@ -46,6 +47,9 @@ class ModelArchitecture {
     // A joint waveform model has a tokenizer and its own clip/embedding pooling.
     virtual bool has_text_encoder() const { return !is_waveform_encoder(); }
     virtual bool has_waveform_embeddings() const { return false; }
+    virtual std::vector<float> image_embedding(const Image &) const {
+        throw std::runtime_error("CLAP: this model has no image encoder");
+    }
     virtual std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const {
         throw std::runtime_error("CLAP: this architecture has no waveform embeddings");
     }
@@ -109,6 +113,23 @@ class GemmaAudioEncoder {
     int threads;
     HostMatrix linear(const HostMatrix &x, const std::string &name, bool bias = false) const;
 };
+// Native Gemma4 vision tower; accepts packed RGB, never decodes image files.
+class GemmaVisionEncoder {
+  public:
+    GemmaVisionEncoder(const ModelLoader &loader, int threads);
+    HostMatrix encode(const clap::Image &image) const;
+
+  private:
+    HostMatrix linear(const HostMatrix &x, const std::string &name) const;
+    HostMatrix rms(const HostMatrix &x, const std::string &name = "", int width = 0) const;
+    HostMatrix patches(const clap::Image &image, int &nx, int &ny) const;
+    HostMatrix attention(const HostMatrix &x, const std::string &prefix, int nx) const;
+    const ModelLoader &loader;
+    int hidden = 0, heads = 0, layers = 0, feedforward = 0, patch = 0, pool = 3, max_patches = 2520;
+    int positions = 0, output = 0, threads = 0;
+    float epsilon = 0;
+    GraphRuntime runtime;
+};
 class Vocabulary;
 } // namespace clap::detail
 
@@ -130,5 +151,7 @@ std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max
 std::vector<float> encode_text(CLAP &model, const std::string &utf8);
 std::vector<float> encode_audio(CLAP &model, const std::vector<float> &pcm, int sample_rate, size_t crop_offset);
 std::vector<float> encode_audio_file(CLAP &model, const std::string &path, size_t crop_offset);
+std::vector<float> encode_image(CLAP &model, const Image &image);
+std::vector<float> encode_image_file(CLAP &model, const std::string &path);
 AudioFrames audio_frames(CLAP &model, const std::vector<float> &pcm, int sample_rate);
 } // namespace clap::detail

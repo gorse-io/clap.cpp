@@ -20,9 +20,9 @@ reference for reproducibility.
 ## Scope and numerical details
 
 Load the standard `gemma-embedding2` GGUF directly. Text requires only the main
-model; audio also requires its matching `clip`/`gemma4a` mmproj. No checkpoint
-converter or image API is added. Default output is 768D;
-retrieval prefixes are explicit input text, not automatically inserted.
+model; audio and images also require a matching `clip` mmproj with the
+corresponding Gemma4 tower. No checkpoint converter is added. Default output is
+768D; retrieval prefixes are explicit input text, not automatically inserted.
 
 The published model has 24 blocks, width 512, FFN width 2048, four Q heads,
 and 512D per-layer projection inputs. Blocks 5/11/17/23 (zero based) use global
@@ -150,3 +150,64 @@ F16 even with decoded-F32 weights. The identical-feature comparison separates
 the frontend discrepancy but does not claim bit-exact inference or attribute
 every residual difference to packing. No GPU or original unquantized Google
 checkpoint validation is claimed.
+
+## Native image contract
+
+Image support extends the earlier text/audio scope above. The decoder produces
+packed top-left RGB8 with stb_image; resizing and the complete vision model are
+native C++ in `src/models/embeddinggemma2.cpp`, beside the audio/text models.
+The private `GemmaVisionEncoder` declaration lives in `src/model.h`.
+
+Additional primary references are Transformers
+`95bafdcccfffe17ec383999fc39273867b11385e`:
+`gemma4/image_processing_gemma4.py`, `gemma4/modeling_gemma4.py`, and
+`embedding_gemma2/processing_embedding_gemma2.py`; and pinned llama.cpp
+`tools/mtmd/models/gemma4v.cpp`/`tools/mtmd/clip.cpp`. The Gemma4v source at
+llama.cpp `5d4c8eeb24db049acf74bd6f354bed6eaeffc7dc` differs from the pin only
+by the `clip_graph`/`clip_layer` to `mtmd_graph`/`mtmd_layer` type renaming.
+
+The published mmproj has patch16, hidden768, 16 blocks, 12 heads of width64,
+FFN3072, pooling kernel3, and a learned `[768,10240,2]` X/Y position table.
+Use the official processor's default budget of 280 soft tokens (2520 patches),
+not the mmproj's nominal `image_size=224` as a forced square resize. An optional
+`clip.vision.image_max_pixels` overrides the budget; this also permits tiny
+self-contained test fixtures. Resize preserves aspect ratio, rounds each side
+down to a patch*pool multiple, and handles extreme-aspect one-block axes.
+The antialiased Keys bicubic uint8 path uses per-axis int16 coefficient
+quantization, uint8 horizontal intermediates and half-up output rounding,
+matching torchvision/ATen, not an arbitrary bicubic image-resizer default.
+
+Flatten patches in GGUF convolution order (channel, Y, X), apply `2*RGB/255-1`,
+then the bias-free patch projection and both learned position lookups. Every
+block uses weighted pre/post attention and pre/post FFN RMS, weighted per-head
+Q/K RMS, unweighted per-head V RMS, independent axial NeoX RoPE with theta100,
+unit attention scale and gated tanh-GELU. Padded patch keys are masked in HF;
+native inference drops all padded rows, which preserves real-query attention
+and pooling exactly. Average spatial3x3 groups and multiply by sqrt768, apply
+optional stored standardization, unweighted RMS and `mm.input_projection`.
+Optional learned linear input/output clipping is honored. Unknown `v.*` and
+`mm.*` tensors are rejected, excluding the independently validated `mm.a.*`.
+Disabled modalities may retain their metadata without requiring their tensors.
+
+Compose `[BOS, <|image>] + projected soft rows + [<image|>, EOS]`, scaling only
+hard vocabulary rows by sqrt(text hidden). PLE, bidirectional transformer,
+per-token final projection and mean/L2 reuse the exact text/audio backbone.
+Missing or disabled vision towers reject image inference independently of audio.
+
+`embeddinggemma2_image.py` and `test-embeddinggemma2-image.cpp` generate valid
+F32/F16 tiny GGUFs and compare 20 image/model variants against independent
+stdlib scalar vision and text oracles. Cases cover unchanged/up/downsampled,
+square, landscape, portrait and extreme-aspect RGB; nontrivial learned X/Y
+positions and multiple axial frequencies; optional standardization/clipping;
+packed RGB and PNG-file public APIs; malformed geometry/flags, unknown tower
+and projector tensors; and disabled-but-described towers. Default tests need
+neither downloads nor Torch/Pillow/NumPy. Optional second CLI argument checks
+`clap embedding --image` against the same scalar embeddings.
+
+In isolated static-build execution, all 80 stage/API numerical comparisons
+passed with maximum absolute error `4.91738e-6` (tolerance `1e-5`); original
+text and audio scalar suites remained green. Separately, the stdlib resize
+reference matched actual torchvision uint8 antialiased bicubic byte-for-byte
+on seven upsample/downsample/aspect cases, including 96x96 to768x768 and
+157x83 to1056x528. These checks do not by themselves establish published-model
+end-to-end parity or retrieval quality.

@@ -46,18 +46,37 @@ EmbeddingGemma2Model::EmbeddingGemma2Model(const ModelLoader &source, int thread
     load_arch_hparams();
     load_arch_tensors();
     if (audio_loader) {
-        if (audio_loader->integer("clip.audio.projection_dim") != hidden)
-            invalid("audio projector dimension");
         const auto tokens = loader.metadata_value("tokenizer.ggml.tokens");
-        for (size_t id = 0; id < tokens.size(); ++id) {
-            if (tokens[id] == "<|audio>")
-                begin_audio = static_cast<int>(id);
-            if (tokens[id] == "<audio|>")
-                end_audio = static_cast<int>(id);
+        auto delimiter = [&](const char *token) {
+            for (size_t id = 0; id < tokens.size(); ++id)
+                if (tokens[id] == token)
+                    return static_cast<int>(id);
+            invalid(std::string("modality delimiter token ") + token);
+        };
+        const auto enabled = [&](const char *flag, const char *projector) {
+            // Stripped modality files may retain the disabled tower's metadata.
+            // Read flags with strict boolean typing even when its projector is absent.
+            const bool present = audio_loader->has_metadata(flag) && audio_loader->boolean(flag);
+            return present && audio_loader->has_metadata(projector);
+        };
+        const bool has_audio = enabled("clip.has_audio_encoder", "clip.audio.projector_type");
+        const bool has_vision = enabled("clip.has_vision_encoder", "clip.vision.projector_type");
+        if (has_audio) {
+            if (audio_loader->integer("clip.audio.projection_dim") != hidden)
+                invalid("audio projector dimension");
+            begin_audio = delimiter("<|audio>");
+            end_audio = delimiter("<audio|>");
+            audio_encoder = std::make_unique<GemmaAudioEncoder>(*audio_loader, threads);
         }
-        if (begin_audio < 0 || end_audio < 0)
-            invalid("audio delimiter tokens");
-        audio_encoder = std::make_unique<GemmaAudioEncoder>(*audio_loader, threads);
+        if (has_vision) {
+            if (audio_loader->integer("clip.vision.projection_dim") != hidden)
+                invalid("vision projector dimension");
+            begin_image = delimiter("<|image>");
+            end_image = delimiter("<image|>");
+            vision_encoder = std::make_unique<GemmaVisionEncoder>(*audio_loader, threads);
+        }
+        if (!audio_encoder && !vision_encoder)
+            invalid("mmproj has no supported encoder");
     }
 }
 EmbeddingGemma2Model::~EmbeddingGemma2Model() = default;
@@ -259,6 +278,29 @@ std::vector<float> EmbeddingGemma2Model::waveform_embedding(const std::vector<fl
         std::copy_n(soft[row], hidden, merged[row + 2]);
     std::vector<int> mask(merged.rows, 1);
     return encode(std::move(merged), mask);
+}
+
+std::vector<float> EmbeddingGemma2Model::image_embedding(const clap::Image &image) const {
+    if (!vision_encoder)
+        throw std::runtime_error("CLAP: EmbeddingGemma2 image requires a vision mmproj GGUF");
+    const auto soft = vision_encoder->encode(image);
+    if (soft.cols != hidden || context < 4 || soft.rows > context - 4)
+        invalid("image soft-token dimensions");
+    HostMatrix merged(soft.rows + 4, hidden);
+    const auto *embedding = loader.weight("token_embd.weight");
+    const float scale = std::sqrt(static_cast<float>(hidden));
+    const int ids[] = {bos, begin_image, end_image, eos};
+    const int positions[] = {0, 1, soft.rows + 2, soft.rows + 3};
+    for (int i = 0; i < 4; ++i) {
+        tensor_row(embedding, ids[i], merged[positions[i]]);
+        for (int c = 0; c < hidden; ++c)
+            merged[positions[i]][c] *= scale;
+    }
+    // Multimodal projection is already in the text embedding space: scale
+    // hard delimiter/BOS/EOS rows only, never projected vision soft tokens.
+    for (int row = 0; row < soft.rows; ++row)
+        std::copy_n(soft[row], hidden, merged[row + 2]);
+    return encode(std::move(merged), std::vector<int>(soft.rows + 4, 1));
 }
 
 HostMatrix EmbeddingGemma2Model::rms(const HostMatrix &x, const std::string &name, int width) const {
@@ -565,8 +607,8 @@ GemmaAudioEncoder::GemmaAudioEncoder(const ModelLoader &source, int threads)
             }
         }
     }
-    // The published file also carries vision weights, which are out of scope.
-    // Reject unknown audio tensors without requiring coverage of that tower.
+    // Validate only this tower's tensors; the shared mmproj can also carry vision.
+    // Its coverage is checked independently when the vision tower is enabled.
     loader.validate_tensor_coverage("a.");
     loader.validate_tensor_coverage("mm.a.");
 }
@@ -787,4 +829,312 @@ HostMatrix GemmaAudioEncoder::encode_features(const HostMatrix &features) const 
     return x;
 }
 HostMatrix GemmaAudioEncoder::encode(const std::vector<float> &pcm) const { return encode_features(log_mel(pcm)); }
+
+namespace {
+void vision_require(bool valid, const std::string &message) {
+    if (!valid)
+        throw std::runtime_error("CLAP: Gemma vision " + message);
+}
+struct ResizeTap {
+    int index;
+    double weight;
+};
+std::vector<std::vector<ResizeTap>> cubic_taps(int source, int target, int &precision) {
+    const double scale = static_cast<double>(source) / target, support = std::max(1.0, scale);
+    const auto cubic = [](double x) {
+        x = std::abs(x);
+        if (x < 1)
+            return (1.5 * x - 2.5) * x * x + 1;
+        if (x < 2)
+            return ((-0.5 * x + 2.5) * x - 4) * x + 2;
+        return 0.0;
+    };
+    std::vector<std::vector<ResizeTap>> result(target);
+    for (int out = 0; out < target; ++out) {
+        const double center = (out + 0.5) * scale;
+        const int begin = std::max(0, static_cast<int>(center - 2 * support + 0.5));
+        const int end = std::min(source, static_cast<int>(center + 2 * support + 0.5));
+        double total = 0;
+        for (int i = begin; i < end; ++i) {
+            const double w = cubic((i + 0.5 - center) / support);
+            result[out].push_back({i, w});
+            total += w;
+        }
+        for (auto &tap : result[out])
+            tap.weight /= total;
+    }
+    // ATen's uint8 bicubic path quantizes normalized coefficients to int16.
+    // The precision is shared across the whole axis, not chosen per pixel.
+    double maximum = 0;
+    for (const auto &row : result)
+        for (auto tap : row)
+            maximum = std::max(maximum, tap.weight);
+    for (precision = 0; precision < 22; ++precision)
+        if (static_cast<int>(0.5 + maximum * (1 << (precision + 1))) >= (1 << 15))
+            break;
+    for (auto &row : result)
+        for (auto &tap : row) {
+            const double scaled = tap.weight * (1 << precision);
+            tap.weight = static_cast<int>(scaled < 0 ? scaled - 0.5 : scaled + 0.5);
+        }
+    return result;
+}
+std::vector<uint8_t> vision_resize(const clap::Image &image, int width, int height) {
+    if (image.width == width && image.height == height)
+        return image.pixels;
+    int xprecision = 0, yprecision = 0;
+    const auto xtaps = cubic_taps(image.width, width, xprecision), ytaps = cubic_taps(image.height, height, yprecision);
+    // Bicubic antialias, uint8 intermediates, matching torchvision's uint8
+    // separable path. Do not substitute stb's non-antialiased image resize.
+    std::vector<uint8_t> horizontal(static_cast<size_t>(width) * image.height * 3);
+    auto byte = [](int64_t value, int precision) {
+        return static_cast<uint8_t>(
+            std::clamp<int64_t>((value + (int64_t{1} << (precision - 1))) >> precision, 0, 255));
+    };
+    for (int y = 0; y < image.height; ++y)
+        for (int x = 0; x < width; ++x)
+            for (int c = 0; c < 3; ++c) {
+                int64_t value = 0;
+                for (auto t : xtaps[x])
+                    value += image.pixels[(static_cast<size_t>(y) * image.width + t.index) * 3 + c] *
+                             static_cast<int64_t>(t.weight);
+                horizontal[(static_cast<size_t>(y) * width + x) * 3 + c] = byte(value, xprecision);
+            }
+    std::vector<uint8_t> output(static_cast<size_t>(width) * height * 3);
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            for (int c = 0; c < 3; ++c) {
+                int64_t value = 0;
+                for (auto t : ytaps[y])
+                    value +=
+                        horizontal[(static_cast<size_t>(t.index) * width + x) * 3 + c] * static_cast<int64_t>(t.weight);
+                output[(static_cast<size_t>(y) * width + x) * 3 + c] = byte(value, yprecision);
+            }
+    return output;
+}
+} // namespace
+
+GemmaVisionEncoder::GemmaVisionEncoder(const ModelLoader &source, int thread_count)
+    : loader(source),
+      threads(thread_count > 0 ? thread_count : static_cast<int>(std::max(1u, std::thread::hardware_concurrency()))),
+      runtime(source, thread_count, true) {
+    vision_require(loader.metadata("general.architecture") == "clip", "requires clip mmproj architecture");
+    vision_require(loader.boolean("clip.has_vision_encoder"), "encoder missing");
+    vision_require(loader.metadata("clip.vision.projector_type") == "gemma4v", "unsupported projector variant");
+    auto dim = [&](const char *name, int maximum) {
+        const auto n = loader.integer(name);
+        vision_require(n > 0 && n <= maximum, std::string("invalid dimension: ") + name);
+        return static_cast<int>(n);
+    };
+    hidden = dim("clip.vision.embedding_length", 8192);
+    heads = dim("clip.vision.attention.head_count", 128);
+    layers = dim("clip.vision.block_count", 128);
+    feedforward = dim("clip.vision.feed_forward_length", 65536);
+    patch = dim("clip.vision.patch_size", 128);
+    output = dim("clip.vision.projection_dim", 65536);
+    if (loader.has_metadata("clip.vision.projector.scale_factor"))
+        pool = dim("clip.vision.projector.scale_factor", 16);
+    max_patches = 280 * pool * pool;
+    if (loader.has_metadata("clip.vision.image_max_pixels")) {
+        const int pixels = dim("clip.vision.image_max_pixels", 16777216);
+        vision_require(pixels % (patch * patch * pool * pool) == 0, "incompatible image pixel budget");
+        max_patches = pixels / (patch * patch);
+    }
+    vision_require(max_patches > 0 && max_patches <= 10080 && hidden % heads == 0 && (hidden / heads) % 4 == 0,
+                   "incompatible head or patch geometry");
+    epsilon = static_cast<float>(loader.number("clip.vision.attention.layer_norm_epsilon"));
+    vision_require(std::isfinite(epsilon) && epsilon > 0, "invalid norm epsilon");
+    loader.shape("v.patch_embd.weight", {patch, patch, 3, hidden});
+    const auto *position = loader.weight("v.position_embd.weight");
+    vision_require(position->ne[1] > 0 && position->ne[1] <= 1048576, "invalid position table size");
+    positions = static_cast<int>(position->ne[1]);
+    loader.shape("v.position_embd.weight", {hidden, positions, 2});
+    loader.linear_shape("mm.input_projection", hidden, output, false);
+    const bool std_bias = loader.has_tensor_prefix("v.std_bias"), std_scale = loader.has_tensor_prefix("v.std_scale");
+    vision_require(std_bias == std_scale, "incomplete standardization tensors");
+    if (std_bias) {
+        loader.shape("v.std_bias", {hidden});
+        loader.shape("v.std_scale", {hidden});
+    }
+    const auto clamps = [&](const std::string &name) {
+        for (const auto *kind : {"input", "output"}) {
+            const auto base = name + "." + kind;
+            const bool low = loader.has_tensor_prefix(base + "_min"), high = loader.has_tensor_prefix(base + "_max");
+            vision_require(low == high, "incomplete linear clamp: " + name);
+            if (low) {
+                loader.shape(base + "_min", {1});
+                loader.shape(base + "_max", {1});
+                const float lo = scalar(loader.weight(base + "_min"), 0), hi = scalar(loader.weight(base + "_max"), 0);
+                vision_require(std::isfinite(lo) && std::isfinite(hi) && lo <= hi, "invalid linear clamp: " + name);
+            }
+        }
+    };
+    clamps("mm.input_projection");
+    for (int layer = 0; layer < layers; ++layer) {
+        const auto root = "v.blk." + std::to_string(layer) + ".";
+        for (const auto *norm : {"ln1", "ln2", "attn_post_norm", "ffn_post_norm"})
+            loader.shape(root + norm + ".weight", {hidden});
+        for (const auto *norm : {"attn_q_norm", "attn_k_norm"})
+            loader.shape(root + norm + ".weight", {hidden / heads});
+        for (const auto *name : {"attn_q", "attn_k", "attn_v", "attn_out", "ffn_up", "ffn_gate", "ffn_down"}) {
+            const std::string n = name;
+            loader.linear_shape(root + n, n == "ffn_down" ? feedforward : hidden,
+                                n == "ffn_gate" || n == "ffn_up" ? feedforward : hidden, false);
+            clamps(root + n);
+        }
+    }
+    loader.validate_tensor_coverage("v.");
+    loader.validate_tensor_coverage("mm.", "mm.a.");
+}
+
+HostMatrix GemmaVisionEncoder::rms(const HostMatrix &x, const std::string &name, int width) const {
+    if (!width)
+        width = x.cols;
+    HostMatrix result(x.rows, x.cols);
+    std::vector<float> scales(width, 1.0f);
+    if (!name.empty())
+        tensor_row(loader.weight(name + ".weight"), 0, scales.data());
+    for (int row = 0; row < x.rows; ++row)
+        for (int offset = 0; offset < x.cols; offset += width) {
+            double sum = 0;
+            for (int c = 0; c < width; ++c)
+                sum += static_cast<double>(x[row][offset + c]) * x[row][offset + c];
+            const float scale = static_cast<float>(1.0 / std::sqrt(sum / width + epsilon));
+            for (int c = 0; c < width; ++c)
+                result[row][offset + c] = x[row][offset + c] * scale * scales[c];
+        }
+    return result;
+}
+
+HostMatrix GemmaVisionEncoder::linear(const HostMatrix &x, const std::string &name) const {
+    HostMatrix input = x;
+    const auto clamp = [&](HostMatrix &m, const std::string &kind) {
+        const auto base = name + "." + kind;
+        if (loader.has_tensor_prefix(base + "_min"))
+            clip(m, scalar(loader.weight(base + "_min"), 0), scalar(loader.weight(base + "_max"), 0));
+    };
+    clamp(input, "input");
+    HostMatrix result(x.rows, static_cast<int>(loader.weight(name + ".weight")->ne[1]));
+    {
+        Graph graph(runtime);
+        auto *out = graph.linear(graph.input(input), name, false);
+        result.data = graph.run(out);
+    }
+    clamp(result, "output");
+    return result;
+}
+
+HostMatrix GemmaVisionEncoder::patches(const clap::Image &image, int &nx, int &ny) const {
+    vision_require(image.width > 0 && image.height > 0 &&
+                       static_cast<uint64_t>(image.width) * image.height <= std::numeric_limits<size_t>::max() / 3 &&
+                       image.pixels.size() == static_cast<size_t>(image.width) * image.height * 3,
+                   "invalid RGB image");
+    const double factor =
+        std::sqrt(static_cast<double>(max_patches) * patch * patch / (static_cast<double>(image.width) * image.height));
+    const int multiple = patch * pool;
+    int height = static_cast<int>(std::floor(image.height * factor / multiple)) * multiple;
+    int width = static_cast<int>(std::floor(image.width * factor / multiple)) * multiple;
+    const int max_side = max_patches / (pool * pool) * multiple;
+    if (!height) {
+        height = multiple;
+        width =
+            static_cast<int>(std::min<int64_t>(static_cast<int64_t>(image.width / image.height) * multiple, max_side));
+    } else if (!width) {
+        width = multiple;
+        height =
+            static_cast<int>(std::min<int64_t>(static_cast<int64_t>(image.height / image.width) * multiple, max_side));
+    }
+    vision_require(width > 0 && height > 0 &&
+                       static_cast<int64_t>(width) * height <= static_cast<int64_t>(max_patches) * patch * patch,
+                   "invalid resize dimensions");
+    nx = width / patch;
+    ny = height / patch;
+    vision_require(nx <= positions && ny <= positions, "image exceeds learned position table");
+    const auto resized = vision_resize(image, width, height);
+    HostMatrix result(nx * ny, patch * patch * 3);
+    // GGUF conv2d is [x,y,c,out], not HF's interleaved RGB patch vector.
+    for (int py = 0; py < ny; ++py)
+        for (int px = 0; px < nx; ++px)
+            for (int c = 0; c < 3; ++c)
+                for (int y = 0; y < patch; ++y)
+                    for (int x = 0; x < patch; ++x)
+                        result[py * nx + px][(c * patch + y) * patch + x] =
+                            static_cast<float>(
+                                resized[(static_cast<size_t>(py * patch + y) * width + px * patch + x) * 3 + c]) /
+                                255.0f * 2.0f -
+                            1.0f;
+    return result;
+}
+
+HostMatrix GemmaVisionEncoder::attention(const HostMatrix &x, const std::string &prefix, int nx) const {
+    const int dim = hidden / heads;
+    const auto normalized = rms(x, prefix + "ln1");
+    auto q = rms(linear(normalized, prefix + "attn_q"), prefix + "attn_q_norm", dim);
+    auto k = rms(linear(normalized, prefix + "attn_k"), prefix + "attn_k_norm", dim);
+    auto v = rms(linear(normalized, prefix + "attn_v"), "", dim);
+    for (auto *matrix : {&q, &k})
+        for (int row = 0; row < x.rows; ++row)
+            for (int head = 0; head < heads; ++head)
+                for (int axis = 0; axis < 2; ++axis)
+                    for (int c = 0; c < dim / 4; ++c) {
+                        const float angle = (axis ? row / nx : row % nx) * std::pow(100.0f, -4.0f * c / dim);
+                        const int a = head * dim + axis * dim / 2 + c, b = a + dim / 4;
+                        const float u = (*matrix)[row][a], w = (*matrix)[row][b];
+                        (*matrix)[row][a] = u * std::cos(angle) - w * std::sin(angle);
+                        (*matrix)[row][b] = u * std::sin(angle) + w * std::cos(angle);
+                    }
+    HostMatrix attended(x.rows, hidden);
+    {
+        Graph graph(runtime);
+        auto *result = graph.attention(graph.input(q), graph.input(k), graph.input(v), heads, nullptr, 1.0f);
+        attended.data = graph.run(result);
+    }
+    return rms(linear(attended, prefix + "attn_out"), prefix + "attn_post_norm");
+}
+
+HostMatrix GemmaVisionEncoder::encode(const clap::Image &image) const {
+    int nx = 0, ny = 0;
+    const auto input = patches(image, nx, ny);
+    auto x = convolve(input, loader.weight("v.patch_embd.weight"), hidden, threads);
+    const auto *position = loader.weight("v.position_embd.weight");
+    std::vector<float> px(hidden), py(hidden);
+    for (int row = 0; row < x.rows; ++row) {
+        tensor_row(position, row % nx, px.data());
+        tensor_row(position, positions + row / nx, py.data());
+        for (int c = 0; c < hidden; ++c)
+            x[row][c] += px[c] + py[c];
+    }
+    // HF pads patches to a fixed budget and masks their keys. Dropping all
+    // padded rows is exactly equivalent for valid queries and spatial pooling.
+    // Retain only real patches, never introduce zero-image padding as keys.
+    for (int layer = 0; layer < layers; ++layer) {
+        const auto root = "v.blk." + std::to_string(layer) + ".";
+        add(x, attention(x, root, nx));
+        const auto normalized = rms(x, root + "ln2");
+        auto gate = linear(normalized, root + "ffn_gate");
+        fast_gelu(gate);
+        const auto up = linear(normalized, root + "ffn_up");
+        for (size_t i = 0; i < gate.data.size(); ++i)
+            gate.data[i] *= up.data[i];
+        add(x, rms(linear(gate, root + "ffn_down"), root + "ffn_post_norm"));
+    }
+    HostMatrix pooled(nx / pool * (ny / pool), hidden);
+    const bool standardize = loader.has_tensor_prefix("v.std_bias");
+    for (int y = 0; y < ny / pool; ++y)
+        for (int px = 0; px < nx / pool; ++px)
+            for (int c = 0; c < hidden; ++c) {
+                float sum = 0;
+                for (int dy = 0; dy < pool; ++dy)
+                    for (int dx = 0; dx < pool; ++dx)
+                        sum += x[(y * pool + dy) * nx + px * pool + dx][c];
+                float value = sum / (pool * pool) * std::sqrt(static_cast<float>(hidden));
+                if (standardize)
+                    value = (value - scalar(loader.weight("v.std_bias"), c)) * scalar(loader.weight("v.std_scale"), c);
+                pooled[y * (nx / pool) + px][c] = value;
+            }
+    auto result = linear(rms(pooled), "mm.input_projection");
+    for (float value : result.data)
+        vision_require(std::isfinite(value), "non-finite encoded image");
+    return result;
+}
 } // namespace clap::detail

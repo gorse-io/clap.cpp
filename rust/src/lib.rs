@@ -62,6 +62,12 @@ mod ffi {
             values: *mut *mut f32,
             count: *mut usize,
         ) -> Status;
+        pub fn clap_encode_image_file(
+            model: *mut Model,
+            path: *const c_char,
+            values: *mut *mut f32,
+            count: *mut usize,
+        ) -> Status;
         pub fn clap_free(allocation: *mut c_void);
     }
 }
@@ -153,7 +159,7 @@ impl CLAP {
     pub fn new(p: impl AsRef<Path>, threads: i32) -> Result<Self> {
         Self::load(p.as_ref(), None, threads)
     }
-    /// Load an EmbeddingGemma2 model with its separate audio mmproj GGUF.
+    /// Load an EmbeddingGemma2 model with its separate audio or vision mmproj GGUF.
     pub fn new_with_mmproj(
         p: impl AsRef<Path>,
         mmproj: impl AsRef<Path>,
@@ -199,6 +205,23 @@ impl CLAP {
         // valid through the call, and the guard owns the fresh output slots.
         let status = unsafe {
             ffi::clap_encode_text(
+                self.ptr.as_ptr(),
+                s.as_ptr(),
+                &mut output.values,
+                &mut output.count,
+            )
+        };
+        check_status(status)?;
+        output.into_vec()
+    }
+    /// Decode an image file and return a Rust-owned embedding.
+    pub fn encode_image(&mut self, p: impl AsRef<Path>) -> Result<Vec<f32>> {
+        let s = path(p.as_ref())?;
+        let mut output = NativeBuffer::default();
+        // SAFETY: The model is exclusively borrowed; the UTF-8 path lives
+        // through the call and the guard owns the fresh native output slots.
+        let status = unsafe {
+            ffi::clap_encode_image_file(
                 self.ptr.as_ptr(),
                 s.as_ptr(),
                 &mut output.values,
