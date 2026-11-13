@@ -253,7 +253,7 @@ class MertModel final : public ModelArchitecture {
         int hidden, heads, position_kernel, position_groups;
         float epsilon;
         std::vector<int> channels, kernels, strides;
-        bool conv_bias;
+        bool conv_bias, stable_layer_norm;
     } h;
     std::vector<LayerWeights> convolutions;
     LayerWeights frontend_norm, projection_norm, projection, position, encoder_norm;

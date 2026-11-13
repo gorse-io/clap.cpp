@@ -23,6 +23,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace clap {
@@ -116,6 +117,23 @@ class ModelArchitecture {
     virtual void load_arch_hparams() = 0;
     virtual void load_arch_tensors() = 0;
 };
+
+enum class Architecture { Clap, Clap2, Clamp3, Mert, Mert2, Muq, MuqMulan };
+enum class TokenizerKind { None, ByteBpe, ByteBpeOrdinary, Unigram };
+
+// One identity/dispatch table in model.cpp. Architecture implementations retain
+// their own tensor, storage and arithmetic contracts; storage-only loading does
+// not consult this table.
+struct ArchitectureDescriptor {
+    Architecture id;
+    const char *name;
+    std::unique_ptr<const ModelArchitecture> (*create)(const ModelLoader &);
+    TensorLoadPolicy (*loading_policy)(const ModelLoader &);
+    TokenizerKind tokenizer;
+    bool (*encoder_quantizable)(const ggml_tensor *);
+};
+const ArchitectureDescriptor *architecture_descriptor(std::string_view name);
+
 class Vocabulary;
 struct ModelWeightStats {
     size_t host_tensors = 0, device_tensors = 0;

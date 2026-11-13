@@ -62,6 +62,35 @@ std::vector<DeviceInfo> available_devices() {
 } // namespace clap
 
 namespace clap::detail {
+namespace {
+template <typename T> std::unique_ptr<const ModelArchitecture> create_architecture(const ModelLoader &loader) {
+    return std::make_unique<T>(loader);
+}
+const ArchitectureDescriptor architectures[] = {
+    {Architecture::Clap, "clap", create_architecture<ClapModel>, ClapModel::loading_policy, TokenizerKind::ByteBpe,
+     nullptr},
+    {Architecture::Clap2, "clap2", create_architecture<Clap2Model>, Clap2Model::loading_policy,
+     TokenizerKind::ByteBpeOrdinary, nullptr},
+    {Architecture::Clamp3, "clamp3", create_architecture<Clamp3Model>, Clamp3Model::loading_policy,
+     TokenizerKind::Unigram, nullptr},
+    {Architecture::Mert, "mert", create_architecture<MertModel>, MertModel::loading_policy, TokenizerKind::None,
+     MertModel::tensor_quantizable},
+    {Architecture::Mert2, "mert2", create_architecture<Mert2Model>, Mert2Model::loading_policy, TokenizerKind::None,
+     Mert2Model::tensor_quantizable},
+    {Architecture::Muq, "muq", create_architecture<MuqModel>, MuqModel::loading_policy, TokenizerKind::None,
+     MuqModel::tensor_quantizable},
+    {Architecture::MuqMulan, "muq_mulan", create_architecture<MuqMulanModel>, MuqMulanModel::loading_policy,
+     TokenizerKind::Unigram, MuqMulanModel::tensor_quantizable},
+};
+} // namespace
+
+const ArchitectureDescriptor *architecture_descriptor(std::string_view name) {
+    for (const auto &descriptor : architectures)
+        if (name == descriptor.name)
+            return &descriptor;
+    return nullptr;
+}
+
 struct ModelWeights::State {
     using Backend = std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)>;
     using TensorContext = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
@@ -221,36 +250,29 @@ clap::detail::Model::Model(const std::string &path, const clap::RuntimeOptions &
     using namespace clap::detail;
     clap::detail::load_model_weights(loader, path);
     const auto name = loader.metadata("general.architecture");
-    const auto initialize_weights = [&]() -> const ModelLoader & {
-        weights = std::make_shared<ModelWeights>(loader);
-        return loader;
-    };
-    if (name == "clap")
-        architecture = std::make_unique<ClapModel>(initialize_weights());
-    else if (name == "clap2")
-        architecture = std::make_unique<Clap2Model>(initialize_weights());
-    else if (name == "clamp3")
-        architecture = std::make_unique<Clamp3Model>(initialize_weights());
-    else if (name == "mert2")
-        architecture = std::make_unique<Mert2Model>(initialize_weights());
-    else if (name == "mert")
-        architecture = std::make_unique<MertModel>(initialize_weights());
-    else if (name == "muq_mulan")
-        architecture = std::make_unique<MuqMulanModel>(initialize_weights());
-    else if (name == "muq")
-        architecture = std::make_unique<MuqModel>(initialize_weights());
-    else
+    const auto *descriptor = architecture_descriptor(name);
+    if (!descriptor)
         throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
+    weights = std::make_shared<ModelWeights>(loader);
+    architecture = descriptor->create(loader);
     loader.validate_tensor_coverage();
     if (architecture->has_text_encoder()) {
         const auto text = architecture->text_parameters();
-        const auto tokenizer = nlohmann::json::parse(loader.metadata((name + ".tokenizer").c_str()));
-        if (name == "clamp3" || name == "muq_mulan")
+        const auto tokenizer =
+            nlohmann::json::parse(loader.metadata((std::string(descriptor->name) + ".tokenizer").c_str()));
+        switch (descriptor->tokenizer) {
+        case TokenizerKind::Unigram:
             vocabulary = std::make_unique<UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
-        else if (name == "clap2")
+            break;
+        case TokenizerKind::ByteBpeOrdinary:
             vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length, true);
-        else
+            break;
+        case TokenizerKind::ByteBpe:
             vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
+            break;
+        case TokenizerKind::None:
+            break;
+        }
     }
 }
 clap::detail::Model::~Model() = default;
@@ -266,21 +288,15 @@ TensorLoadPolicy select_loading_policy(const ModelLoader &loader) {
         // The model facade retains ownership of full architecture validation.
         return {};
     }
-    if (architecture == "clap")
-        return ClapModel::loading_policy(loader);
-    if (architecture == "clap2")
-        return Clap2Model::loading_policy(loader);
-    if (architecture == "clamp3")
-        return Clamp3Model::loading_policy(loader);
-    if (architecture == "mert")
-        return MertModel::loading_policy(loader);
-    if (architecture == "mert2")
-        return Mert2Model::loading_policy(loader);
-    if (architecture == "muq")
-        return MuqModel::loading_policy(loader);
-    if (architecture == "muq_mulan")
-        return MuqMulanModel::loading_policy(loader);
-    return {};
+    const auto *descriptor = architecture_descriptor(architecture);
+    if (!descriptor)
+        return {};
+    auto policy = descriptor->loading_policy(loader);
+    // Every inference architecture declares its complete tensor contract. Keep
+    // architecture-specific diagnostics and all dtype/data/activation rules.
+    if (!policy.unrecognized_tensor_error)
+        policy.unrecognized_tensor_error = "CLAP: unrecognized model tensor: ";
+    return policy;
 }
 } // namespace
 
@@ -291,7 +307,6 @@ void load_model_weights(ModelLoader &loader, const std::string &path, bool infer
 TensorLoadPolicy encoder_loading_policy(void (*validate_type)(const ggml_tensor *)) {
     TensorLoadPolicy policy;
     policy.f32_activations = true;
-    policy.unrecognized_tensor_error = "CLAP: unrecognized model tensor: ";
     policy.validate_tensor_type = validate_type;
     return policy;
 }
@@ -301,16 +316,14 @@ void validate_encoder_storage(const ggml_tensor *w, bool quantizable) {
         throw std::runtime_error("CLAP: quantized non-dense/embedding tensor is unsupported: " + std::string(w->name));
 }
 
+bool encoder_architecture(const std::string &architecture) {
+    const auto *descriptor = architecture_descriptor(architecture);
+    return descriptor && descriptor->encoder_quantizable;
+}
+
 bool encoder_quantizable(const ggml_tensor *w, const std::string &architecture) {
-    if (architecture == "mert")
-        return MertModel::tensor_quantizable(w);
-    if (architecture == "mert2")
-        return Mert2Model::tensor_quantizable(w);
-    if (architecture == "muq")
-        return MuqModel::tensor_quantizable(w);
-    if (architecture == "muq_mulan")
-        return MuqMulanModel::tensor_quantizable(w);
-    return false;
+    const auto *descriptor = architecture_descriptor(architecture);
+    return descriptor && descriptor->encoder_quantizable && descriptor->encoder_quantizable(w);
 }
 
 LayerWeights create_layer(const ModelLoader &loader, const std::string &name,

@@ -72,9 +72,6 @@ void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
     }
 }
 
-bool encoder_architecture(const std::string &architecture) {
-    return architecture == "mert" || architecture == "mert2" || architecture == "muq" || architecture == "muq_mulan";
-}
 static bool encoder_sensitive(const std::string &name, const std::string &architecture) {
     const auto ends = [&](const std::string &suffix) {
         return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
