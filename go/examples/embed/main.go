@@ -1,4 +1,4 @@
-// embed runs both modalities using a locally installed clap-go native bridge.
+// embed runs text and audio inference through the clap C API.
 package main
 
 import (
@@ -21,7 +21,7 @@ func main() {
 }
 
 func run() error {
-	model, err := clap.New(os.Args[1], 1)
+	model, err := clap.New(os.Args[1], 0)
 	if err != nil {
 		return err
 	}

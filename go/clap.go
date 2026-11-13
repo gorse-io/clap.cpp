@@ -1,11 +1,12 @@
-// Package clap provides native CPU text and audio embeddings through CGO.
-// Build and install go/native first; see README.md for pkg-config/loader setup.
+// Package clap provides native text and audio embeddings through the clap C API.
 package clap
 
 /*
-#cgo pkg-config: clap-go
+#cgo CFLAGS: -I${SRCDIR}/../include
+#cgo windows CFLAGS: -DCLAP_SHARED
+#cgo LDFLAGS: -lclap
+#include <clap.h>
 #include <stdlib.h>
-#include <clap-go/bridge.h>
 */
 import "C"
 
@@ -27,7 +28,7 @@ var ErrClosed = errors.New("clap: model is closed")
 type CLAP struct{ state *modelState }
 type modelState struct {
 	mu    sync.Mutex
-	model *C.cg_model
+	model *C.CLAP
 }
 
 func validString(s string) error {
@@ -36,12 +37,12 @@ func validString(s string) error {
 	}
 	return nil
 }
-func resultError(r *C.cg_result) error {
-	if r == nil {
-		return errors.New("clap: native result allocation failed")
-	}
-	if s := C.GoString(C.cg_error(r)); s != "" {
-		return fmt.Errorf("clap: %s", s)
+
+// The caller must stay on the same OS thread between a fallible C API call
+// and reading its thread-local diagnostic.
+func statusError(status C.clap_status) error {
+	if status != C.CLAP_OK {
+		return fmt.Errorf("clap: %s", C.GoString(C.clap_last_error()))
 	}
 	return nil
 }
@@ -57,22 +58,24 @@ func New(modelPath string, threads int) (*CLAP, error) {
 	}
 	path := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(path))
-	r := C.cg_open(path, C.int(threads))
-	if r != nil {
-		defer C.cg_result_free(r)
-	}
-	if err := resultError(r); err != nil {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	options := C.clap_default_options()
+	options.threads = C.int(threads)
+	var model *C.CLAP
+	if err := statusError(C.clap_create(path, &options, &model)); err != nil {
 		return nil, err
 	}
-	s := &modelState{model: C.cg_take_model(r)}
+	s := &modelState{model: model}
 	runtime.SetFinalizer(s, func(s *modelState) { s.close() })
 	return &CLAP{state: s}, nil
 }
+
 func (s *modelState) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.model != nil {
-		C.cg_model_free(s.model)
+		C.clap_destroy(s.model)
 		s.model = nil
 	}
 }
@@ -86,6 +89,7 @@ func (m *CLAP) Close() error {
 	}
 	return nil
 }
+
 func (m *CLAP) encode(input string, audio bool, crop uint64) ([]float32, error) {
 	if m == nil || m.state == nil {
 		return nil, ErrClosed
@@ -100,32 +104,28 @@ func (m *CLAP) encode(input string, audio bool, crop uint64) ([]float32, error) 
 	if err := validString(input); err != nil {
 		return nil, err
 	}
-	// Native preprocessing uses signed indices as well as size_t. Reject values
-	// outside either range before conversion, including on 32-bit targets.
+	// Native preprocessing uses signed indices as well as size_t.
 	if crop > uint64(^uint(0)>>1) {
 		return nil, errors.New("clap: crop offset out of range")
 	}
+	dimension := int(C.clap_projection_dimension(s.model))
+	if dimension <= 0 || uint64(dimension) > uint64(^uint(0)>>1)/4 {
+		return nil, errors.New("clap: invalid embedding dimension")
+	}
+	out := make([]float32, dimension)
 	str := C.CString(input)
 	defer C.free(unsafe.Pointer(str))
-	var r *C.cg_result
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	var status C.clap_status
+	values := (*C.float)(unsafe.Pointer(&out[0]))
 	if audio {
-		r = C.cg_audio(s.model, str, C.size_t(crop))
+		status = C.clap_encode_audio_file(s.model, str, C.size_t(crop), values, C.size_t(len(out)))
 	} else {
-		r = C.cg_text(s.model, str)
+		status = C.clap_encode_text(s.model, str, values, C.size_t(len(out)))
 	}
-	if r != nil {
-		defer C.cg_result_free(r)
-	}
-	if err := resultError(r); err != nil {
+	if err := statusError(status); err != nil {
 		return nil, err
-	}
-	n := uint64(C.cg_size(r))
-	if n > uint64(^uint(0)>>1)/4 {
-		return nil, errors.New("clap: embedding too large")
-	}
-	out := make([]float32, int(n))
-	if n > 0 {
-		copy(out, unsafe.Slice((*float32)(unsafe.Pointer(C.cg_data(r))), int(n)))
 	}
 	return out, nil
 }
