@@ -2,7 +2,6 @@
 // Test-only access to private tensor-input encoders and MERT feature extraction;
 // never installed or linked into the production CLI. Keeps numerical oracles
 // independent of the bundled waveform pipeline.
-#include "../../src/models/model-policy.h"
 #include "../../src/models/models.h"
 #include "audio.h"
 

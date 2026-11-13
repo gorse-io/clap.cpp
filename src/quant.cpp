@@ -1,5 +1,5 @@
 #include "model-loader.h"
-#include "models/model-policy.h"
+#include "model.h"
 #include "quant.h"
 
 #include <algorithm>

@@ -4,8 +4,6 @@
 #include "graph.h"
 #include "model-loader.h"
 
-#include <nlohmann/json.hpp>
-
 #include <cstddef>
 #include <memory>
 #include <stdexcept>
@@ -22,6 +20,11 @@ struct AudioFrames {
 } // namespace clap
 
 namespace clap::detail {
+// Model-level loading orchestration; individual rules live in src/models.
+void load_model_weights(ModelLoader &, const std::string &, bool inference = true);
+TensorLoadPolicy encoder_loading_policy(void (*validate_type)(const ggml_tensor *));
+void validate_encoder_storage(const ggml_tensor *, bool quantizable);
+
 // Shared model tensors. Creation validates each GGUF tensor and binds the
 // returned pointer in one declaration; graphs never resolve tensor names.
 LayerWeights create_layer(const ModelLoader &loader, const std::string &name,

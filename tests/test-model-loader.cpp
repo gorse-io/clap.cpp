@@ -1,5 +1,4 @@
 #include "model.h"
-#include "models/model-policy.h"
 
 #include <gtest/gtest.h>
 
