@@ -1,4 +1,5 @@
 #include "model-loader.h"
+#include "model.h"
 #include "quant.h"
 
 #include <algorithm>
@@ -10,7 +11,6 @@
 #include <iostream>
 #include <memory>
 #include <random>
-#include <regex>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -59,29 +59,6 @@ void tensor_row(const ggml_tensor *t, int64_t row, float *output) {
 
 bool encoder_architecture(const std::string &architecture) {
     return architecture == "mert" || architecture == "mert2" || architecture == "muq" || architecture == "muq_mulan";
-}
-// Only native dense/embedding layouts are block quantizable. In particular,
-// Conv1d [kernel,in,out], Conv2d, GRN and mel filters must remain floating point,
-// even when their leading dimension happens to be divisible by a block size.
-bool encoder_quantizable(const ggml_tensor *w, const std::string &architecture) {
-    if (ggml_n_dims(w) != 2)
-        return false;
-    const std::string name(w->name);
-    static const std::regex mert(
-        R"((projection\.projection|layers\.[0-9]+\.(attention\.(q_proj|k_proj|v_proj|out_proj)|ffn\.(in|out)))\.weight)");
-    static const std::regex mert2(
-        R"((subsampling_module\.[0-9]+\.convnext_layers\.[0-9]+\.pointwise_block\.(1|4)|layers\.[0-9]+\.(attn\.(query_proj|key_proj|value_proj|out_proj)|ffn[12]\.w_[12]))\.weight)");
-    static const std::regex muq(
-        R"((conv\.linear|conformer\.layers\.[0-9]+\.(self_attn\.linear_(q|k|v|out)|ffn[12]\.(intermediate_dense|output_dense)))\.weight)");
-    static const std::regex joint(
-        R"((text\.embeddings\.(word_embeddings|position_embeddings|token_type_embeddings)|text\.encoder\.layer\.[0-9]+\.(attention\.self\.(query|key|value)|attention\.output\.dense|intermediate\.dense|output\.dense)|adapter\.layers\.[0-9]+\.(0\.(to_q|to_kv|to_out\.0)|1\.(1|4))|audio_proj|audio_latent|text_proj)\.weight)");
-    if (architecture == "mert")
-        return std::regex_match(name, mert);
-    if (architecture == "mert2")
-        return std::regex_match(name, mert2);
-    if (architecture == "muq" || architecture == "muq_mulan")
-        return std::regex_match(name, muq) || (architecture == "muq_mulan" && std::regex_match(name, joint));
-    return false;
 }
 static bool encoder_sensitive(const std::string &name, const std::string &architecture) {
     const auto ends = [&](const std::string &suffix) {
@@ -220,7 +197,7 @@ void quantize(const std::filesystem::path &source, const std::filesystem::path &
     if (std::filesystem::exists(std::filesystem::symlink_status(destination)))
         throw std::runtime_error("CLAP: output already exists; choose a new path");
     clap::detail::ModelLoader loader;
-    loader.load(source.string(), false);
+    clap::detail::load_model_weights(loader, source.string(), false);
     const auto architecture = loader.metadata("general.architecture");
     if (architecture == "clap2")
         throw std::runtime_error("CLAP: CLAP2 quantization presets are not supported; use converted F32/F16 weights");

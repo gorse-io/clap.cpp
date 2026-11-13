@@ -9,6 +9,13 @@
 #include <stdexcept>
 
 namespace clap::detail {
+TensorLoadPolicy Clap2Model::loading_policy(const ModelLoader &) {
+    return encoder_loading_policy([](const ggml_tensor *w) {
+        if (ggml_is_quantized(w->type))
+            throw std::runtime_error("CLAP: CLAP2 block-quantized weights are not supported; use F32/F16/BF16");
+    });
+}
+
 Clap2Model::Clap2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads, true) {
     load_arch_hparams();
     load_arch_tensors();

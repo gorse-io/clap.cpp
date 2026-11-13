@@ -3,8 +3,26 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <regex>
 
 namespace clap::detail {
+bool MertModel::tensor_quantizable(const ggml_tensor *w) {
+    if (ggml_n_dims(w) != 2)
+        return false;
+    const std::string name(w->name);
+    static const std::regex mert(
+        R"((projection\.projection|layers\.[0-9]+\.(attention\.(q_proj|k_proj|v_proj|out_proj)|ffn\.(in|out)))\.weight)");
+    return std::regex_match(name, mert);
+}
+
+TensorLoadPolicy MertModel::loading_policy(const ModelLoader &) {
+    auto policy = encoder_loading_policy([](const ggml_tensor *w) {
+        if (ggml_is_quantized(w->type))
+            validate_encoder_storage(w, MertModel::tensor_quantizable(w));
+    });
+    return policy;
+}
+
 MertModel::MertModel(const ModelLoader &source, int threads, const std::string &tensor_prefix,
                      const std::string &metadata_prefix)
     : loader(source, tensor_prefix, metadata_prefix), runtime(loader, threads, true) {

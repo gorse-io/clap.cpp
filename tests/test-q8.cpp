@@ -1,5 +1,6 @@
 #include "graph-test-helpers.h"
 #include "model-loader.h"
+#include "model.h"
 #include "quant.h"
 
 #include <ggml.h>
@@ -75,8 +76,8 @@ static void create(const std::string &path, ggml_type type, uint32_t alignment =
 }
 static void verify(const std::string &source, const std::string &output, bool k = false) {
     ModelLoader original, quantized;
-    original.load(source);
-    quantized.load(output);
+    clap::detail::load_model_weights(original, source);
+    clap::detail::load_model_weights(quantized, output);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> original_file(
         gguf_init_from_file(source.c_str(), {true, nullptr}), gguf_free);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> quantized_file(
@@ -181,7 +182,7 @@ static void verify(const std::string &source, const std::string &output, bool k 
 // Test-only canonical storage oracle exporter. Not linked into production CLI.
 static void decode(const std::string &source, const std::string &destination) {
     ModelLoader loader;
-    loader.load(source, false);
+    clap::detail::load_model_weights(loader, source, false);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> input(gguf_init_from_file(source.c_str(), {true, nullptr}),
                                                               gguf_free);
     std::unique_ptr<gguf_context, decltype(&gguf_free)> output(gguf_init_empty(), gguf_free);

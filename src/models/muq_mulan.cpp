@@ -1,11 +1,67 @@
 #include "models.h"
+#include "quant.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <regex>
 #include <stdexcept>
 
 namespace clap::detail {
+bool MuqMulanModel::tensor_quantizable(const ggml_tensor *w) {
+    if (ggml_n_dims(w) != 2)
+        return false;
+    const std::string name(w->name);
+    static const std::regex joint(
+        R"((text\.embeddings\.(word_embeddings|position_embeddings|token_type_embeddings)|text\.encoder\.layer\.[0-9]+\.(attention\.self\.(query|key|value)|attention\.output\.dense|intermediate\.dense|output\.dense)|adapter\.layers\.[0-9]+\.(0\.(to_q|to_kv|to_out\.0)|1\.(1|4))|audio_proj|audio_latent|text_proj)\.weight)");
+    return MuqModel::tensor_quantizable(w) || std::regex_match(name, joint);
+}
+
+TensorLoadPolicy MuqMulanModel::loading_policy(const ModelLoader &) {
+    auto policy = encoder_loading_policy([](const ggml_tensor *w) {
+        if (ggml_is_quantized(w->type))
+            validate_encoder_storage(w, MuqMulanModel::tensor_quantizable(w));
+    });
+    policy.unrecognized_tensor_error = "CLAP: unrecognized MuLan tensor: ";
+    policy.validate_tensor_data = [](const ggml_tensor *w) {
+        const std::string name(w->name);
+        const bool muq_backbone = name.rfind("conv.", 0) == 0 || name.rfind("conformer.", 0) == 0;
+        // Non-module frontend buffers and all 1D normalization/statistic
+        // tensors are F32. Dense/embedding and MuQ kernels may be F16.
+        if ((name.rfind("frontend.", 0) == 0 || name.find(".running_") != std::string::npos ||
+             (muq_backbone && ggml_n_dims(w) == 1)) &&
+            w->type != GGML_TYPE_F32)
+            throw std::runtime_error("CLAP: MuLan frontend/buffers/vectors require F32: " + name);
+        const bool batch_variance = name.size() >= 12 && name.compare(name.size() - 12, 12, ".running_var") == 0;
+        // Scan each packed block once (scalar() would decode it per element).
+        float block[256];
+        const int64_t width = ggml_is_quantized(w->type) ? ggml_blck_size(w->type) : 1;
+        for (int64_t start = 0; start < ggml_nelements(w); start += width) {
+            if (width > 1)
+                ggml_get_type_traits(w->type)->to_float(
+                    static_cast<const char *>(w->data) + (start / width) * ggml_type_size(w->type), block, width);
+            else
+                block[0] = scalar(w, static_cast<size_t>(start));
+            for (int64_t j = 0; j < width; ++j) {
+                const float value = block[j];
+                if (!std::isfinite(value))
+                    throw std::runtime_error("CLAP: non-finite MuLan tensor: " + name);
+                if (batch_variance && value < 0)
+                    throw std::runtime_error("CLAP: negative MuLan batch variance: " + name);
+            }
+        }
+    };
+    policy.promote_f16 = [](const ggml_tensor *w) {
+        const std::string name(w->name);
+        return name.rfind("conv.", 0) == 0 || name.rfind("conformer.", 0) == 0;
+    };
+    policy.validate_tensor_contract = [](const ggml_tensor *w, std::initializer_list<int64_t> dims) {
+        if (dims.size() == 1 && w->type != GGML_TYPE_F32)
+            throw std::runtime_error("CLAP: MuLan vectors require F32: " + std::string(w->name));
+    };
+    return policy;
+}
+
 namespace {
 void positive(const nlohmann::json &obj, const char *key) {
     if (!obj.at(key).is_number_integer() || obj.at(key).get<int64_t>() <= 0 || obj.at(key).get<int64_t>() > 10000000)

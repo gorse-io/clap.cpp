@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
         clap::RuntimeOptions options;
         options.device = "cpu";
         ModelLoader loader(options);
-        loader.load(argv[1]);
+        clap::detail::load_model_weights(loader, argv[1]);
         Clap2Model model(loader, 2);
         GraphRuntime runtime(loader, 2, true);
         // Published config.json dimensions from pinned laion/clap2-*-audioxl-s1B.

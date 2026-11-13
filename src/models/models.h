@@ -13,6 +13,7 @@ namespace clap::detail {
 // facade are implemented in the core src/ files, not in this specialization.
 class ClapModel final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
     ClapModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
@@ -59,6 +60,7 @@ class ClapModel final : public ModelArchitecture {
 // CLAP2: NaFlex audio ViT and bidirectional ModernText, independent of HTSAT CLAP.
 class Clap2Model final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
     Clap2Model(const ModelLoader &, int);
     std::vector<float> text(const std::vector<int> &) const override;
     std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const override;
@@ -116,6 +118,7 @@ class Clap2Model final : public ModelArchitecture {
 class MertModel;
 class Clamp3Model final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
     Clamp3Model(const ModelLoader &loader, int threads);
     ~Clamp3Model() override;
     bool has_waveform_embeddings() const override;
@@ -161,6 +164,8 @@ class Clamp3Model final : public ModelArchitecture {
 // ConvNeXt subsampler and bidirectional rotary Conformer stack.
 class Mert2Model final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
+    static bool tensor_quantizable(const ggml_tensor *);
     Mert2Model(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
@@ -202,6 +207,8 @@ class Mert2Model final : public ModelArchitecture {
 // layer-normalized transformer. CLaMP3 pooling is a separate contract.
 class MertModel final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
+    static bool tensor_quantizable(const ggml_tensor *);
     MertModel(const ModelLoader &loader, int threads, const std::string &tensor_prefix = "",
               const std::string &metadata_prefix = "");
     std::vector<float> text(const std::vector<int> &) const override;
@@ -240,6 +247,8 @@ class MertModel final : public ModelArchitecture {
 // Wav2Vec2-Conformer (rotary BEFORE Q/K projections, SiLU and eval BatchNorm).
 class MuqModel final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
+    static bool tensor_quantizable(const ggml_tensor *);
     MuqModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &) const override;
     AudioFrames audio_frames(const std::vector<float> &pcm) const override;
@@ -283,6 +292,8 @@ class MuqModel final : public ModelArchitecture {
 // Joint MuQ-MuLan embeddings: the audio backbone remains the exact MuqModel.
 class MuqMulanModel final : public ModelArchitecture {
   public:
+    static TensorLoadPolicy loading_policy(const ModelLoader &);
+    static bool tensor_quantizable(const ggml_tensor *);
     MuqMulanModel(const ModelLoader &loader, int threads);
     std::vector<float> text(const std::vector<int> &ids) const override;
     AudioFrames audio_frames(const std::vector<float> &) const override;
