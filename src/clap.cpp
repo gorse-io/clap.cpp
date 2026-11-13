@@ -99,28 +99,7 @@ clap::RuntimeOptions runtime_options(const clap_runtime_options *options) {
 
 extern "C" {
 clap_runtime_options clap_default_options(void) { return {0, nullptr, CLAP_ACTIVATION_MODEL_DEFAULT}; }
-clap_context_options clap_default_context_options(void) { return {0}; }
 const char *clap_last_error(void) { return diagnostic; }
-clap_status clap_model_load(const char *path, const clap_runtime_options *options, clap_model **out) {
-    if (out)
-        *out = nullptr;
-    return protect([&] {
-        require(path && *path && out, "CLAP: nonempty model path and output slot are required");
-        const auto native = runtime_options(options);
-        *out = new clap_model{std::make_shared<clap::detail::Model>(path, native)};
-    });
-}
-void clap_model_free(clap_model *model) { delete model; }
-clap_status clap_context_create(const clap_model *model, const clap_context_options *options, CLAP **out) {
-    if (out)
-        *out = nullptr;
-    return protect([&] {
-        require(model && out, "CLAP: model and output slot are required");
-        const int threads = options ? options->threads : 0;
-        require(threads >= 0, "CLAP: threads must be nonnegative");
-        *out = new CLAP(model->value, threads);
-    });
-}
 clap_status clap_create(const char *path, const clap_runtime_options *options, CLAP **out) {
     if (out)
         *out = nullptr;
@@ -172,7 +151,7 @@ clap_status clap_tokenize(const CLAP *model, const char *utf8, size_t max_length
     return protect([&] {
         require(model && utf8 && out && count && max_length > 0,
                 "CLAP: model, text, positive max_length and output slots are required");
-        const auto tokens = clap::detail::tokenize(*model, utf8, max_length);
+        const auto tokens = clap::detail::tokenize(*model->value, utf8, max_length);
         *out = copy(tokens);
         *count = tokens.size();
     });
@@ -180,24 +159,30 @@ clap_status clap_tokenize(const CLAP *model, const char *utf8, size_t max_length
 clap_status clap_encode_text(CLAP *model, const char *utf8, float **out, size_t *count) {
     return embedding(model, out, count, [&] {
         require(utf8, "CLAP: text is required");
-        return clap::detail::encode_text(*model, utf8);
+        clap::detail::Context context(model->value);
+        return clap::detail::encode_text(context, utf8);
     });
 }
 clap_status clap_encode_tokens(CLAP *model, const int *tokens, size_t n, float **out, size_t *count) {
     return embedding(model, out, count, [&] {
         require(tokens && n && n <= std::vector<int>().max_size(), "CLAP: nonempty tokens are required");
-        return model->context.model().architecture->text(model->context, std::vector<int>(tokens, tokens + n));
+        clap::detail::Context context(model->value);
+        return model->value->architecture->text(context, std::vector<int>(tokens, tokens + n));
     });
 }
 clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t n, int rate, size_t crop, float **out,
                               size_t *count) {
-    return embedding(model, out, count,
-                     [&] { return clap::detail::encode_audio(*model, waveform(pcm, n, rate), rate, crop); });
+    return embedding(model, out, count, [&] {
+        const auto samples = waveform(pcm, n, rate);
+        clap::detail::Context context(model->value);
+        return clap::detail::encode_audio(context, samples, rate, crop);
+    });
 }
 clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop, float **out, size_t *count) {
     return embedding(model, out, count, [&] {
         require(path && *path, "CLAP: audio path is required");
-        return clap::detail::encode_audio_file(*model, path, crop);
+        clap::detail::Context context(model->value);
+        return clap::detail::encode_audio_file(context, path, crop);
     });
 }
 clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int rate, clap_audio_frames *out) {
@@ -205,14 +190,16 @@ clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int r
         *out = {};
     return protect([&] {
         require(model && out, "CLAP: model and frame output slot are required");
-        const auto frames = clap::detail::audio_frames(*model, waveform(pcm, n, rate), rate);
+        const auto samples = waveform(pcm, n, rate);
+        clap::detail::Context context(model->value);
+        const auto frames = clap::detail::audio_frames(context, samples, rate);
         out->values = copy(frames.values);
         out->frames = static_cast<size_t>(frames.frames);
         out->dimension = static_cast<size_t>(frames.dimension);
     });
 }
-int clap_audio_sample_rate(const CLAP *model) { return model ? model->context.model().architecture->sample_rate() : 0; }
+int clap_audio_sample_rate(const CLAP *model) { return model ? model->value->architecture->sample_rate() : 0; }
 int clap_projection_dimension(const CLAP *model) {
-    return model ? model->context.model().architecture->projection_dimension() : 0;
+    return model ? model->value->architecture->projection_dimension() : 0;
 }
 } // extern "C"

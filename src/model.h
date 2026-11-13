@@ -138,6 +138,11 @@ struct Model {
 };
 } // namespace clap::detail
 
-struct clap_model {
+// Public opaque owner of the immutable model and architecture graph definitions.
+// Execution state is private to each encoding call, never stored on this handle.
+struct CLAP {
     std::shared_ptr<const clap::detail::Model> value;
+    CLAP(const std::string &, const clap::RuntimeOptions &);
+    explicit CLAP(std::shared_ptr<const clap::detail::Model>);
+    ~CLAP();
 };

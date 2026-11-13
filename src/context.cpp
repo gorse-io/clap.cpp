@@ -37,32 +37,32 @@ GraphRuntime &Context::runtime(const ModelArchitecture *identity, const ModelLoa
     return *entry->second.execution;
 }
 
-std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max_length) {
-    if (model.context.model().vocabulary == nullptr)
+std::vector<int> tokenize(const Model &model, const std::string &utf8, size_t max_length) {
+    if (model.vocabulary == nullptr)
         throw std::runtime_error("CLAP: this model has no text tokenizer");
-    return model.context.model().vocabulary->tokenize(utf8, max_length);
+    return model.vocabulary->tokenize(utf8, max_length);
 }
-std::vector<float> encode_text(CLAP &model, const std::string &utf8) {
-    if (model.context.model().vocabulary == nullptr)
+std::vector<float> encode_text(Context &context, const std::string &utf8) {
+    if (context.model().vocabulary == nullptr)
         throw std::runtime_error("CLAP: this model has no text encoder");
-    return model.context.model().architecture->text(
-        model.context, tokenize(model, utf8, model.context.model().architecture->text_parameters().context_length));
+    return context.model().architecture->text(
+        context, tokenize(context.model(), utf8, context.model().architecture->text_parameters().context_length));
 }
-std::vector<float> encode_audio(CLAP &model, const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
-    if (model.context.model().architecture->has_waveform_embeddings()) {
+std::vector<float> encode_audio(Context &context, const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
+    if (context.model().architecture->has_waveform_embeddings()) {
         if (sample_rate <= 0)
             throw std::runtime_error("CLAP: audio sample rate must be positive");
-        const int target = model.context.model().architecture->sample_rate();
+        const int target = context.model().architecture->sample_rate();
         if (sample_rate == target)
-            return model.context.model().architecture->waveform_embedding(model.context, pcm, crop_offset);
-        return model.context.model().architecture->waveform_embedding(
-            model.context, resample_audio({pcm, sample_rate}, target).samples, crop_offset);
+            return context.model().architecture->waveform_embedding(context, pcm, crop_offset);
+        return context.model().architecture->waveform_embedding(
+            context, resample_audio({pcm, sample_rate}, target).samples, crop_offset);
     }
-    if (model.context.model().architecture->is_waveform_encoder()) {
+    if (context.model().architecture->is_waveform_encoder()) {
         if (crop_offset != 0)
             throw std::runtime_error(
                 "CLAP: waveform encoders process the complete waveform; crop offsets are unsupported");
-        const auto sequence = audio_frames(model, pcm, sample_rate);
+        const auto sequence = audio_frames(context, pcm, sample_rate);
         std::vector<float> pooled(sequence.dimension);
         for (int frame = 0; frame < sequence.frames; ++frame)
             for (int column = 0; column < sequence.dimension; ++column)
@@ -73,25 +73,19 @@ std::vector<float> encode_audio(CLAP &model, const std::vector<float> &pcm, int 
     throw std::runtime_error("CLAP: this model has no waveform audio encoder");
 }
 
-std::vector<float> encode_audio_file(CLAP &model, const std::string &path, size_t crop_offset) {
+std::vector<float> encode_audio_file(Context &context, const std::string &path, size_t crop_offset) {
     const auto audio = decode_audio(path);
-    return encode_audio(model, audio.samples, audio.sample_rate, crop_offset);
+    return encode_audio(context, audio.samples, audio.sample_rate, crop_offset);
 }
 
-AudioFrames audio_frames(CLAP &model, const std::vector<float> &pcm, int sample_rate) {
-    if (!(model.context.model().architecture->is_waveform_encoder()))
+AudioFrames audio_frames(Context &context, const std::vector<float> &pcm, int sample_rate) {
+    if (!(context.model().architecture->is_waveform_encoder()))
         throw std::runtime_error("CLAP: this model does not expose frame representations");
     if (!(sample_rate > 0))
         throw std::runtime_error("CLAP: audio sample rate must be positive");
-    const int target = model.context.model().architecture->sample_rate();
+    const int target = context.model().architecture->sample_rate();
     if (sample_rate == target)
-        return model.context.model().architecture->audio_frames(model.context, pcm);
-    return model.context.model().architecture->audio_frames(model.context,
-                                                            resample_audio({pcm, sample_rate}, target).samples);
+        return context.model().architecture->audio_frames(context, pcm);
+    return context.model().architecture->audio_frames(context, resample_audio({pcm, sample_rate}, target).samples);
 }
 } // namespace clap::detail
-
-CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options)
-    : context(std::make_shared<clap::detail::Model>(path, options), options.threads) {}
-CLAP::CLAP(std::shared_ptr<const clap::detail::Model> model, int threads) : context(std::move(model), threads) {}
-CLAP::~CLAP() = default;

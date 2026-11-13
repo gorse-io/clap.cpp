@@ -1,52 +1,10 @@
 'use strict';
 const path = require('node:path');
 const { types } = require('node:util');
-
-// Resolve only the matching optional npm package. Never search PATH, the
-// system linker path, or a legacy package-local runtime.
-const target = `${process.platform}-${process.arch}`;
-const libraryName = {
-  'linux-x64': 'libclap.so',
-  'linux-arm64': 'libclap.so',
-  'darwin-arm64': 'libclap.dylib',
-  'win32-x64': 'clap.dll',
-}[target];
-if (!libraryName) throw new Error(`Unsupported platform or architecture: ${target}`);
-const packageName = `@gorse/clap-cpp-${target}`;
-const { version } = require('./package.json');
-let nativeManifestPath;
-try {
-  nativeManifestPath = require.resolve(`${packageName}/package.json`);
-} catch (error) {
-  throw new Error(`Missing optional native package ${packageName}@${version} for ${target}. Reinstall clap-cpp with optional dependencies enabled (npm install --include=optional); do not use --omit=optional or --no-optional.`, { cause: error });
-}
-const nativeManifest = require(nativeManifestPath);
-if (nativeManifest.version !== version) {
-  throw new Error(`Native package version mismatch: clap-cpp@${version} requires ${packageName}@${version}, but found ${nativeManifest.version}. Reinstall matching package versions.`);
-}
-const runtime = path.join(path.dirname(nativeManifestPath), 'runtime', 'clap_cpp', libraryName);
-if (!require('node:fs').existsSync(runtime)) {
-  throw new Error(`Missing prebuilt clap runtime in ${packageName}@${version}: ${runtime}. Reinstall the optional native package; no source-build or system-library fallback is available.`);
-}
-const koffi = require('koffi');
-const lib = koffi.load(runtime);
-
-// Anonymous types keep independently installed copies from colliding in Koffi's
-// named type registry. Enums are C int; struct layout uses the platform C ABI.
-const handle = koffi.pointer(koffi.opaque());
-const optionsType = koffi.struct({ threads: 'int', device: 'str', activation_precision: 'int' });
-const defaults = lib.func('clap_default_options', optionsType, []);
-const lastError = lib.func('clap_last_error', 'str', []);
-const create = lib.func('clap_create', 'int', ['str', koffi.pointer(optionsType), koffi.out(koffi.pointer(handle))]);
-const destroy = lib.func('clap_destroy', 'void', [handle]);
-const free = lib.func('clap_free', 'void', ['void *']);
-const outputs = [koffi.out(koffi.pointer('float', 2)), koffi.out(koffi.pointer('size_t'))];
-const text = lib.func('clap_encode_text', 'int', [handle, 'str', ...outputs]);
-const tokens = lib.func('clap_encode_tokens', 'int', [handle, 'const int *', 'size_t', ...outputs]);
-const audio = lib.func('clap_encode_audio', 'int', [handle, 'const float *', 'size_t', 'int', 'size_t', ...outputs]);
-const audioFile = lib.func('clap_encode_audio_file', 'int', [handle, 'str', 'size_t', ...outputs]);
+const { Worker } = require('node:worker_threads');
+const { defaults, create, destroy, text, tokens, audio, audioFile, maxSize, check, embedding } = require('./_native');
+const workerPath = path.join(__dirname, '_encode-worker.js');
 const maxInt = 2147483647;
-const maxSize = koffi.sizeof('size_t') === 4 ? 4294967295 : Number.MAX_SAFE_INTEGER;
 const typedArrayPrototype = Object.getPrototypeOf(Float32Array.prototype);
 const lengthOf = Function.call.bind(Object.getOwnPropertyDescriptor(typedArrayPrototype, 'length').get);
 const copyInto = Function.call.bind(typedArrayPrototype.set);
@@ -76,8 +34,7 @@ function tokenCopy(value) {
     copyInto(copy, value);
     for (let i = 0; i < length; ++i) integer(copy[i], 'token ID', 0, maxInt);
   } else if (Array.isArray(value)) {
-    // Read length once: array Proxy traps and index getters can close a model or
-    // mutate the array. Finish every such read before borrowing its handle.
+    // Finish all Proxy/getter reads before taking a handle lease: they can close.
     const length = integer(value.length, 'token count', 1, Math.min(maxSize, maxInt));
     copy = new IntArray(length);
     for (let i = 0; i < length; ++i) copy[i] = integer(value[i], 'token ID', 0, maxInt);
@@ -97,32 +54,82 @@ function pcmCopy(value) {
   }
   return copy;
 }
-function check(status) {
-  if (status === 0) return;
-  // Capture TLS immediately, before any other fallible call can clear it.
-  const message = lastError() || `CLAP failed (status ${status})`;
-  throw status === 1 ? new TypeError(message) : new Error(message);
+function audioInput(value, sampleRateOrOffset, cropOffset) {
+  if (typeof value === 'string') {
+    const filename = string(value, 'path', true);
+    const offset = integer(sampleRateOrOffset === undefined ? 0 : sampleRateOrOffset, 'cropOffset', 0, maxSize);
+    return ['audioFile', [filename, offset]];
+  }
+  const pcm = pcmCopy(value);
+  const rate = integer(sampleRateOrOffset === undefined ? 48000 : sampleRateOrOffset, 'sampleRate', 1, maxInt);
+  const offset = integer(cropOffset, 'cropOffset', 0, maxSize);
+  return ['audio', [pcm, lengthOf(pcm), rate, offset]];
 }
-function release(state) {
+function textInput(value) {
+  const input = typeof value === 'string' ? string(value, 'text') : tokenCopy(value);
+  return typeof input === 'string' ? ['text', [input]] : ['tokens', [input, lengthOf(input)]];
+}
+const encoders = { text, tokens, audio, audioFile };
+function destroyIfIdle(state) {
+  if (!state.closed || state.active !== 0) return;
   const pointer = state.pointer;
   state.pointer = null;
   if (pointer !== null) destroy(pointer);
 }
+function release(state) {
+  state.closed = true;
+  destroyIfIdle(state);
+}
+function borrow(state) {
+  if (state.closed) throw new Error('CLAP is closed');
+  ++state.active;
+  return state.pointer;
+}
+function giveBack(state) {
+  --state.active;
+  destroyIfIdle(state);
+}
 const finalizer = new FinalizationRegistry(release);
-
-function embedding(fn, args) {
-  const values = [null];
-  const count = [0];
-  try {
-    check(fn(...args, values, count));
-    const length = integer(count[0], 'native embedding length', 0, maxSize);
-    if (!length) return new FloatArray(0);
-    // decode returns an owning typed array, not a view of the C allocation.
-    // The finally also runs if decoding or JS allocation throws.
-    return koffi.decode(values[0], 'float', length);
-  } finally {
-    if (values[0] !== null) free(values[0]);
-  }
+function encode(state, operation, args) {
+  const pointer = borrow(state);
+  try { return embedding(encoders[operation], [pointer, ...args]); }
+  finally { giveBack(state); }
+}
+function encodeAsync(state, operation, args) {
+  const pointer = borrow(state);
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      // Koffi's official pointer representation is BigInt, not an isolate-local
+      // external object: https://koffi.dev/pointers . No model copy or new handle.
+      worker = new Worker(workerPath, { workerData: { pointer, operation, args } });
+    } catch (error) {
+      giveBack(state);
+      reject(error);
+      return;
+    }
+    let result;
+    let failure;
+    worker.once('message', message => { result = message; });
+    worker.once('error', error => { failure = error; });
+    // An error/message alone does NOT prove native execution has stopped.
+    // Retain the lease until exit, including worker bootstrap/error paths.
+    worker.once('exit', code => {
+      giveBack(state);
+      if (failure) return reject(failure);
+      if (code !== 0) return reject(new Error(`CLAP worker exited with code ${code}`));
+      if (!result) return reject(new Error('CLAP worker exited without a result'));
+      if (result.error) {
+        if ((result.error.name !== 'TypeError' && result.error.name !== 'Error') || typeof result.error.message !== 'string') {
+          return reject(new Error('Malformed CLAP worker error'));
+        }
+        const ErrorType = result.error.name === 'TypeError' ? TypeError : Error;
+        return reject(new ErrorType(result.error.message));
+      }
+      if (!isFloat32Array(result.value)) return reject(new Error('Malformed CLAP worker result'));
+      resolve(result.value);
+    });
+  });
 }
 
 class CLAP {
@@ -132,50 +139,45 @@ class CLAP {
   constructor(modelPath, threads = 0) {
     const filename = string(modelPath, 'path', true);
     const threadCount = integer(threads, 'threads', 0, maxInt);
-    const options = defaults(); // Returned by value, not a pointer.
+    const options = defaults();
     options.threads = threadCount;
     const output = [null];
-    const state = { pointer: null };
+    const state = { pointer: null, active: 0, closed: false };
     const token = Object.create(null);
     try {
       check(create(filename, options, output));
       state.pointer = output[0];
       this.#state = state;
       this.#token = token;
-      // Held state never refers to this. Each owner gets a unique unregister
-      // token, and failed registration cannot leak a successful native create.
+      // Neither finalizer nor lease state refers back to its JS owner.
       finalizer.register(this, state, token);
     } catch (error) {
       if (output[0] !== null) destroy(output[0]);
       state.pointer = null;
+      state.closed = true;
       throw error;
     }
   }
 
   encodeText(value) {
-    // Brand-check before running user code; Object.create/copies/Proxy receivers
-    // must never gain ownership or borrow another object's raw pointer.
+    // Brand-check before user-controlled input reads, then lease AFTER them.
     const state = this.#state;
-    const input = typeof value === 'string' ? string(value, 'text') : tokenCopy(value);
-    if (state.pointer === null) throw new Error('CLAP is closed');
-    return typeof input === 'string'
-      ? embedding(text, [state.pointer, input])
-      : embedding(tokens, [state.pointer, input, lengthOf(input)]);
+    return encode(state, ...textInput(value));
   }
 
   encodeAudio(value, sampleRateOrOffset, cropOffset = 0) {
     const state = this.#state;
-    if (typeof value === 'string') {
-      const filename = string(value, 'path', true);
-      const offset = integer(sampleRateOrOffset === undefined ? 0 : sampleRateOrOffset, 'cropOffset', 0, maxSize);
-      if (state.pointer === null) throw new Error('CLAP is closed');
-      return embedding(audioFile, [state.pointer, filename, offset]);
-    }
-    const pcm = pcmCopy(value);
-    const rate = integer(sampleRateOrOffset === undefined ? 48000 : sampleRateOrOffset, 'sampleRate', 1, maxInt);
-    const offset = integer(cropOffset, 'cropOffset', 0, maxSize);
-    if (state.pointer === null) throw new Error('CLAP is closed');
-    return embedding(audio, [state.pointer, pcm, lengthOf(pcm), rate, offset]);
+    return encode(state, ...audioInput(value, sampleRateOrOffset, cropOffset));
+  }
+
+  async encodeTextAsync(value) {
+    const state = this.#state;
+    return encodeAsync(state, ...textInput(value));
+  }
+
+  async encodeAudioAsync(value, sampleRateOrOffset, cropOffset = 0) {
+    const state = this.#state;
+    return encodeAsync(state, ...audioInput(value, sampleRateOrOffset, cropOffset));
   }
 
   close() {

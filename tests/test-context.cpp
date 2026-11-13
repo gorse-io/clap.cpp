@@ -23,7 +23,6 @@
 #ifndef CLAP_SHARED
 namespace {
 std::atomic<long> allocation_budget{-1};
-std::atomic<size_t> allocation_count{0};
 } // namespace
 void *operator new(std::size_t bytes) {
     const auto remaining = allocation_budget.load();
@@ -31,7 +30,6 @@ void *operator new(std::size_t bytes) {
         throw std::bad_alloc();
     if (remaining > 0)
         allocation_budget.fetch_sub(1);
-    allocation_count.fetch_add(1);
     if (auto *data = std::malloc(bytes ? bytes : 1))
         return data;
     throw std::bad_alloc();
@@ -52,7 +50,6 @@ void check(clap_status status) {
     if (status != CLAP_OK)
         throw std::runtime_error(clap_last_error());
 }
-using Model = std::unique_ptr<clap_model, decltype(&clap_model_free)>;
 using Execution = std::unique_ptr<CLAP, decltype(&clap_destroy)>;
 using Output = std::unique_ptr<float, decltype(&clap_free)>;
 std::vector<float> encode(CLAP *context, const std::string &text) {
@@ -78,11 +75,12 @@ std::vector<float> rows(const ggml_tensor *table, const std::vector<int> &indice
 
 // Both builders must enter while holding their respective runtime locks. A
 // model-wide execution lock fails this bounded rendezvous, without a speed test.
-void graph_isolation(CLAP *first, CLAP *second) {
-    const auto &model = first->context.model();
-    require(&model == &second->context.model(), "contexts did not retain the same immutable model");
-    auto &a = first->context.runtime(model.architecture.get(), model.loader);
-    auto &b = second->context.runtime(model.architecture.get(), model.loader);
+void graph_isolation(const std::shared_ptr<const clap::detail::Model> &shared) {
+    clap::detail::Context first(shared, 1), second(shared, 2);
+    const auto &model = first.model();
+    require(&model == &second.model(), "contexts did not retain the same immutable model");
+    auto &a = first.runtime(model.architecture.get(), model.loader);
+    auto &b = second.runtime(model.architecture.get(), model.loader);
     require(&a != &b, "execution runtimes are shared");
     require(a.stats().threads == 1 && b.stats().threads == 2, "context-local CPU thread override was lost");
     auto *table = model.loader.weight("text.embeddings.word_embeddings.weight");
@@ -188,54 +186,46 @@ void frozen_options(const char *path, const nlohmann::json &fixture) {
     environment.set("cpu");
     auto options = clap_default_options();
     options.threads = 2;
-    clap_model *raw = nullptr;
-    check(clap_model_load(path, &options, &raw));
-    Model model(raw, clap_model_free);
+    CLAP *raw = nullptr;
+    check(clap_create(path, &options, &raw));
+    Execution handle(raw, clap_destroy);
     environment.set("missing-device-after-model-load");
-    auto defaults = clap_default_context_options();
-    CLAP *null_raw = nullptr, *default_raw = nullptr;
-    check(clap_context_create(model.get(), nullptr, &null_raw));
-    Execution inherited(null_raw, clap_destroy);
-    check(clap_context_create(model.get(), &defaults, &default_raw));
-    Execution explicit_default(default_raw, clap_destroy);
-    const auto &shared = inherited->context.model();
-    require(inherited->context.runtime(shared.architecture.get(), shared.loader).stats().threads == 2 &&
-                explicit_default->context.runtime(shared.architecture.get(), shared.loader).stats().threads == 2,
-            "NULL and default context options did not inherit model threads");
-    compare(encode(inherited.get(), fixture.at("cases").at(0).at("input")),
+    clap::detail::Context inherited(handle->value);
+    const auto &shared = inherited.model();
+    require(inherited.runtime(shared.architecture.get(), shared.loader).stats().threads == 2,
+            "per-call context did not inherit model threads");
+    compare(encode(handle.get(), fixture.at("cases").at(0).at("input")),
             fixture.at("cases").at(0).at("embedding").get<std::vector<float>>());
 }
-void context_oom(clap_model *model) {
+void context_oom(CLAP *handle) {
 #ifndef CLAP_SHARED
-    CLAP *probe = nullptr;
-    const auto begin = allocation_count.load();
-    const auto status = clap_context_create(model, nullptr, &probe);
-    const auto count = allocation_count.load() - begin;
-    check(status);
-    clap_destroy(probe);
-    require(count > 3, "context allocation probe did not cover runtime construction");
-    const auto owners = model->value.use_count();
-    for (const auto budget : {0L, 1L, static_cast<long>(count - 2), static_cast<long>(count - 1)}) {
-        CLAP *failed = reinterpret_cast<CLAP *>(1);
+    const auto owners = handle->value.use_count();
+    const int tokens[] = {2, 3, 4};
+    // Only fail the first two parent-owned allocations (Context's runtime and
+    // its state, or an earlier input copy). Never inject into a GGML backend.
+    for (const auto budget : {0L, 1L}) {
+        float *failed = reinterpret_cast<float *>(1);
+        size_t count = 9;
         allocation_budget.store(budget);
-        const auto result = clap_context_create(model, nullptr, &failed);
+        const auto result = clap_encode_tokens(handle, tokens, 3, &failed, &count);
         const bool diagnostic = std::strstr(clap_last_error(), "out of memory") != nullptr;
         allocation_budget.store(-1);
-        require(result == CLAP_OUT_OF_MEMORY && !failed && diagnostic, "partial context OOM was not contained");
-        require(model->value.use_count() == owners, "partial context leaked model ownership");
+        require(result == CLAP_OUT_OF_MEMORY && !failed && !count && diagnostic,
+                "partial per-call context OOM was not contained");
+        require(handle->value.use_count() == owners, "partial context leaked model ownership");
     }
 #else
-    (void)model;
+    (void)handle;
 #endif
 }
-void thread_errors(CLAP *first, CLAP *second, const std::string &text) {
+void thread_errors(CLAP *handle, const std::string &text) {
     std::promise<void> failed, succeeded;
     auto first_failed = failed.get_future().share();
     auto other_succeeded = succeeded.get_future().share();
     auto a = std::async(std::launch::async, [&] {
         float *out = reinterpret_cast<float *>(1);
         size_t count = 9;
-        const auto result = clap_encode_tokens(first, nullptr, 0, &out, &count);
+        const auto result = clap_encode_tokens(handle, nullptr, 0, &out, &count);
         const std::string error = clap_last_error();
         failed.set_value();
         other_succeeded.wait();
@@ -244,7 +234,7 @@ void thread_errors(CLAP *first, CLAP *second, const std::string &text) {
     auto b = std::async(std::launch::async, [&] {
         first_failed.wait();
         try {
-            encode(second, text);
+            encode(handle, text);
             const bool empty = !*clap_last_error();
             succeeded.set_value();
             return empty;
@@ -268,17 +258,10 @@ void shared_oracle(const char *path, const char *case_path) {
     auto options = clap_default_options();
     options.device = "cpu";
     options.threads = 2;
-    clap_model *raw_model = nullptr;
-    check(clap_model_load(path, &options, &raw_model));
-    Model model(raw_model, clap_model_free);
-    CLAP *raw_first = nullptr, *raw_second = nullptr;
-    check(clap_context_create(model.get(), nullptr, &raw_first));
-    Execution first(raw_first, clap_destroy);
-    check(clap_context_create(model.get(), nullptr, &raw_second));
-    Execution second(raw_second, clap_destroy);
-    const auto &shared = first->context.model();
-    require(&shared == &second->context.model(), "oracle contexts do not share a model");
-    model.reset();
+    CLAP *raw = nullptr;
+    check(clap_create(path, &options, &raw));
+    Execution handle(raw, clap_destroy);
+    const auto &shared = *handle->value;
     auto run = [&](CLAP *context) -> nlohmann::json {
         if (mode == "text")
             return encode(context, payload);
@@ -300,16 +283,23 @@ void shared_oracle(const char *path, const char *case_path) {
         Output owned(values, clap_free);
         return std::vector<float>(values, values + count);
     };
-    require(run(first.get()) == spec.at("expected"), "first shared context differs from pinned baseline");
+    require(run(handle.get()) == spec.at("expected"), "first call differs from pinned baseline");
     const auto weights = shared.weights->stats();
     require(weights.host_tensors > 0, "oracle did not execute model weights");
-    require(run(second.get()) == spec.at("expected"), "second shared context differs from pinned baseline");
+    require(run(handle.get()) == spec.at("expected"), "repeated call differs from pinned baseline");
     require(shared.weights->stats().host_tensors == weights.host_tensors &&
                 shared.weights->stats().host_bytes == weights.host_bytes,
-            "second oracle context duplicated model weights");
-    first.reset();
-    require(run(second.get()) == spec.at("expected"), "surviving shared context differs from pinned baseline");
-    std::cout << "shared contexts match pinned baseline and retain one CPU weight bank\n";
+            "second call duplicated model weights");
+    auto a = std::async(std::launch::async, [&] { return run(handle.get()); });
+    auto b = std::async(std::launch::async, [&] { return run(handle.get()); });
+    const auto out_a = a.get(), out_b = b.get();
+    require(out_a == spec.at("expected") && out_b == spec.at("expected"),
+            "concurrent same-handle calls differ from pinned baseline");
+    require(shared.weights->stats().host_tensors == weights.host_tensors &&
+                shared.weights->stats().host_bytes == weights.host_bytes,
+            "concurrent calls duplicated model weights");
+    handle.reset(); // Both workers have joined before destruction.
+    std::cout << "same-handle calls match pinned baseline and retain one CPU weight bank\n";
 }
 
 int device_sharing() {
@@ -396,35 +386,15 @@ int main(int argc, char **argv) {
         auto options = clap_default_options();
         options.device = "cpu";
         options.threads = 2;
-        clap_model *raw_model = nullptr;
-        check(clap_model_load(argv[1], &options, &raw_model));
-        Model model(raw_model, clap_model_free);
-        auto first_options = clap_default_context_options();
-        first_options.threads = 1;
-        auto second_options = clap_default_context_options();
-        second_options.threads = 2;
-        CLAP *raw_first = nullptr, *raw_second = nullptr;
-        check(clap_context_create(model.get(), &first_options, &raw_first));
-        Execution first(raw_first, clap_destroy);
-        check(clap_context_create(model.get(), &second_options, &raw_second));
-        Execution second(raw_second, clap_destroy);
-        require(first.get() != second.get(), "contexts must be distinct handles");
-        require(clap_projection_dimension(first.get()) == fixture.at("dimensions"), "model properties lost");
-        context_oom(model.get());
-        graph_isolation(first.get(), second.get());
-        CLAP *invalid = reinterpret_cast<CLAP *>(1);
-        auto invalid_options = clap_default_context_options();
-        invalid_options.threads = -1;
-        require(clap_context_create(model.get(), &invalid_options, &invalid) == CLAP_INVALID_ARGUMENT && !invalid,
-                "invalid context options must clear the output");
-        invalid = reinterpret_cast<CLAP *>(1);
-        require(clap_context_create(nullptr, nullptr, &invalid) == CLAP_INVALID_ARGUMENT && !invalid,
-                "missing model must clear the context output");
-        require(clap_context_create(model.get(), nullptr, nullptr) == CLAP_INVALID_ARGUMENT, "missing output accepted");
-        model.reset();
+        CLAP *raw = nullptr;
+        check(clap_create(argv[1], &options, &raw));
+        Execution handle(raw, clap_destroy);
+        require(clap_projection_dimension(handle.get()) == fixture.at("dimensions"), "model properties lost");
+        context_oom(handle.get());
+        graph_isolation(handle->value);
         const auto &entry = fixture.at("cases").at(0);
         const auto text = entry.at("input").get<std::string>();
-        thread_errors(first.get(), second.get(), text);
+        thread_errors(handle.get(), text);
         auto work = [&](CLAP *context, size_t offset) {
             for (size_t pass = 0; pass < 3; ++pass)
                 for (size_t i = 0; i < fixture.at("cases").size(); ++i) {
@@ -432,21 +402,20 @@ int main(int argc, char **argv) {
                     compare(encode(context, current.at("input")), current.at("embedding").get<std::vector<float>>());
                 }
         };
-        auto a = std::async(std::launch::async, work, first.get(), 0);
-        auto b = std::async(std::launch::async, work, second.get(), 1);
+        auto a = std::async(std::launch::async, work, handle.get(), 0);
+        auto b = std::async(std::launch::async, work, handle.get(), 1);
         a.get();
         b.get();
         float *retained = nullptr;
         size_t retained_size = 0;
-        check(clap_encode_text(first.get(), text.c_str(), &retained, &retained_size));
+        check(clap_encode_text(handle.get(), text.c_str(), &retained, &retained_size));
         Output output(retained, clap_free);
-        first.reset();
-        compare(encode(second.get(), text), entry.at("embedding").get<std::vector<float>>());
-        second.reset();
+        handle.reset(); // All asynchronous users joined above.
         compare({retained, retained + retained_size}, entry.at("embedding").get<std::vector<float>>());
-        clap_model_free(nullptr);
-        std::cout << "shared-model contexts, cold buffer identity, isolated caches, overlap, OOM, scalar oracles and "
-                     "retained outputs passed\n";
+        clap_destroy(nullptr);
+        std::cout
+            << "same-handle calls, cold buffer identity, isolated private caches, overlap, OOM, scalar oracles and "
+               "retained outputs passed\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

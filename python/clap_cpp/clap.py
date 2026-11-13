@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes as C
+from contextlib import contextmanager
 import math
 import operator
 import os
@@ -70,7 +71,7 @@ _bind("clap_projection_dimension", C.c_int, _Handle)
 def _check(status):
     if status:
         # c_char_p copies the thread-local diagnostic into Python bytes NOW,
-        # before frees, another fallible call, or releasing the model lock.
+        # before frees, another fallible call, or releasing the model lease.
         raw = _lib.clap_last_error()
         message = raw.decode("utf-8", errors="replace") if raw else "clap.cpp native call failed"
         raise {1: ValueError, 2: MemoryError}.get(status, RuntimeError)(message)
@@ -137,18 +138,27 @@ def _pcm(value):
 
 
 class CLAP:
-    """Own one native model; all access, including close, is serialized."""
+    """Own a shared native model with independent concurrent inference calls.
+
+    close() rejects new calls immediately. If calls are in flight, the last
+    caller destroys the model after copying and freeing its native results.
+    User input conversion runs before acquiring a lifecycle lease.
+    """
 
     def __init__(self, path, threads=0):
         if hasattr(self, "_lock"):
             raise RuntimeError("CLAP is already initialized")
         self._lock = threading.Lock()
         self._handle = _Handle()
+        self._closed = False
+        self._active = 0
         # Keep the CDLL alive even during interpreter shutdown/finalization.
         self._native = _lib
         filename = _path(path)
         threads = _integer(threads, "threads")
         with self._lock:
+            if self._closed:
+                raise RuntimeError("CLAP is closed")
             options = self._native.clap_default_options()
             options.threads = threads
             _check(self._native.clap_create(filename, C.byref(options), C.byref(self._handle)))
@@ -160,24 +170,41 @@ class CLAP:
         raise TypeError("CLAP owns a native model and cannot be copied")
 
     def _ensure_open(self):
-        if not self._handle:
+        if self._closed or not self._handle:
             raise RuntimeError("CLAP is closed")
 
-    def _buffer(self, function, *args, integer=False):
+    @contextmanager
+    def _lease(self):
+        # Only pin/unpin under the lock: native calls release the GIL and must
+        # not hold the lifecycle lock or serialize other inference calls.
         with self._lock:
             self._ensure_open()
+            handle = self._handle
+            self._active += 1
+        try:
+            yield handle
+        finally:
+            destroy = None
+            with self._lock:
+                self._active -= 1
+                if self._closed and not self._active:
+                    destroy, self._handle = self._handle, _Handle()
+            if destroy:
+                self._native.clap_destroy(destroy)
+
+    def _buffer(self, function, *args, integer=False):
+        with self._lease() as handle:
             values = _Ints() if integer else _Floats()
             count = _Size()
             try:
-                _check(function(self._handle, *args, C.byref(values), C.byref(count)))
+                _check(function(handle, *args, C.byref(values), C.byref(count)))
                 return list(values[:count.value]) if count.value else []
             finally:
                 self._native.clap_free(values)
 
     def _property(self, function):
-        with self._lock:
-            self._ensure_open()
-            return function(self._handle)
+        with self._lease() as handle:
+            return function(handle)
 
     @property
     def projection_dimension(self):
@@ -244,12 +271,11 @@ class CLAP:
     def audio_frames(self, pcm, sample_rate=48000):
         rate = _integer(sample_rate, "sample_rate", 1)
         samples = _pcm(pcm)
-        with self._lock:
-            self._ensure_open()
+        with self._lease() as handle:
             frames = _Frames()
             try:
                 _check(self._native.clap_get_audio_frames(
-                    self._handle, samples, len(samples), rate, C.byref(frames)))
+                    handle, samples, len(samples), rate, C.byref(frames)))
                 width = frames.dimension
                 return [list(frames.values[i * width:(i + 1) * width]) if width else []
                         for i in range(frames.frames)]
@@ -260,10 +286,15 @@ class CLAP:
         lock = getattr(self, "_lock", None)
         if lock is None:
             return
+        destroy = None
         with lock:
-            if self._handle:
-                self._native.clap_destroy(self._handle)
-                self._handle = _Handle()
+            self._closed = True
+            if not self._active:
+                destroy, self._handle = self._handle, _Handle()
+        # Defer rather than wait when leased. This also lets user protocols
+        # call close() reentrantly without waiting for another caller.
+        if destroy:
+            self._native.clap_destroy(destroy)
 
     def __enter__(self):
         with self._lock:

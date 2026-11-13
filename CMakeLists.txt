@@ -108,6 +108,14 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/contexts.py"
                 "$<TARGET_FILE:test-context>" "${CMAKE_CURRENT_BINARY_DIR}/context-fixture")
     set_tests_properties(test-model-context PROPERTIES TIMEOUT 90)
+    add_executable(test-concurrent tests/test-concurrent.cpp)
+    target_include_directories(test-concurrent PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-concurrent PRIVATE clap Threads::Threads)
+    add_test(NAME test-concurrent-encode
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/concurrent_encode.py"
+                "$<TARGET_FILE:test-concurrent>" "${CMAKE_CURRENT_BINARY_DIR}/concurrent-fixture"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/clap.h")
+    set_tests_properties(test-concurrent-encode PROPERTIES TIMEOUT 30)
     if(GGML_CUDA OR GGML_HIP OR GGML_METAL OR GGML_VULKAN)
         add_test(NAME test-model-context-device
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/contexts.py"

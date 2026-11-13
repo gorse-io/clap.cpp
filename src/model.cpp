@@ -337,3 +337,8 @@ BatchNormWeights BatchNormWeights::create(const ModelLoader &loader, const std::
 }
 
 } // namespace clap::detail
+
+CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options)
+    : value(std::make_shared<clap::detail::Model>(path, options)) {}
+CLAP::CLAP(std::shared_ptr<const clap::detail::Model> model) : value(std::move(model)) {}
+CLAP::~CLAP() = default;
