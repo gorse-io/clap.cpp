@@ -57,6 +57,63 @@ class ClapModel final : public ModelArchitecture {
     BatchNormWeights batch_norm;
 };
 
+// CLAP2: NaFlex audio ViT and bidirectional ModernText, independent of HTSAT CLAP.
+class Clap2Model final : public ModelArchitecture {
+  public:
+    Clap2Model(const ModelLoader &, int);
+    std::vector<float> text(const std::vector<int> &) const override;
+    std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const override;
+    AudioFrames audio_frames(const std::vector<float> &) const override;
+    TextParameters text_parameters() const override;
+    int projection_dimension() const override;
+    int mel_bins() const override;
+    int sample_rate() const override;
+    bool is_waveform_encoder() const override { return false; }
+    bool has_waveform_embeddings() const override { return true; }
+
+  private:
+    friend struct FeatureTestAccess;
+    void load_arch_hparams() override;
+    void load_arch_tensors() const override;
+    void bind_tensors();
+    HostMatrix frontend(const std::vector<float> &) const;
+    HostMatrix patches(const HostMatrix &) const;
+    ggml_tensor *rms(Graph &, ggml_tensor *, ggml_tensor *, float) const;
+    ggml_tensor *rotate(Graph &, ggml_tensor *, int, float, int, int) const;
+    ggml_tensor *attend(Graph &, ggml_tensor *, ggml_tensor *, ggml_tensor *, int, ggml_tensor *) const;
+    ggml_tensor *encode(Graph &, ggml_tensor *, bool, int, ggml_tensor *) const;
+    ggml_tensor *pool(Graph &, ggml_tensor *, bool, ggml_tensor *) const;
+    const ModelLoader &loader;
+    GraphRuntime runtime;
+    struct Parameters {
+        int projection, bins, patch, rate, nfft, hop;
+        int vocab, positions, bos, eos, pad;
+        float fmin, fmax;
+    } h;
+    struct BranchParameters {
+        int hidden, heads, intermediate, layers;
+        float epsilon, theta;
+    };
+    struct Layer {
+        ggml_tensor *input_norm = nullptr, *post_attention_norm = nullptr;
+        ggml_tensor *q_norm = nullptr, *k_norm = nullptr;
+        ggml_tensor *attention_scale = nullptr, *mlp_scale = nullptr;
+        LayerWeights qkv, attention_output, gate_up, down;
+    };
+    struct Head {
+        ggml_tensor *probe = nullptr, *norm = nullptr, *q_norm = nullptr, *k_norm = nullptr;
+        LayerWeights query, key_value, output, fc1, fc2;
+    };
+    struct Branch {
+        BranchParameters h;
+        std::vector<Layer> layers;
+        ggml_tensor *norm = nullptr;
+        Head head;
+    } audio_branch, text_branch;
+    ggml_tensor *text_embeddings = nullptr, *register_tokens = nullptr, *patch_norm = nullptr;
+    LayerWeights patch_embedding, audio_projection_input, audio_projection_output, text_projection;
+};
+
 // CLaMP3 text (XLM-R) and audio (BERT), optionally with a bundled MERT frontend.
 class MertModel;
 class Clamp3Model final : public ModelArchitecture {

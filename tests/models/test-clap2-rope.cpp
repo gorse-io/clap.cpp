@@ -1,6 +1,6 @@
 // CLAP2 size-geometry regression. Uses only the tiny analytical GGUF's
 // constructor metadata; rotary inputs have the exact published tower widths.
-#include "model.h"
+#include "models/models.h"
 
 #include <algorithm>
 #include <cmath>

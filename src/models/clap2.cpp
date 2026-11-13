@@ -1,5 +1,5 @@
 #include "audio.h"
-#include "model.h"
+#include "models.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,12 +12,15 @@ namespace clap::detail {
 Clap2Model::Clap2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads, true) {
     load_arch_hparams();
     load_arch_tensors();
+    bind_tensors();
 }
 void Clap2Model::load_arch_hparams() {
-    config = nlohmann::json::parse(loader.metadata("clap2.config"));
-    processor = nlohmann::json::parse(loader.metadata("clap2.processor_config"));
-    audio = config.at("audio_config");
-    txt = config.at("text_config");
+    const auto config = nlohmann::json::parse(loader.metadata("clap2.config"));
+    const auto processor = nlohmann::json::parse(loader.metadata("clap2.processor_config"));
+    const auto audio = config.at("audio_config");
+    const auto txt = config.at("text_config");
+    auto &bins = h.bins, &patch = h.patch, &rate = h.rate, &nfft = h.nfft, &hop = h.hop;
+    auto &fmin = h.fmin, &fmax = h.fmax;
     auto dim = [](const nlohmann::json &j, const char *key, int maximum = 65536) {
         const auto &v = j.at(key);
         if (!v.is_number_integer() || v <= 0 || v > maximum)
@@ -81,22 +84,33 @@ void Clap2Model::load_arch_hparams() {
         if (!v.is_number_integer() || v < 0 || v >= txt.at("vocab_size"))
             throw std::runtime_error("CLAP: invalid CLAP2 special token");
     }
+    h.projection = config.at("projection_dim");
+    h.vocab = txt.at("vocab_size");
+    h.positions = txt.at("max_position_embeddings");
+    h.bos = txt.at("bos_token_id");
+    h.eos = txt.at("eos_token_id");
+    h.pad = txt.at("pad_token_id");
+    auto parameters = [](const nlohmann::json &j) -> BranchParameters {
+        return {j.at("hidden_size"),       j.at("num_attention_heads"), j.at("intermediate_size"),
+                j.at("num_hidden_layers"), j.at("rms_norm_eps"),        j.at("rope_parameters").at("rope_theta")};
+    };
+    audio_branch.h = parameters(audio);
+    text_branch.h = parameters(txt);
 }
 void Clap2Model::load_arch_tensors() const {
     for (bool is_audio : {true, false}) {
-        const auto &j = is_audio ? audio : txt;
+        const auto &parameters = is_audio ? audio_branch.h : text_branch.h;
         const std::string root = is_audio ? "audio_model" : "text_model";
-        const int w = j.at("hidden_size"), m = j.at("intermediate_size"),
-                  d = w / j.at("num_attention_heads").get<int>();
+        const int w = parameters.hidden, m = parameters.intermediate, d = w / parameters.heads;
         auto norm = [&](const std::string &s, int size) { loader.shape(s + ".weight", {size}); };
         norm(root + ".norm", w);
         if (is_audio) {
-            loader.linear_shape(root + ".embeddings.patch_embedding", patch * patch, w, false);
+            loader.linear_shape(root + ".embeddings.patch_embedding", h.patch * h.patch, w, false);
             loader.shape(root + ".embeddings.register_tokens", {w, 1, 1});
             norm(root + ".embeddings.layernorm", w);
         } else
-            loader.shape(root + ".embed_tokens.weight", {w, txt.at("vocab_size").get<int>()});
-        for (int i = 0; i < j.at("num_hidden_layers").get<int>(); ++i) {
+            loader.shape(root + ".embed_tokens.weight", {w, h.vocab});
+        for (int i = 0; i < parameters.layers; ++i) {
             const auto p = root + ".encoder.layers." + std::to_string(i);
             norm(p + ".input_layernorm", w);
             norm(p + ".post_attention_layernorm", w);
@@ -112,35 +126,79 @@ void Clap2Model::load_arch_tensors() const {
                 norm(p + ".self_attn.k_norm", d);
             }
         }
-        const auto h = root + ".head";
-        loader.shape(h + ".probe", {w, 1, 1});
-        loader.linear_shape(h + ".q_proj", w, w, is_audio);
-        loader.linear_shape(h + ".kv_proj", w, 2 * w, is_audio);
+        const auto head = root + ".head";
+        loader.shape(head + ".probe", {w, 1, 1});
+        loader.linear_shape(head + ".q_proj", w, w, is_audio);
+        loader.linear_shape(head + ".kv_proj", w, 2 * w, is_audio);
         if (is_audio) {
-            loader.linear_shape(h + ".o_proj", w, w);
-            norm(h + ".layernorm", w);
-            loader.linear_shape(h + ".fc1", w, m);
-            loader.linear_shape(h + ".fc2", m, w);
+            loader.linear_shape(head + ".o_proj", w, w);
+            norm(head + ".layernorm", w);
+            loader.linear_shape(head + ".fc1", w, m);
+            loader.linear_shape(head + ".fc2", m, w);
         } else {
-            norm(h + ".q_norm", d);
-            norm(h + ".k_norm", d);
+            norm(head + ".q_norm", d);
+            norm(head + ".k_norm", d);
         }
     }
-    const int projection = config.at("projection_dim"), aw = audio.at("hidden_size"), tw = txt.at("hidden_size");
+    const int projection = h.projection, aw = audio_branch.h.hidden, tw = text_branch.h.hidden;
     loader.linear_shape("audio_projection.linear1", aw, projection);
     loader.linear_shape("audio_projection.linear2", projection, projection);
     loader.linear_shape("text_projection", tw, projection, false);
     loader.shape("logit_scale", {1});
 }
-TextParameters Clap2Model::text_parameters() const {
-    return {txt.at("bos_token_id"), txt.at("eos_token_id"), txt.at("max_position_embeddings")};
+void Clap2Model::bind_tensors() {
+    for (bool is_audio : {true, false}) {
+        auto &branch = is_audio ? audio_branch : text_branch;
+        const std::string root = is_audio ? "audio_model" : "text_model";
+        branch.norm = loader.weight(root + ".norm.weight");
+        for (int i = 0; i < branch.h.layers; ++i) {
+            const auto p = root + ".encoder.layers." + std::to_string(i);
+            Layer layer;
+            layer.input_norm = loader.weight(p + ".input_layernorm.weight");
+            layer.post_attention_norm = loader.weight(p + ".post_attention_layernorm.weight");
+            layer.qkv = LayerWeights::bind(loader, p + ".self_attn.qkv_proj", is_audio);
+            layer.attention_output = LayerWeights::bind(loader, p + ".self_attn.o_proj", is_audio);
+            layer.gate_up = LayerWeights::bind(loader, p + ".mlp.gate_up_proj", is_audio);
+            layer.down = LayerWeights::bind(loader, p + ".mlp.down_proj", is_audio);
+            if (is_audio) {
+                layer.attention_scale = loader.weight(p + ".layer_scale1.lambda1");
+                layer.mlp_scale = loader.weight(p + ".layer_scale2.lambda1");
+            } else {
+                layer.q_norm = loader.weight(p + ".self_attn.q_norm.weight");
+                layer.k_norm = loader.weight(p + ".self_attn.k_norm.weight");
+            }
+            branch.layers.push_back(layer);
+        }
+        const auto p = root + ".head";
+        auto &head = branch.head;
+        head.probe = loader.weight(p + ".probe");
+        head.query = LayerWeights::bind(loader, p + ".q_proj", is_audio);
+        head.key_value = LayerWeights::bind(loader, p + ".kv_proj", is_audio);
+        if (is_audio) {
+            head.output = LayerWeights::bind(loader, p + ".o_proj");
+            head.norm = loader.weight(p + ".layernorm.weight");
+            head.fc1 = LayerWeights::bind(loader, p + ".fc1");
+            head.fc2 = LayerWeights::bind(loader, p + ".fc2");
+        } else {
+            head.q_norm = loader.weight(p + ".q_norm.weight");
+            head.k_norm = loader.weight(p + ".k_norm.weight");
+        }
+    }
+    text_embeddings = loader.weight("text_model.embed_tokens.weight");
+    patch_embedding = LayerWeights::bind(loader, "audio_model.embeddings.patch_embedding", false);
+    register_tokens = loader.weight("audio_model.embeddings.register_tokens");
+    patch_norm = loader.weight("audio_model.embeddings.layernorm.weight");
+    audio_projection_input = LayerWeights::bind(loader, "audio_projection.linear1");
+    audio_projection_output = LayerWeights::bind(loader, "audio_projection.linear2");
+    text_projection = LayerWeights::bind(loader, "text_projection", false);
 }
-int Clap2Model::projection_dimension() const { return config.at("projection_dim"); }
-int Clap2Model::mel_bins() const { return bins; }
-int Clap2Model::sample_rate() const { return rate; }
+TextParameters Clap2Model::text_parameters() const { return {h.bos, h.eos, static_cast<size_t>(h.positions)}; }
+int Clap2Model::projection_dimension() const { return h.projection; }
+int Clap2Model::mel_bins() const { return h.bins; }
+int Clap2Model::sample_rate() const { return h.rate; }
 
-ggml_tensor *Clap2Model::rms(Graph &g, ggml_tensor *x, const std::string &p, float epsilon) const {
-    return ggml_mul(g.ctx(), ggml_rms_norm(g.ctx(), x, epsilon), g.weight(p + ".weight"));
+ggml_tensor *Clap2Model::rms(Graph &g, ggml_tensor *x, ggml_tensor *weight, float epsilon) const {
+    return ggml_mul(g.ctx(), ggml_rms_norm(g.ctx(), x, epsilon), g.weight(weight));
 }
 // Interleaved (even, odd) rotary layout. Audio allocates half the pairs to
 // frequency and half to time; register tokens are deliberately not rotated.
@@ -186,90 +244,90 @@ ggml_tensor *Clap2Model::attend(Graph &g, ggml_tensor *q, ggml_tensor *k, ggml_t
 }
 ggml_tensor *Clap2Model::encode(Graph &g, ggml_tensor *x, bool is_audio, int time, ggml_tensor *mask) const {
     auto *c = g.ctx();
-    const auto &j = is_audio ? audio : txt;
-    const std::string root = is_audio ? "audio_model" : "text_model";
-    const int w = j.at("hidden_size"), heads = j.at("num_attention_heads"), d = w / heads;
-    const float eps = j.at("rms_norm_eps"), theta = j.at("rope_parameters").at("rope_theta");
-    auto qknorm = [&](ggml_tensor *z, const std::string &p) {
-        return ggml_reshape_2d(c, rms(g, ggml_reshape_3d(c, z, d, heads, z->ne[1]), p, eps), w, z->ne[1]);
+    const auto &branch = is_audio ? audio_branch : text_branch;
+    const int w = branch.h.hidden, heads = branch.h.heads, d = w / heads;
+    const float eps = branch.h.epsilon, theta = branch.h.theta;
+    auto qknorm = [&](ggml_tensor *z, ggml_tensor *weight) {
+        return ggml_reshape_2d(c, rms(g, ggml_reshape_3d(c, z, d, heads, z->ne[1]), weight, eps), w, z->ne[1]);
     };
-    for (int i = 0; i < j.at("num_hidden_layers").get<int>(); ++i) {
-        const auto p = root + ".encoder.layers." + std::to_string(i);
-        auto *qkv = g.linear(rms(g, x, p + ".input_layernorm", eps), p + ".self_attn.qkv_proj", is_audio);
+    for (const auto &layer : branch.layers) {
+        auto *qkv = g.linear(rms(g, x, layer.input_norm, eps), layer.qkv);
         auto *q = g.slice(qkv, 0, w), *k = g.slice(qkv, w, w), *v = g.slice(qkv, 2 * w, w);
         if (!is_audio) {
-            q = qknorm(q, p + ".self_attn.q_norm");
-            k = qknorm(k, p + ".self_attn.k_norm");
+            q = qknorm(q, layer.q_norm);
+            k = qknorm(k, layer.k_norm);
         }
         q = rotate(g, q, heads, theta, time, is_audio ? 1 : 0);
         k = rotate(g, k, heads, theta, time, is_audio ? 1 : 0);
-        auto *y = g.linear(attend(g, q, k, v, heads, mask), p + ".self_attn.o_proj", is_audio);
+        auto *y = g.linear(attend(g, q, k, v, heads, mask), layer.attention_output);
         if (is_audio)
-            y = ggml_mul(c, y, g.weight(p + ".layer_scale1.lambda1"));
+            y = ggml_mul(c, y, g.weight(layer.attention_scale));
         x = ggml_add(c, x, y);
-        auto *gu = g.linear(rms(g, x, p + ".post_attention_layernorm", eps), p + ".mlp.gate_up_proj", is_audio);
-        const int m = j.at("intermediate_size");
+        auto *gu = g.linear(rms(g, x, layer.post_attention_norm, eps), layer.gate_up);
+        const int m = branch.h.intermediate;
         // HF gate_up_proj is gate-first in both towers. ModernText.w12 is
         // value-first upstream, but the pinned HF export swaps its two halves.
         y = ggml_mul(c, ggml_silu(c, g.slice(gu, 0, m)), g.slice(gu, m, m));
-        y = g.linear(y, p + ".mlp.down_proj", is_audio);
+        y = g.linear(y, layer.down);
         if (is_audio)
-            y = ggml_mul(c, y, g.weight(p + ".layer_scale2.lambda1"));
+            y = ggml_mul(c, y, g.weight(layer.mlp_scale));
         x = ggml_add(c, x, y);
     }
-    return rms(g, x, root + ".norm", eps);
+    return rms(g, x, branch.norm, eps);
 }
 ggml_tensor *Clap2Model::pool(Graph &g, ggml_tensor *x, bool is_audio, ggml_tensor *mask) const {
     auto *c = g.ctx();
-    const auto &j = is_audio ? audio : txt;
-    const std::string p = is_audio ? "audio_model.head" : "text_model.head";
-    const int w = j.at("hidden_size"), heads = j.at("num_attention_heads"), d = w / heads;
-    const float eps = j.at("rms_norm_eps");
+    const auto &branch = is_audio ? audio_branch : text_branch;
+    const auto &head = branch.head;
+    const int w = branch.h.hidden, heads = branch.h.heads, d = w / heads;
+    const float eps = branch.h.epsilon;
     if (is_audio) {
         // NaFlex MAP excludes the register prefix (pool_include_prefix=False).
         x = ggml_cont(c, ggml_view_2d(c, x, x->ne[0], x->ne[1] - 1, x->nb[1], x->nb[1]));
     }
-    auto *probe = ggml_reshape_2d(c, g.weight(p + ".probe"), w, 1);
-    auto *q = g.linear(probe, p + ".q_proj", is_audio);
-    auto *kv = g.linear(x, p + ".kv_proj", is_audio);
+    auto *probe = ggml_reshape_2d(c, g.weight(head.probe), w, 1);
+    auto *q = g.linear(probe, head.query);
+    auto *kv = g.linear(x, head.key_value);
     auto *k = g.slice(kv, 0, w), *v = g.slice(kv, w, w);
     if (!is_audio) {
-        q = ggml_reshape_2d(c, rms(g, ggml_reshape_3d(c, q, d, heads, 1), p + ".q_norm", eps), w, 1);
-        k = ggml_reshape_2d(c, rms(g, ggml_reshape_3d(c, k, d, heads, x->ne[1]), p + ".k_norm", eps), w, x->ne[1]);
+        q = ggml_reshape_2d(c, rms(g, ggml_reshape_3d(c, q, d, heads, 1), head.q_norm, eps), w, 1);
+        k = ggml_reshape_2d(c, rms(g, ggml_reshape_3d(c, k, d, heads, x->ne[1]), head.k_norm, eps), w, x->ne[1]);
     }
     auto *out = attend(g, q, k, v, heads, mask);
     if (is_audio) {
-        out = g.linear(out, p + ".o_proj");
-        auto *y = g.linear(rms(g, out, p + ".layernorm", eps), p + ".fc1");
+        out = g.linear(out, head.output);
+        auto *y = g.linear(rms(g, out, head.norm, eps), head.fc1);
         y = ggml_gelu_erf(c, y);
-        out = ggml_add(c, out, g.linear(y, p + ".fc2"));
-        out = g.linear(out, "audio_projection.linear1");
-        out = g.linear(ggml_gelu_erf(c, out), "audio_projection.linear2");
+        out = ggml_add(c, out, g.linear(y, head.fc2));
+        out = g.linear(out, audio_projection_input);
+        out = g.linear(ggml_gelu_erf(c, out), audio_projection_output);
     } else
-        out = g.linear(out, "text_projection", false);
+        out = g.linear(out, text_projection);
     return g.l2_normalize(out);
 }
 std::vector<float> Clap2Model::text(const std::vector<int> &ids) const {
-    if (ids.empty() || ids.size() > size_t(txt.at("max_position_embeddings").get<int>()))
+    if (ids.empty() || ids.size() > size_t(h.positions))
         throw std::runtime_error("CLAP: invalid CLAP2 text length");
     std::vector<float> mask(ids.size());
     bool valid = false;
     for (size_t i = 0; i < ids.size(); ++i) {
-        if (ids[i] < 0 || ids[i] >= txt.at("vocab_size").get<int>())
+        if (ids[i] < 0 || ids[i] >= h.vocab)
             throw std::runtime_error("CLAP: CLAP2 token out of range");
-        mask[i] = ids[i] == txt.at("pad_token_id").get<int>() ? -INFINITY : 0.f;
+        mask[i] = ids[i] == h.pad ? -INFINITY : 0.f;
         valid |= mask[i] == 0;
     }
     if (!valid)
         throw std::runtime_error("CLAP: CLAP2 text is entirely padding");
     auto result = runtime.run_cached("clap2.text", {GraphInput(ids), GraphInput(mask, ids.size(), 1)}, [&](Graph &g) {
-        auto *x = g.embedding(loader.weight("text_model.embed_tokens.weight"), g.dynamic_input(0));
+        auto *x = g.embedding(text_embeddings, g.dynamic_input(0));
         auto *m = g.dynamic_input(1);
         return std::vector<ggml_tensor *>{pool(g, encode(g, x, false, 0, m), false, m)};
     });
     return result.front().values;
 }
 HostMatrix Clap2Model::frontend(const std::vector<float> &pcm) const {
+    const int bins = h.bins, rate = h.rate, nfft = h.nfft, hop = h.hop;
+    const float fmin = h.fmin, fmax = h.fmax;
     if (pcm.empty() || pcm.size() > size_t(INT32_MAX) ||
         !std::all_of(pcm.begin(), pcm.end(), [](float v) { return std::isfinite(v); }))
         throw std::runtime_error("CLAP: invalid CLAP2 waveform");
@@ -319,6 +377,7 @@ HostMatrix Clap2Model::frontend(const std::vector<float> &pcm) const {
     return mel;
 }
 HostMatrix Clap2Model::patches(const HostMatrix &mel) const {
+    const int patch = h.patch, bins = h.bins;
     const int time = (mel.rows + patch - 1) / patch, freq = bins / patch;
     HostMatrix out(time * freq, patch * patch);
     const float floor = *std::min_element(mel.data.begin(), mel.data.end());
@@ -336,12 +395,12 @@ std::vector<float> Clap2Model::waveform_embedding(const std::vector<float> &pcm,
         throw std::runtime_error("CLAP: CLAP2 processes the complete waveform; crop offsets are unsupported");
     const auto features = frontend(pcm);
     const auto input = patches(features);
-    const int time = (features.rows + patch - 1) / patch;
+    const int time = (features.rows + h.patch - 1) / h.patch;
     auto result = runtime.run_cached("clap2.audio", {GraphInput(input)}, [&](Graph &g) {
-        auto *x = g.linear(g.dynamic_input(0), "audio_model.embeddings.patch_embedding", false);
-        auto *reg = ggml_reshape_2d(g.ctx(), g.weight("audio_model.embeddings.register_tokens"), x->ne[0], 1);
+        auto *x = g.linear(g.dynamic_input(0), patch_embedding);
+        auto *reg = ggml_reshape_2d(g.ctx(), g.weight(register_tokens), x->ne[0], 1);
         x = ggml_concat(g.ctx(), reg, x, 1);
-        x = rms(g, x, "audio_model.embeddings.layernorm", audio.at("rms_norm_eps"));
+        x = rms(g, x, patch_norm, audio_branch.h.epsilon);
         x = encode(g, x, true, time, nullptr);
         return std::vector<ggml_tensor *>{pool(g, x, true, nullptr)};
     });
