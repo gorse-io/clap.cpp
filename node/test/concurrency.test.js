@@ -214,36 +214,37 @@ test('sync calls lease the handle across reentrant close while async work is pen
   assert.equal(destroys, start + 1);
 });
 
-test('GC finalizer releases an async owner exactly once without explicit close', () => {
-  const child = spawnSync(process.execPath, ['--expose-gc', '-e', `
-    const assert = require('node:assert/strict');
-    const { createRequire } = require('node:module');
-    const path = require('node:path');
-    const local = createRequire(path.join(process.argv[1], 'index.js'));
-    const koffi = local('koffi');
-    const load = koffi.load;
-    let destroyed = 0;
-    koffi.load = (...args) => {
-      const lib = load(...args);
-      return { func(...signature) {
-        const fn = lib.func(...signature);
-        return signature[0] === 'clap_destroy' ? (...args) => { destroyed++; return fn(...args); } : fn;
-      }};
-    };
-    const { CLAP } = require(process.argv[1]);
-    (async () => {
-      const pending = (() => { const owner = new CLAP(process.argv[2]); return owner.encodeTextAsync('hello'); })();
-      const value = await pending;
-      assert.ok(value instanceof Float32Array && value.every(Number.isFinite));
-      for (let i = 0; i < 200 && destroyed === 0; i++) {
-        global.gc(); await new Promise(resolve => setTimeout(resolve, 10));
-      }
-      assert.equal(destroyed, 1);
-      for (let i = 0; i < 3; i++) { global.gc(); await new Promise(setImmediate); }
-      assert.equal(destroyed, 1);
-    })().catch(error => { console.error(error); process.exitCode = 1; });
-  `, path.resolve(modulePath), modelPath], { encoding: 'utf8', timeout: 15000 });
-  assert.equal(child.status, 0, child.stderr);
+test('GC finalizer releases an async owner exactly once without explicit close', async () => {
+  // Keep automatic device selection and reuse this process's initialized backend.
+  // A fresh Metal process can spend longer initializing than the GC check itself.
+  // Inspector triggers real GC without requiring callers to pass --expose-gc.
+  const { Session } = require('node:inspector');
+  const session = new Session();
+  session.connect();
+  const collect = () => new Promise((resolve, reject) => {
+    session.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve());
+  });
+  const start = destroys;
+  try {
+    const pending = (() => {
+      const owner = new CLAP(modelPath);
+      return owner.encodeTextAsync('hello');
+    })();
+    const value = await pending;
+    near(value, fixture.cases[0].embedding);
+    for (let i = 0; i < 200 && destroys === start; i++) {
+      await collect();
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(destroys, start + 1);
+    for (let i = 0; i < 3; i++) {
+      await collect();
+      await new Promise(setImmediate);
+    }
+    assert.equal(destroys, start + 1);
+  } finally {
+    session.disconnect();
+  }
 });
 
 test('npm package includes both private worker helpers', () => {
