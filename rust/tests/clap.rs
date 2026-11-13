@@ -36,7 +36,7 @@ async fn clap() -> Result<(), Box<dyn std::error::Error>> {
         .download_file(&params)
         .await?;
 
-    let mut clap = CLAP::new(
+    let clap = CLAP::new(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("models")
             .join("larger_clap_general-q4_k_m.gguf"),

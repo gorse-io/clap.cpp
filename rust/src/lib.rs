@@ -1,13 +1,12 @@
 //! Safe, owning CPU bindings with the Python-style CLAP encoding API.
 //!
 //! Build from a recursive Git checkout; see `rust/README.md`. Embeddings are
-//! Rust-owned vectors. A CLAP instance is deliberately neither Send nor Sync.
+//! Rust-owned vectors. A CLAP instance can be shared across threads, including
+//! concurrent text and audio encoding, using `std::sync::Arc`.
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
-    marker::PhantomData,
     path::Path,
     ptr::NonNull,
-    rc::Rc,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -118,27 +117,36 @@ fn check_status(status: ffi::Status) -> Result<()> {
     }
 }
 
-/// Owned native model, selected from the GGUF architecture metadata.
+/// Owned shared immutable native model, selected from the GGUF metadata.
 /// Drop releases weights and all native resources.
 ///
-/// Inference requires exclusive access: the native backend does not guarantee
-/// same-instance thread safety.
-/// ```compile_fail
-/// fn send<T: Send>() {}
-/// send::<clap_cpp::CLAP>();
+/// Encoding borrows the model and uses private native execution state per call.
+/// Share an instance with `std::sync::Arc`; its last owner releases the model
+/// only after all borrowed calls finish. Returned vectors outlive the model.
 /// ```
-/// ```compile_fail
-/// fn sync<T: Sync>() {}
-/// sync::<clap_cpp::CLAP>();
+/// fn assert_send_sync<T: Send + Sync>() {}
+/// assert_send_sync::<clap_cpp::CLAP>();
 /// ```
 pub struct CLAP {
     ptr: NonNull<ffi::Model>,
-    _not_send_sync: PhantomData<Rc<()>>,
 }
+
+// SAFETY: The C handle owns immutable shared weights and runtime options, not
+// thread-affine execution state. Each encode call creates its own private native
+// Context, and diagnostics are thread-local. Moving ownership to another thread
+// is supported by the native API, including destruction on that thread.
+unsafe impl Send for CLAP {}
+
+// SAFETY: Concurrent native calls on the same model are supported: execution
+// state and output buffers are private to each call. Methods require a live
+// &self, so Rust borrowing (also through Arc) prevents Drop racing an active
+// call. The handle is private and is never exposed for external destruction.
+unsafe impl Sync for CLAP {}
+
 impl Drop for CLAP {
     fn drop(&mut self) {
         // SAFETY: This instance uniquely owns the handle from clap_create;
-        // exclusive inference access and !Send/!Sync prevent concurrent use.
+        // Drop's exclusive access means all borrowed calls have finished.
         unsafe { ffi::clap_destroy(self.ptr.as_ptr()) }
     }
 }
@@ -158,17 +166,15 @@ impl CLAP {
         let status = unsafe { ffi::clap_create(s.as_ptr(), &options, &mut created) };
         check_status(status)?;
         let ptr = NonNull::new(created).ok_or("native model missing")?;
-        Ok(Self {
-            ptr,
-            _not_send_sync: PhantomData,
-        })
+        Ok(Self { ptr })
     }
     /// Encode one UTF-8 string using the model's native context policy.
-    pub fn encode_text(&mut self, text: &str) -> Result<Vec<f32>> {
+    pub fn encode_text(&self, text: &str) -> Result<Vec<f32>> {
         let s = CString::new(text)?;
         let mut output = NativeBuffer::default();
-        // SAFETY: The model is live and exclusively borrowed, the string is
-        // valid through the call, and the guard owns the fresh output slots.
+        // SAFETY: The shared borrow keeps the immutable model live throughout
+        // this synchronous call, which owns private native execution state.
+        // The string stays valid and the guard owns the fresh output slots.
         let status = unsafe {
             ffi::clap_encode_text(
                 self.ptr.as_ptr(),
@@ -184,7 +190,7 @@ impl CLAP {
     /// source sample rate is converted internally to the model's input rate.
     /// `crop_offset` counts model-rate samples (normally 0); architectures that
     /// do not support cropping reject nonzero offsets.
-    pub fn encode_audio(&mut self, p: impl AsRef<Path>, crop_offset: usize) -> Result<Vec<f32>> {
+    pub fn encode_audio(&self, p: impl AsRef<Path>, crop_offset: usize) -> Result<Vec<f32>> {
         let s = path(p.as_ref())?;
         let mut output = NativeBuffer::default();
         // SAFETY: As for encode_text; crop_offset uses C size_t (Rust usize).

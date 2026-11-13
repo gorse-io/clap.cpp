@@ -34,20 +34,11 @@ class Context {
 };
 } // namespace clap::detail
 
-// The existing opaque C handle now owns one execution context. clap_create is
-// the convenience route; clap_context_create shares an already-loaded model.
-struct CLAP {
-    clap::detail::Context context;
-    CLAP(const std::string &, const clap::RuntimeOptions &);
-    CLAP(std::shared_ptr<const clap::detail::Model>, int threads = 0);
-    ~CLAP();
-};
-
 namespace clap::detail {
 // Core-only operations shared by the C entry points. Upper layers use clap.h.
-std::vector<int> tokenize(const CLAP &, const std::string &utf8, size_t max_length);
-std::vector<float> encode_text(CLAP &, const std::string &utf8);
-std::vector<float> encode_audio(CLAP &, const std::vector<float> &pcm, int sample_rate, size_t crop_offset);
-std::vector<float> encode_audio_file(CLAP &, const std::string &path, size_t crop_offset);
-AudioFrames audio_frames(CLAP &, const std::vector<float> &pcm, int sample_rate);
+std::vector<int> tokenize(const Model &, const std::string &utf8, size_t max_length);
+std::vector<float> encode_text(Context &, const std::string &utf8);
+std::vector<float> encode_audio(Context &, const std::vector<float> &pcm, int sample_rate, size_t crop_offset);
+std::vector<float> encode_audio_file(Context &, const std::string &path, size_t crop_offset);
+AudioFrames audio_frames(Context &, const std::vector<float> &pcm, int sample_rate);
 } // namespace clap::detail

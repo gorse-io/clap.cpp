@@ -22,6 +22,12 @@ export class CLAP {
   encodeAudio(pcm: Float32Array, sampleRate?: number, cropOffset?: number): Float32Array;
   /** Decode WAV/MP3/FLAC by contents, downmix and resample internally. */
   encodeAudio(path: string, cropOffset?: number): Float32Array;
-  /** Idempotent early release; encoding methods throw after close. */
+  /** Concurrent same-model inference off the JS thread. Inputs are snapshotted. */
+  encodeTextAsync(input: string | Int32Array | number[]): Promise<Float32Array>;
+  /** Concurrent mono PCM inference. Defaults: 48000 Hz, cropOffset=0 samples. */
+  encodeAudioAsync(pcm: Float32Array, sampleRate?: number, cropOffset?: number): Promise<Float32Array>;
+  /** Concurrent WAV/MP3/FLAC decoding and inference. */
+  encodeAudioAsync(path: string, cropOffset?: number): Promise<Float32Array>;
+  /** Idempotent close: rejects new work; inflight operations finish before native release. */
   close(): void;
 }

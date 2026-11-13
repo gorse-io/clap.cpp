@@ -63,22 +63,21 @@ TEST(ABI, OutOfMemory) {
     EXPECT_TRUE(valid_error);
 }
 
-TEST(ABI, ModelLoadOutOfMemory) {
-    auto *model = reinterpret_cast<clap_model *>(1);
+TEST(ABI, CreateOutOfMemoryPreservesDiagnosticsForQueriesAndFrees) {
+    auto *model = reinterpret_cast<CLAP *>(1);
     clap_status status;
     bool valid_error;
     bool diagnostic_preserved;
-    int default_threads;
+    bool null_properties;
     {
         AllocationFailureScope failure_scope;
-        status = clap_model_load("unused.gguf", nullptr, &model);
+        status = clap_create("unused.gguf", nullptr, &model);
         const char *error = clap_last_error();
         valid_error = std::strstr(error, "out of memory") != nullptr;
         char saved[1024];
         std::snprintf(saved, sizeof(saved), "%s", error);
-        default_threads = clap_default_context_options().threads;
+        null_properties = clap_projection_dimension(nullptr) == 0 && clap_audio_sample_rate(nullptr) == 0;
         (void)clap_default_options();
-        clap_model_free(nullptr);
         clap_destroy(nullptr);
         clap_free(nullptr);
         clap_free_devices(nullptr, 0);
@@ -88,35 +87,43 @@ TEST(ABI, ModelLoadOutOfMemory) {
     EXPECT_EQ(CLAP_OUT_OF_MEMORY, status);
     EXPECT_EQ(nullptr, model);
     EXPECT_TRUE(valid_error);
-    EXPECT_EQ(0, default_threads);
+    EXPECT_TRUE(null_properties);
     EXPECT_TRUE(diagnostic_preserved);
 }
 
-TEST(ABI, SharedModelOutputResetAndValidationWithoutAllocations) {
-    clap_status model_status;
-    clap_status context_status;
-    bool valid_model_error;
-    bool valid_context_error;
-    auto *model = reinterpret_cast<clap_model *>(1);
-    auto *context = reinterpret_cast<CLAP *>(1);
+TEST(ABI, CreateOutputResetAndValidationWithoutAllocations) {
+    clap_status missing_path_status;
+    clap_status missing_output_status;
+    clap_status invalid_options_status;
+    bool valid_path_error;
+    bool valid_output_error;
+    bool valid_options_error;
+    auto *model = reinterpret_cast<CLAP *>(1);
+    auto *invalid = reinterpret_cast<CLAP *>(1);
+    auto options = clap_default_options();
+    options.threads = -1;
     {
         AllocationFailureScope failure_scope;
-        model_status = clap_model_load(nullptr, nullptr, &model);
-        valid_model_error = *clap_last_error() != '\0';
-        context_status = clap_context_create(nullptr, nullptr, &context);
-        valid_context_error = *clap_last_error() != '\0';
+        missing_path_status = clap_create(nullptr, nullptr, &model);
+        valid_path_error = *clap_last_error() != '\0';
+        missing_output_status = clap_create("unused.gguf", nullptr, nullptr);
+        valid_output_error = *clap_last_error() != '\0';
+        invalid_options_status = clap_create("unused.gguf", &options, &invalid);
+        valid_options_error = std::strstr(clap_last_error(), "threads must be nonnegative") != nullptr;
     }
-    EXPECT_EQ(CLAP_INVALID_ARGUMENT, model_status);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, missing_path_status);
     EXPECT_EQ(nullptr, model);
-    EXPECT_TRUE(valid_model_error);
-    EXPECT_EQ(CLAP_INVALID_ARGUMENT, context_status);
-    EXPECT_EQ(nullptr, context);
-    EXPECT_TRUE(valid_context_error);
+    EXPECT_TRUE(valid_path_error);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, missing_output_status);
+    EXPECT_TRUE(valid_output_error);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, invalid_options_status);
+    EXPECT_EQ(nullptr, invalid);
+    EXPECT_TRUE(valid_options_error);
 }
 
-TEST(ABI, SharedModelDiagnosticsAreThreadLocal) {
-    clap_model *model = nullptr;
-    ASSERT_EQ(CLAP_INVALID_ARGUMENT, clap_model_load(nullptr, nullptr, &model));
+TEST(ABI, CreateDiagnosticsAreThreadLocal) {
+    CLAP *model = nullptr;
+    ASSERT_EQ(CLAP_INVALID_ARGUMENT, clap_create(nullptr, nullptr, &model));
     char saved[1024];
     std::snprintf(saved, sizeof(saved), "%s", clap_last_error());
     clap_status worker_status = CLAP_OK;
@@ -124,10 +131,10 @@ TEST(ABI, SharedModelDiagnosticsAreThreadLocal) {
     bool worker_error_present = false;
     std::thread worker([&] {
         worker_initially_clear = *clap_last_error() == '\0';
-        clap_model *worker_model = nullptr;
+        CLAP *worker_model = nullptr;
         auto options = clap_default_options();
         options.threads = -1;
-        worker_status = clap_model_load("unused.gguf", &options, &worker_model);
+        worker_status = clap_create("unused.gguf", &options, &worker_model);
         worker_error_present = std::strstr(clap_last_error(), "threads must be nonnegative") != nullptr;
     });
     worker.join();
