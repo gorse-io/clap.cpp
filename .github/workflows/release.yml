@@ -266,7 +266,7 @@ jobs:
       run: |
         set -euo pipefail
         cmake --preset libraries -B build/python-cuda $CMAKE_ARGS \
-          -DGGML_CUDA=ON -DGGML_STATIC=ON \
+          -DGGML_CUDA=ON -DGGML_STATIC=OFF -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
           '-DCMAKE_CUDA_ARCHITECTURES=50-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90;120a-real;121a-real'
         cmake --build build/python-cuda --config Release --target clap --parallel "$CMAKE_BUILD_PARALLEL_LEVEL"
         cmake --install build/python-cuda --config Release --component runtime --prefix "$PWD/libraries/cuda"
@@ -297,7 +297,9 @@ jobs:
       run: |
         set -euo pipefail
         auditwheel repair --plat manylinux_2_35_x86_64 --only-plat \
-          --exclude libcuda.so.1 --wheel-dir wheelhouse raw/*.whl
+          --exclude libcuda.so.1 --exclude libcudart.so.12 \
+          --exclude libcublas.so.12 --exclude libcublasLt.so.12 \
+          --wheel-dir wheelhouse raw/*.whl
     - uses: actions/upload-artifact@v4
       with:
         name: python-cuda-${{ matrix.os }}-${{ matrix.python }}

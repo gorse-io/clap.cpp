@@ -25,7 +25,16 @@ classifiers = [
 ]
 license = "MIT"
 license-files = ["LICENSE"]
+{% if backend == 'cuda' %}
+# Match the CUDA 12.9.2 redistributable manifest used by the Python build.
+dependencies = [
+    'nvidia-cuda-runtime-cu12==12.9.79; sys_platform == "linux"',
+    'nvidia-cublas-cu12==12.9.2.10; sys_platform == "linux"',
+    'nvidia-cuda-nvrtc-cu12==12.9.86; sys_platform == "linux"',
+]
+{% else %}
 dependencies = []
+{% endif %}
 {% if backend == 'cpu' %}
 [project.optional-dependencies]
 test = ["pytest>=7", "mypy>=1.8", "typing_extensions>=4.2", "huggingface-hub>=0.20"]
