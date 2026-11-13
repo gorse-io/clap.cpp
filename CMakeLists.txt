@@ -84,14 +84,15 @@ if(BUILD_TESTING)
     set(INSTALL_GTEST OFF CACHE BOOL "Install GoogleTest" FORCE)
     set(gtest_force_shared_crt ON CACHE BOOL "Use the shared MSVC runtime" FORCE)
     add_subdirectory(thirdparty/googletest EXCLUDE_FROM_ALL)
-    if(BUILD_SHARED_LIBS)
-        # GoogleTest only sets this for installed consumers, not build-tree users.
-        target_compile_definitions(gtest INTERFACE GTEST_LINKED_AS_SHARED_LIBRARY=1)
-    endif()
-
     add_executable(test-model-loader tests/test-model-loader.cpp)
     target_include_directories(test-model-loader PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test-model-loader PRIVATE clap GTest::gtest_main nlohmann_json::nlohmann_json)
+    if(WIN32 AND BUILD_SHARED_LIBS)
+        add_custom_command(TARGET test-model-loader POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:gtest>" "$<TARGET_FILE:gtest_main>" "$<TARGET_FILE_DIR:test-model-loader>"
+            VERBATIM)
+    endif()
     add_test(NAME test-model-loader COMMAND test-model-loader)
 
     if(NOT BUILD_SHARED_LIBS)
@@ -123,6 +124,13 @@ if(BUILD_TESTING)
     add_custom_target(clap-audio-fixtures ALL DEPENDS ${CLAP_AUDIO_FIXTURES})
     add_executable(test-audio tests/test-audio.cpp)
     target_link_libraries(test-audio PRIVATE clap GTest::gtest)
+    if(BUILD_SHARED_LIBS)
+        # Build-tree consumers need dllimport, but GoogleTest's own shared
+        # libraries must retain their producer-side dllexport definitions.
+        foreach(target IN ITEMS test-model-loader test-audio)
+            target_compile_definitions(${target} PRIVATE GTEST_LINKED_AS_SHARED_LIBRARY=1)
+        endforeach()
+    endif()
     if(WIN32 AND BUILD_SHARED_LIBS)
         add_custom_command(TARGET test-audio POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
