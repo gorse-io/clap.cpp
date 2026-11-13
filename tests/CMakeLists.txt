@@ -16,15 +16,26 @@ target_compile_definitions(test-clap PRIVATE
     CLAP_TEST_AUDIO="${PROJECT_SOURCE_DIR}/assets/dog.wav")
 target_link_libraries(test-clap PRIVATE clap GTest::gtest_main httplib::httplib)
 set_target_properties(test-clap PROPERTIES CXX_EXTENSIONS OFF)
-if(BUILD_SHARED_LIBS)
-    target_compile_definitions(test-clap PRIVATE GTEST_LINKED_AS_SHARED_LIBRARY=1)
-endif()
-if(WIN32 AND BUILD_SHARED_LIBS)
-    add_custom_command(TARGET test-clap POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "$<TARGET_FILE:gtest>" "$<TARGET_FILE:gtest_main>" "$<TARGET_FILE_DIR:test-clap>"
-        VERBATIM)
-endif()
+add_executable(test-model-contract test-model-contract.cpp)
+target_compile_features(test-model-contract PRIVATE cxx_std_20)
+target_include_directories(test-model-contract PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(test-model-contract PRIVATE clap GTest::gtest_main nlohmann_json::nlohmann_json)
+set_target_properties(test-model-contract PROPERTIES CXX_EXTENSIONS OFF)
+
+foreach(test_target IN ITEMS test-clap test-model-contract)
+    if(BUILD_SHARED_LIBS)
+        target_compile_definitions(${test_target} PRIVATE GTEST_LINKED_AS_SHARED_LIBRARY=1)
+    endif()
+    if(WIN32 AND BUILD_SHARED_LIBS)
+        add_custom_command(TARGET ${test_target} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:gtest>" "$<TARGET_FILE:gtest_main>" "$<TARGET_FILE_DIR:${test_target}>"
+            VERBATIM)
+    endif()
+endforeach()
+
+add_test(NAME test-model-contract COMMAND test-model-contract)
+set_tests_properties(test-model-contract PROPERTIES TIMEOUT 120)
 
 add_test(NAME test-clap COMMAND test-clap)
 set_tests_properties(test-clap PROPERTIES TIMEOUT 1800)

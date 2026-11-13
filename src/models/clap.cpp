@@ -75,6 +75,10 @@ void ClapModel::load_arch_hparams() {
 }
 
 void ClapModel::load_arch_tensors() {
+    // Training-only scales are present in published checkpoints but are not
+    // used by the embedding graphs. If retained, they must still be scalars.
+    loader.create_tensor("logit_scale_a", {1}, TensorRequirement::Optional);
+    loader.create_tensor("logit_scale_t", {1}, TensorRequirement::Optional);
     const int spec = a.at("spec_size"), bins = a.at("num_mel_bins"), window = a.at("window_size");
     int dim = a.at("patch_embeds_hidden_size");
     patch = create_layer(loader, "audio.patch_embed.proj", {4, 4, 1, dim}, {dim});

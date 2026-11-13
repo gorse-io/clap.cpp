@@ -25,7 +25,6 @@ namespace clap::detail {
 TensorLoadPolicy Clamp3Model::loading_policy(const ModelLoader &loader) {
     TensorLoadPolicy policy;
     if (loader.has_metadata_prefix("clamp3.audio_frontend")) {
-        policy.unrecognized_tensor_error = "CLAP: unrecognized model tensor: ";
         policy.validate_tensor_type = [](const ggml_tensor *w) {
             if (std::string(w->name).rfind("mert.", 0) == 0 && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16 &&
                 w->type != GGML_TYPE_BF16)

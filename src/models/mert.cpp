@@ -105,7 +105,8 @@ void MertModel::load_arch_tensors() {
          config.at("conv_dim"),
          config.at("conv_kernel"),
          config.at("conv_stride"),
-         config.at("conv_bias")};
+         config.at("conv_bias"),
+         config.value("do_stable_layer_norm", false)};
     int input = 1;
     const auto dims = config.at("conv_dim"), kernels = config.at("conv_kernel");
     for (size_t i = 0; i < dims.size(); ++i) {
@@ -194,7 +195,7 @@ HostMatrix MertModel::forward(Context &context, const std::vector<float> &pcm, s
             const int kernel = h.position_kernel;
             auto *position = g.conv1d(hidden, this->position, kernel, 1, kernel / 2, h.position_groups);
             position = ggml_view_2d(ctx, position, hidden->ne[0], hidden->ne[1], position->nb[1], 0);
-            const bool stable = config.value("do_stable_layer_norm", false);
+            const bool stable = h.stable_layer_norm;
             hidden = ggml_add(ctx, hidden, ggml_gelu_erf(ctx, position));
             if (!stable)
                 hidden = g.norm(hidden, encoder_norm, epsilon);
