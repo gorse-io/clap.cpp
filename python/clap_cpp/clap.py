@@ -43,6 +43,34 @@ _directory = Path(__file__).resolve().parent
 _filename = "clap.dll" if sys.platform == "win32" else (
     "libclap.dylib" if sys.platform == "darwin" else "libclap.so")
 _dll_directory = None
+_cuda_dependencies = []
+if sys.platform.startswith("linux") and __package__ == "clap_cpp_cuda":
+    # NVIDIA's wheels can use namespace packages: __file__ need not exist.
+    # Search only these explicit dependencies, never system library paths.
+    from importlib import import_module
+
+    for _package, _soname in (
+        ("nvidia.cuda_nvrtc", "libnvrtc.so.12"),
+        ("nvidia.cublas", "libcublasLt.so.12"),
+        ("nvidia.cublas", "libcublas.so.12"),
+        ("nvidia.cuda_runtime", "libcudart.so.12"),
+    ):
+        try:
+            _dependency = import_module(_package)
+            _dependency_path = next((Path(root) / "lib" / _soname
+                                     for root in _dependency.__path__
+                                     if (Path(root) / "lib" / _soname).is_file()), None)
+            if _dependency_path is None:
+                raise ImportError(f"{_soname} is missing from {_package}")
+            # Resolve companion SONAMEs before libclap; retain every handle.
+            _cuda_dependencies.append(C.CDLL(str(_dependency_path.resolve()), mode=C.RTLD_GLOBAL))
+        except (ImportError, OSError) as exc:
+            raise ImportError(
+                f"Cannot load CUDA dependency {_soname} from {_package}; "
+                "install nvidia-cuda-nvrtc-cu12==12.9.86, "
+                "nvidia-cuda-runtime-cu12==12.9.79 and "
+                f"nvidia-cublas-cu12==12.9.2.10: {exc}"
+            ) from exc
 try:
     if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
         _dll_directory = os.add_dll_directory(str(_directory))
