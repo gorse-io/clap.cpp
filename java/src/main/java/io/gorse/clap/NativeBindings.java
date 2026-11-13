@@ -5,7 +5,6 @@ import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import com.sun.jna.Structure;
-import com.sun.jna.ptr.ByReference;
 import com.sun.jna.ptr.PointerByReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,12 +34,11 @@ final class NativeBindings {
         int clap_create(String path, RuntimeOptions options, PointerByReference out);
         void clap_destroy(Pointer model);
         Pointer clap_last_error();
-        void clap_free(Pointer allocation);
-        int clap_encode_text(Pointer model, String text, PointerByReference values, SizeTReference count);
+        int clap_encode_text(Pointer model, String text, float[] values, SizeT capacity);
         int clap_encode_audio(Pointer model, float[] pcm, SizeT samples, int sampleRate, SizeT cropOffset,
-                              PointerByReference values, SizeTReference count);
+                              float[] values, SizeT capacity);
         int clap_encode_audio_file(Pointer model, String path, SizeT cropOffset,
-                                   PointerByReference values, SizeTReference count);
+                                   float[] values, SizeT capacity);
         int clap_audio_sample_rate(Pointer model);
         int clap_projection_dimension(Pointer model);
     }
@@ -68,13 +66,4 @@ final class NativeBindings {
         return new SizeT(value);
     }
 
-    public static class SizeTReference extends ByReference {
-        public SizeTReference() {
-            super(Native.SIZE_T_SIZE);
-            getPointer().clear(Native.SIZE_T_SIZE);
-        }
-        public long getValue() {
-            return Native.SIZE_T_SIZE == 4 ? Integer.toUnsignedLong(getPointer().getInt(0)) : getPointer().getLong(0);
-        }
-    }
 }

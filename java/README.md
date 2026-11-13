@@ -10,8 +10,6 @@ separately. JNA is a normal transitive Maven dependency (not shaded into the JAR
 - JDK 11 or newer and Maven 3.6.3+.
 - For the native library: CMake 3.20+, a C++20 compiler, and the repository's
   initialized submodules. See the root build documentation for platform details.
-- For native integration tests only: Python 3.8+ (standard library only) and a
-  complete repository checkout containing `python/tests/tiny_models.py`.
 
 From the repository root, build the native shared library independently:
 
@@ -34,8 +32,8 @@ available to the OS loader. For multi-configuration generators select
 Build/install the Java artifact from `java/`:
 
 ```sh
-mvn verify       # unit tests; native integration tests explicitly skipped
-mvn install      # install io.gorse:clap:0.1.0-SNAPSHOT in your local Maven repository
+mvn -DskipTests package # build without downloading a test model
+mvn -DskipTests install # install io.gorse:clap:0.1.0-SNAPSHOT locally
 ```
 
 Both the ordinary and `-sources.jar` artifacts are produced at package time.
@@ -120,8 +118,8 @@ diagnostic. Java input validation throws `IllegalArgumentException` or
 The Java API intentionally exposes only text/audio embeddings and the model's
 audio rate/projection dimension, not low-level tokens or audio frames. Output
 normalization follows each model's native semantics; not all architectures
-produce unit vectors. Each returned array is a fresh Java-owned copy that remains
-valid after closing the model; native output buffers are freed in `finally`.
+produce unit vectors. Each returned array is fresh Java-owned storage passed to the C API and remains
+valid after closing the model; no native output-buffer allocation is needed.
 
 ## Lifetime and threading
 
@@ -135,96 +133,22 @@ lifetime; this wrapper does not unload it while models may be alive.
 
 ## Tests
 
-From `java/`, after the separate native build above:
+After building the shared runtime, run from the repository root:
 
 ```sh
-mvn -Dclap.library.path="$(pwd)/../build/java-native/runtime/libclap.so" verify
-python3 tests/verify_package.py \
-  --library "$(pwd)/../build/java-native/runtime/libclap.so" \
-  --model "target/fixtures/tiny-clap.gguf"
-```
-
-For CI from the repository root, explicitly generate the reusable fixtures first
-(the JUnit suite also generates them automatically when absent):
-
-```sh
-python3 java/tests/generate_fixtures.py
-mvn -B -f java/pom.xml -Dclap.library.path=/absolute/path/to/shared-library verify
-python3 java/tests/verify_package.py --library /absolute/path/to/shared-library \
-  --model java/target/fixtures/tiny-clap.gguf
-```
-
-Setting `clap.library.path` enables the native tests; no additional opt-in property
-is required. Without it the native tests are explicitly skipped. A configured
-but missing/broken native library is a hard failure. Fixtures default to
-`java/target/fixtures` regardless of where the generator is launched. An optional
-positional argument selects a different generator output directory; the JUnit
-suite itself always reads `java/target/fixtures`.
-
-The package check compiles independent consumers against the binary JAR and the
-recompiled source JAR using `javac --release 11`, then runs both on the real
-library when `--library`/`--model` are supplied. It does not access the network;
-JNA must already be in the local Maven repository (or passed with `--jna`).
-Omit those two native arguments for a compile-only offline packaging check.
-
-Set `-Dclap.test.python=/absolute/path/to/python3` if necessary. Opting in makes
-missing/broken native libraries and fixture generation failures hard failures,
-not skips. Tests generate tiny valid CLAP/MERT GGUF and WAV files under
-`java/target/` using the shared stdlib Python fixture generator (no downloads,
-Torch, NumPy, or committed model/audio blobs). They cover an independent scalar
-text oracle, Unicode strings/paths, real PCM/file equivalence, resampling,
-validation and native diagnostics, output ownership, idempotent close, and
-concurrent inference/close. These tiny fixtures test the ABI and inference
-contract; they are not a replacement for published-checkpoint accuracy tests.
-
-### Opt-in published checkpoint smoke test
-
-The `published-model` Maven profile adds **test-scoped**
-`com.aresstack:huggingface4j:0.1.1` (available from Maven Central), a separate test
-source directory, and a Failsafe integration test. It is not a runtime dependency
-of the bindings. Normal `mvn verify` does not compile/run this test, resolve this
-dependency, or download models, even after a prior profile-enabled build.
-
-From the repository root, after building the shared runtime above:
-
-```sh
-mvn -B -f java/pom.xml -Ppublished-model \
+mvn -B -f java/pom.xml \
   -Dclap.library.path="$PWD/build/java-native/runtime/libclap.so" verify
 ```
 
-This profile requires an existing absolute native-library filename; missing or
-broken runtime, network/download errors, checksum mismatches, and inference
-failures are hard failures, not skips. Run `verify`, not just `test`: the
-published checkpoint check runs in the `integration-test`/`verify` phases.
-Results appear in `java/target/failsafe-reports/TEST-io.gorse.clap.PublishedModelIT.xml`.
+`TestClap` downloads `gorse-io/larger_clap_general-GGUF` /
+`larger_clap_general-q4_k_m.gguf` through the test-scoped huggingface4j client.
+It encodes `assets/dog.wav` and the same dog/vacuum-cleaner prompts used by the
+other SDKs, then checks softmax scores above 0.99 and below 0.01 using the model's
+learned logit scale. Downloads are cached in `java/target/models`; override with
+`-Dclap.test.modelCache=/absolute/cache/path`.
 
-The test anonymously downloads public Apache-2.0 CLAP weights **through
-huggingface4j**, pinned to this immutable Hugging Face metadata:
-
-| Field | Pinned value |
-| --- | --- |
-| Repository | `gorse-io/larger_clap_music-GGUF` |
-| Revision | `25401a7cae09f916a395b9f686ee1fa43628d815` |
-| File | `larger_clap_music-q4_k_m.gguf` |
-| Bytes | `128926752` |
-| SHA-256 | `5f5cb986d8729930cbd681aa4d3dffbe4b1634d5e62a2e9823f8fa8f9e9ea247` |
-
-The revision and LFS size/SHA-256 were checked against
-`https://huggingface.co/api/models/gorse-io/larger_clap_music-GGUF/revision/25401a7cae09f916a395b9f686ee1fa43628d815?blobs=true`.
-The repository is one of the published GGUF models in the root README's Audio
-Embedding GGUF collection. Allow about 129 MB of download space plus native model
-and inference memory. Downloads are cached under
-`java/target/published-models/<revision>/`; set
-`-Dclap.test.modelCache=/absolute/cache/path` to retain them across `mvn clean`.
-Both new and already-cached files are checked for exact size and SHA-256 before
-loading. A corrupted cache fails clearly; remove that file to download again.
-Interrupted `.part` downloads can resume. No token is needed.
-
-The test performs real CPU/F32 inference with the downloaded checkpoint: two
-text prompts, repeatability of one prompt, and a deterministic non-silent
-one-second 440 Hz PCM tone. It asserts the expected 48 kHz/512-dimensional model
-metadata, finite unit-norm text/audio embeddings, finite cosine similarities in
-`[-1, 1]`, audio self-similarity, and nonidentical embeddings for different text
-prompts. It prints measured text/text and text/audio cosines. This is a published
-weights/inference sanity check, **not a semantic retrieval accuracy benchmark**;
-it does not claim a tone matches a music caption or impose a semantic ranking.
+The test requires network access on the first run and a working native runtime;
+download, loading, and inference errors fail rather than skip. Use the platform's
+`clap.dll` or `libclap.dylib` filename on Windows or macOS. Pass `-DskipTests` for
+a build without model downloads. No synthetic fixtures or separate package tests
+are used.

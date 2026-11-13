@@ -71,7 +71,7 @@ public final class CLAP implements AutoCloseable {
     public synchronized float[] encodeText(String text) {
         Pointer handle = handle();
         utf8(text, "text", true);
-        return embedding((values, count) -> state.api.clap_encode_text(handle, text, values, count), "clap_encode_text");
+        return embedding((values, capacity) -> state.api.clap_encode_text(handle, text, values, capacity), "clap_encode_text");
     }
 
     /** Encode mono PCM already sampled at audioSampleRate(). */
@@ -98,8 +98,8 @@ public final class CLAP implements AutoCloseable {
         for (float sample : pcm) {
             if (!Float.isFinite(sample)) throw new IllegalArgumentException("pcm must contain only finite samples");
         }
-        return embedding((values, count) -> state.api.clap_encode_audio(handle, pcm,
-                NativeBindings.checkedSize(pcm.length), sampleRate, offset, values, count), "clap_encode_audio");
+        return embedding((values, capacity) -> state.api.clap_encode_audio(handle, pcm,
+                NativeBindings.checkedSize(pcm.length), sampleRate, offset, values, capacity), "clap_encode_audio");
     }
 
     /** Decode and encode a WAV/MP3/FLAC file with zero crop offset. */
@@ -111,7 +111,7 @@ public final class CLAP implements AutoCloseable {
         NativeBindings.SizeT offset = NativeBindings.checkedSize(cropOffset);
         // Path.toString() is user-controlled and can reentrantly close this model.
         Pointer handle = handle();
-        return embedding((values, count) -> state.api.clap_encode_audio_file(handle, filename, offset, values, count),
+        return embedding((values, capacity) -> state.api.clap_encode_audio_file(handle, filename, offset, values, capacity),
                 "clap_encode_audio_file");
     }
 
@@ -139,22 +139,18 @@ public final class CLAP implements AutoCloseable {
     }
 
     @FunctionalInterface private interface Encoder {
-        int call(PointerByReference values, NativeBindings.SizeTReference count);
+        int call(float[] values, NativeBindings.SizeT capacity);
     }
 
     private float[] embedding(Encoder encoder, String operation) {
-        PointerByReference values = new PointerByReference();
-        NativeBindings.SizeTReference count = new NativeBindings.SizeTReference();
         try {
-            check(state.api, encoder.call(values, count), operation);
-            long length = count.getValue();
-            if (length <= 0 || length > Integer.MAX_VALUE || values.getValue() == null) {
-                throw new IllegalStateException(operation + " returned an invalid embedding length");
-            }
-            return values.getValue().getFloatArray(0, (int) length);
+            int dimension = projectionDimension();
+            if (dimension <= 0) throw new IllegalStateException("model has no projection dimension");
+            float[] values = new float[dimension];
+            check(state.api, encoder.call(values, NativeBindings.checkedSize(dimension)), operation);
+            return values;
         } finally {
-            try { state.api.clap_free(values.getValue()); }
-            finally { Reference.reachabilityFence(this); }
+            Reference.reachabilityFence(this);
         }
     }
 
