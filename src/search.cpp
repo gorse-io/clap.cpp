@@ -39,7 +39,6 @@ void check(clap_status status) {
 using Embedding = std::vector<double>;
 
 Embedding normalize(float *data, std::size_t count) {
-    const std::unique_ptr<float, decltype(&clap_free)> owned(data, clap_free);
     if (!data || !count)
         throw std::runtime_error("Search received an empty embedding");
     double norm_squared = 0;
@@ -58,13 +57,12 @@ Embedding normalize(float *data, std::size_t count) {
 }
 
 Embedding encode_query(CLAP *model, const SearchOptions &options) {
-    float *values = nullptr;
-    std::size_t count = 0;
+    std::vector<float> values(static_cast<std::size_t>(clap_projection_dimension(model)));
     if (options.text_requested)
-        check(clap_encode_text(model, c_string(options.text), &values, &count));
+        check(clap_encode_text(model, c_string(options.text), values.data(), values.size()));
     else
-        check(clap_encode_audio_file(model, c_string(options.audio_path), 0, &values, &count));
-    return normalize(values, count);
+        check(clap_encode_audio_file(model, c_string(options.audio_path), 0, values.data(), values.size()));
+    return normalize(values.data(), values.size());
 }
 
 bool audio_file(const fs::path &path) {
@@ -114,9 +112,8 @@ int cmd_search(const SearchOptions &options) {
             if (!entry.is_regular_file() || !audio_file(entry.path()))
                 continue;
             const auto path = utf8_path(entry.path());
-            float *values = nullptr;
-            std::size_t count = 0;
-            const auto status = clap_encode_audio_file(model.get(), c_string(path), 0, &values, &count);
+            std::vector<float> values(static_cast<std::size_t>(clap_projection_dimension(model.get())));
+            const auto status = clap_encode_audio_file(model.get(), c_string(path), 0, values.data(), values.size());
             if (status != CLAP_OK) {
                 if (status != CLAP_ERROR)
                     check(status);
@@ -132,7 +129,7 @@ int cmd_search(const SearchOptions &options) {
                 }
                 throw std::runtime_error("Failed to encode " + path + ": " + error);
             }
-            const auto candidate = normalize(values, count);
+            const auto candidate = normalize(values.data(), values.size());
             if (candidate.size() != query.size())
                 throw std::runtime_error("Search query and audio embedding dimensions do not match");
             double score = 0;

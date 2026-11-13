@@ -3,7 +3,7 @@
 //! Build from a recursive Git checkout; see `rust/README.md`. Embeddings are
 //! Rust-owned vectors. A CLAP instance is deliberately neither Send nor Sync.
 use std::{
-    ffi::{c_char, c_int, c_void, CStr, CString},
+    ffi::{c_char, c_int, CStr, CString},
     marker::PhantomData,
     path::Path,
     ptr::NonNull,
@@ -15,7 +15,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 // The small public C11 ABI from include/clap.h. Keep native implementation
 // details out of this crate; no generated bindings or C++ adapter are needed.
 mod ffi {
-    use super::{c_char, c_int, c_void};
+    use super::{c_char, c_int};
 
     #[repr(C)]
     pub struct Model {
@@ -46,50 +46,17 @@ mod ffi {
         pub fn clap_encode_text(
             model: *mut Model,
             text: *const c_char,
-            values: *mut *mut f32,
-            count: *mut usize,
+            values: *mut f32,
+            capacity: usize,
         ) -> Status;
         pub fn clap_encode_audio_file(
             model: *mut Model,
             path: *const c_char,
             crop_offset: usize,
-            values: *mut *mut f32,
-            count: *mut usize,
+            values: *mut f32,
+            capacity: usize,
         ) -> Status;
-        pub fn clap_free(allocation: *mut c_void);
-    }
-}
-
-#[derive(Default)]
-struct NativeBuffer {
-    values: *mut f32,
-    count: usize,
-}
-
-impl Drop for NativeBuffer {
-    fn drop(&mut self) {
-        // SAFETY: The pointer is null or an allocation returned by clap_*.
-        // clap_free accepts null and is the matching allocator's release API.
-        unsafe { ffi::clap_free(self.values.cast()) }
-    }
-}
-
-impl NativeBuffer {
-    fn into_vec(self) -> Result<Vec<f32>> {
-        // Even a zero-length Rust slice requires a nonnull, aligned pointer.
-        if self.count == 0 {
-            return Ok(Vec::new());
-        }
-        if self.values.is_null() {
-            return Err("native embedding pointer is null".into());
-        }
-        if self.count > isize::MAX as usize / std::mem::size_of::<f32>() {
-            return Err("native embedding length exceeds Rust slice limits".into());
-        }
-        // SAFETY: Success supplies count initialized, aligned floats in one
-        // native allocation. The guard lives through to_vec (including unwind)
-        // and releases it only after Rust has copied its independent vector.
-        Ok(unsafe { std::slice::from_raw_parts(self.values, self.count) }.to_vec())
+        pub fn clap_projection_dimension(model: *const Model) -> c_int;
     }
 }
 
@@ -166,19 +133,23 @@ impl CLAP {
     /// Encode one UTF-8 string using the model's native context policy.
     pub fn encode_text(&mut self, text: &str) -> Result<Vec<f32>> {
         let s = CString::new(text)?;
-        let mut output = NativeBuffer::default();
+        let dimension = unsafe { ffi::clap_projection_dimension(self.ptr.as_ptr()) };
+        if dimension <= 0 {
+            return Err("model projection dimension must be positive".into());
+        }
+        let mut output = vec![0.0; dimension as usize];
         // SAFETY: The model is live and exclusively borrowed, the string is
-        // valid through the call, and the guard owns the fresh output slots.
+        // valid through the call, and output has dimension initialized floats.
         let status = unsafe {
             ffi::clap_encode_text(
                 self.ptr.as_ptr(),
                 s.as_ptr(),
-                &mut output.values,
-                &mut output.count,
+                output.as_mut_ptr(),
+                output.len(),
             )
         };
         check_status(status)?;
-        output.into_vec()
+        Ok(output)
     }
     /// Encode a WAV, MP3 or FLAC file. Channels are averaged to mono and the
     /// source sample rate is converted internally to the model's input rate.
@@ -186,18 +157,22 @@ impl CLAP {
     /// do not support cropping reject nonzero offsets.
     pub fn encode_audio(&mut self, p: impl AsRef<Path>, crop_offset: usize) -> Result<Vec<f32>> {
         let s = path(p.as_ref())?;
-        let mut output = NativeBuffer::default();
+        let dimension = unsafe { ffi::clap_projection_dimension(self.ptr.as_ptr()) };
+        if dimension <= 0 {
+            return Err("model projection dimension must be positive".into());
+        }
+        let mut output = vec![0.0; dimension as usize];
         // SAFETY: As for encode_text; crop_offset uses C size_t (Rust usize).
         let status = unsafe {
             ffi::clap_encode_audio_file(
                 self.ptr.as_ptr(),
                 s.as_ptr(),
                 crop_offset,
-                &mut output.values,
-                &mut output.count,
+                output.as_mut_ptr(),
+                output.len(),
             )
         };
         check_status(status)?;
-        output.into_vec()
+        Ok(output)
     }
 }

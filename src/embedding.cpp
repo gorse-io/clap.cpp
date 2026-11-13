@@ -30,13 +30,6 @@ void check(clap_status status) {
     throw std::runtime_error(message);
 }
 
-template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
-    const std::unique_ptr<T, decltype(&clap_free)> owned(data, clap_free);
-    if (!count)
-        return {};
-    return {data, data + count};
-}
-
 } // namespace
 
 int cmd_embedding(const EmbeddingOptions &options) {
@@ -70,17 +63,15 @@ int cmd_embedding(const EmbeddingOptions &options) {
                     << json{{"frames", sequence.frames}, {"dimension", sequence.dimension}, {"values", values}}.dump()
                     << '\n';
             } else {
-                float *values = nullptr;
-                std::size_t count = 0;
+                std::vector<float> values(static_cast<std::size_t>(clap_projection_dimension(model.get())));
                 check(clap_encode_audio(model.get(), decoded.samples.data(), decoded.samples.size(),
-                                        decoded.sample_rate, options.crop_offset, &values, &count));
-                std::cout << json(take_buffer(values, count)).dump() << '\n';
+                                        decoded.sample_rate, options.crop_offset, values.data(), values.size()));
+                std::cout << json(values).dump() << '\n';
             }
         } else {
-            float *values = nullptr;
-            std::size_t count = 0;
-            check(clap_encode_text(model.get(), c_string(options.text), &values, &count));
-            std::cout << json(take_buffer(values, count)).dump() << '\n';
+            std::vector<float> values(static_cast<std::size_t>(clap_projection_dimension(model.get())));
+            check(clap_encode_text(model.get(), c_string(options.text), values.data(), values.size()));
+            std::cout << json(values).dump() << '\n';
         }
         std::cout.flush();
         if (!std::cout)

@@ -55,9 +55,10 @@ typedef struct clap_audio_frames {
  * Options and their strings are also borrowed for the call only.
  * Calls on the same handle must be serialized, including destruction. Distinct
  * handles may be used concurrently. No C++ exception crosses this API.
- * Fallible calls clear their output pointers/counts before validating inputs;
- * on failure all provided outputs remain zero/NULL. Pass fresh output slots:
+ * Allocating calls clear their output pointers/counts before validating inputs;
+ * on failure those outputs remain zero/NULL. Pass fresh output slots:
  * overwriting a previous successful output does NOT free its allocation.
+ * Fixed-dimension embedding calls instead write caller-owned storage, as below.
  * Each successful allocated output belongs to the caller, independently of the
  * model and context lifetimes. Use ONLY its matching free below (never the
  * C runtime free).
@@ -84,21 +85,24 @@ CLAP_API void clap_destroy(CLAP *model);
 CLAP_API clap_status clap_available_devices(clap_device **out, size_t *count);
 /* Frees the list and its strings; count must be the original returned count. */
 CLAP_API void clap_free_devices(clap_device *devices, size_t count);
-CLAP_API void clap_free(void *allocation);                       /* Tokens and embedding buffers. */
 CLAP_API void clap_free_audio_frames(clap_audio_frames *frames); /* Also zeroes the struct. */
 
-CLAP_API clap_status clap_tokenize(const CLAP *model, const char *utf8, size_t max_length, int **tokens, size_t *count);
-CLAP_API clap_status clap_encode_text(CLAP *model, const char *utf8, float **values, size_t *count);
-CLAP_API clap_status clap_encode_tokens(CLAP *model, const int *tokens, size_t token_count, float **values,
-                                        size_t *count);
+/* Fixed-dimension embeddings: values is caller-owned, capacity counts float
+ * elements (not bytes) and must be at least clap_projection_dimension(model).
+ * Success writes exactly that many elements, leaving trailing capacity unchanged.
+ * NULL values or insufficient capacity return CLAP_INVALID_ARGUMENT without
+ * modifying storage. Other failures leave buffer contents unspecified.
+ * The caller retains ownership and is responsible for releasing its storage.
+ * Applies to all three encoders. */
+CLAP_API clap_status clap_encode_text(CLAP *model, const char *utf8, float *values, size_t capacity);
 /* Mono PCM, positive sample rate; automatically resampled. Nonempty finite
  * samples required. crop_offset is measured at the model sample rate: CLAP uses
  * a crop in long audio; other models may reject nonzero offsets. */
 CLAP_API clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
-                                       size_t crop_offset, float **values, size_t *count);
+                                       size_t crop_offset, float *values, size_t capacity);
 /* Decode WAV/MP3/FLAC by contents, then encode with the same crop semantics. */
-CLAP_API clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop_offset, float **values,
-                                            size_t *count);
+CLAP_API clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop_offset, float *values,
+                                            size_t capacity);
 CLAP_API clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
                                            clap_audio_frames *out);
 /* Read-only properties; return 0 for a NULL model or an unavailable property.

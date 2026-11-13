@@ -25,6 +25,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 void download_model(const std::filesystem::path &path) {
@@ -57,24 +58,14 @@ void download_model(const std::filesystem::path &path) {
     std::filesystem::rename(partial, path);
 }
 
-struct Embedding {
-    float *values = nullptr;
-    size_t count = 0;
-
-    Embedding() = default;
-    Embedding(const Embedding &) = delete;
-    Embedding &operator=(const Embedding &) = delete;
-    ~Embedding() { clap_free(values); }
-};
-
-float cosine(const Embedding &a, const Embedding &b) {
+float cosine(const std::vector<float> &a, const std::vector<float> &b) {
     float dot = 0.0f;
     float norm_a = 0.0f;
     float norm_b = 0.0f;
-    for (size_t i = 0; i < a.count; ++i) {
-        dot += a.values[i] * b.values[i];
-        norm_a += a.values[i] * a.values[i];
-        norm_b += b.values[i] * b.values[i];
+    for (size_t i = 0; i < a.size(); ++i) {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
     }
     return dot / (std::sqrt(norm_a) * std::sqrt(norm_b));
 }
@@ -91,25 +82,24 @@ TEST(CLAP, AudioTextSimilarity) {
     ASSERT_EQ(status, CLAP_OK) << clap_last_error();
     ASSERT_NE(clap, nullptr);
 
-    Embedding audio_embedding;
-    Embedding text_embedding_1;
-    Embedding text_embedding_2;
-    ASSERT_EQ(clap_encode_audio_file(clap.get(), CLAP_TEST_AUDIO, 0, &audio_embedding.values, &audio_embedding.count),
+    const auto dimension = static_cast<size_t>(clap_projection_dimension(clap.get()));
+    std::vector<float> audio_embedding(dimension);
+    std::vector<float> text_embedding_1(dimension);
+    std::vector<float> text_embedding_2(dimension);
+    ASSERT_EQ(clap_encode_audio_file(clap.get(), CLAP_TEST_AUDIO, 0, audio_embedding.data(), audio_embedding.size()),
               CLAP_OK)
         << clap_last_error();
-    ASSERT_EQ(clap_encode_text(clap.get(), "Sound of a dog", &text_embedding_1.values, &text_embedding_1.count),
+    ASSERT_EQ(clap_encode_text(clap.get(), "Sound of a dog", text_embedding_1.data(), text_embedding_1.size()), CLAP_OK)
+        << clap_last_error();
+    ASSERT_EQ(clap_encode_text(clap.get(), "Sound of vaccum cleaner", text_embedding_2.data(), text_embedding_2.size()),
               CLAP_OK)
         << clap_last_error();
-    ASSERT_EQ(
-        clap_encode_text(clap.get(), "Sound of vaccum cleaner", &text_embedding_2.values, &text_embedding_2.count),
-        CLAP_OK)
-        << clap_last_error();
-    ASSERT_GT(audio_embedding.count, 0u);
-    ASSERT_EQ(audio_embedding.count, text_embedding_1.count);
-    ASSERT_EQ(audio_embedding.count, text_embedding_2.count);
-    ASSERT_NE(audio_embedding.values, nullptr);
-    ASSERT_NE(text_embedding_1.values, nullptr);
-    ASSERT_NE(text_embedding_2.values, nullptr);
+    ASSERT_GT(audio_embedding.size(), 0u);
+    ASSERT_EQ(audio_embedding.size(), text_embedding_1.size());
+    ASSERT_EQ(audio_embedding.size(), text_embedding_2.size());
+    ASSERT_FALSE(audio_embedding.empty());
+    ASSERT_FALSE(text_embedding_1.empty());
+    ASSERT_FALSE(text_embedding_2.empty());
 
     const float distance_1 = cosine(audio_embedding, text_embedding_1);
     const float distance_2 = cosine(audio_embedding, text_embedding_2);
