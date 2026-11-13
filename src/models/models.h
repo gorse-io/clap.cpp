@@ -14,20 +14,22 @@ namespace clap::detail {
 class ClapModel final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
-    ClapModel(const ModelLoader &loader, int threads);
-    std::vector<float> text(const std::vector<int> &ids) const override;
-    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    void initialize_context(Context &) const override;
+    ClapModel(const ModelLoader &loader);
+    std::vector<float> text(Context &, const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
     int sample_rate() const override;
     bool is_waveform_encoder() const override;
-    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+    std::vector<float> waveform_embedding(Context &, const std::vector<float> &pcm,
+                                          size_t crop_offset = 0) const override;
     bool has_waveform_embeddings() const override { return true; }
 
   private:
     friend struct FeatureTestAccess;
-    std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
+    std::vector<float> encode_features(Context &, const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
     void load_arch_tensors() override;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights, int heads, int tokens,
@@ -36,7 +38,6 @@ class ClapModel final : public ModelArchitecture {
     ggml_tensor *project(Graph &g, ggml_tensor *pooled, const Projection &weights) const;
 
     const ModelLoader &loader;
-    GraphRuntime runtime;
     nlohmann::json config, a, t;
     struct Parameters {
         int projection, bins, spec, patch_width, window, hidden, pad, vocab, positions, heads, bos, eos;
@@ -61,10 +62,11 @@ class ClapModel final : public ModelArchitecture {
 class Clap2Model final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
-    Clap2Model(const ModelLoader &, int);
-    std::vector<float> text(const std::vector<int> &) const override;
-    std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const override;
-    AudioFrames audio_frames(const std::vector<float> &) const override;
+    void initialize_context(Context &) const override;
+    Clap2Model(const ModelLoader &);
+    std::vector<float> text(Context &, const std::vector<int> &) const override;
+    std::vector<float> waveform_embedding(Context &, const std::vector<float> &, size_t = 0) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
@@ -84,7 +86,6 @@ class Clap2Model final : public ModelArchitecture {
     ggml_tensor *encode(Graph &, ggml_tensor *, bool, int, ggml_tensor *) const;
     ggml_tensor *pool(Graph &, ggml_tensor *, bool, ggml_tensor *) const;
     const ModelLoader &loader;
-    GraphRuntime runtime;
     struct Parameters {
         int projection, bins, patch, rate, nfft, hop;
         int vocab, positions, bos, eos, pad;
@@ -119,12 +120,14 @@ class MertModel;
 class Clamp3Model final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
-    Clamp3Model(const ModelLoader &loader, int threads);
+    void initialize_context(Context &) const override;
+    Clamp3Model(const ModelLoader &loader);
     ~Clamp3Model() override;
     bool has_waveform_embeddings() const override;
-    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
-    std::vector<float> text(const std::vector<int> &ids) const override;
-    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    std::vector<float> waveform_embedding(Context &, const std::vector<float> &pcm,
+                                          size_t crop_offset = 0) const override;
+    std::vector<float> text(Context &, const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
@@ -133,20 +136,19 @@ class Clamp3Model final : public ModelArchitecture {
 
   private:
     friend struct FeatureTestAccess;
-    std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
+    std::vector<float> encode_features(Context &, const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
     void load_arch_tensors() override;
     struct Branch;
     ggml_tensor *encode(Graph &g, ggml_tensor *embeddings, const std::vector<int> &mask, const Branch &branch) const;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask, const AttentionWeights &weights,
                            int heads) const;
-    std::vector<float> chunked_text(const std::vector<int> &ids) const;
-    std::vector<float> chunked_audio(const HostMatrix &features) const;
+    std::vector<float> chunked_text(Context &, const std::vector<int> &ids) const;
+    std::vector<float> chunked_audio(Context &, const HostMatrix &features) const;
     ggml_tensor *pool_project(Graph &g, ggml_tensor *hidden, const std::vector<int> &mask,
                               const LayerWeights &projection) const;
 
     const ModelLoader &loader;
-    GraphRuntime runtime;
     nlohmann::json config, audio_config, text_config;
     std::unique_ptr<MertModel> frontend;
     struct Branch {
@@ -165,10 +167,11 @@ class Clamp3Model final : public ModelArchitecture {
 class Mert2Model final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
+    void initialize_context(Context &) const override;
     static bool tensor_quantizable(const ggml_tensor *);
-    Mert2Model(const ModelLoader &loader, int threads);
-    std::vector<float> text(const std::vector<int> &ids) const override;
-    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    Mert2Model(const ModelLoader &loader);
+    std::vector<float> text(Context &, const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
@@ -184,7 +187,6 @@ class Mert2Model final : public ModelArchitecture {
     ggml_tensor *conformer_convolution(Graph &g, ggml_tensor *hidden, const ConvolutionWeights &weights) const;
 
     const ModelLoader &loader;
-    GraphRuntime runtime;
     nlohmann::json config;
     struct Parameters {
         int hidden, bins, sample_rate, fft, hop, heads, kernel;
@@ -208,14 +210,15 @@ class Mert2Model final : public ModelArchitecture {
 class MertModel final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
+    void initialize_context(Context &) const override;
     static bool tensor_quantizable(const ggml_tensor *);
-    MertModel(const ModelLoader &loader, int threads, const std::string &tensor_prefix = "",
+    MertModel(const ModelLoader &loader, const std::string &tensor_prefix = "",
               const std::string &metadata_prefix = "");
-    std::vector<float> text(const std::vector<int> &) const override;
-    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    std::vector<float> text(Context &, const std::vector<int> &) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &pcm) const override;
     // Internal CLaMP3 frontend: normalize the whole recording, split into 5 s
     // windows, discard a tail shorter than 1 s, and mean-pool time/all layers.
-    AudioFrames clamp3_features(const std::vector<float> &pcm) const;
+    AudioFrames clamp3_features(Context &, const std::vector<float> &pcm) const;
     TextParameters text_parameters() const override { return {0, 0, 0}; }
     int projection_dimension() const override { return h.hidden; }
     int mel_bins() const override { return 0; }
@@ -226,10 +229,9 @@ class MertModel final : public ModelArchitecture {
     void load_arch_hparams() override;
     void load_arch_tensors() override;
     std::vector<float> normalize(const std::vector<float> &pcm) const;
-    HostMatrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
+    HostMatrix forward(Context &, const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights) const;
     ModelLoader loader;
-    GraphRuntime runtime;
     nlohmann::json config;
     int minimum_samples = 0;
     struct Parameters {
@@ -248,10 +250,11 @@ class MertModel final : public ModelArchitecture {
 class MuqModel final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
+    void initialize_context(Context &) const override;
     static bool tensor_quantizable(const ggml_tensor *);
-    MuqModel(const ModelLoader &loader, int threads);
-    std::vector<float> text(const std::vector<int> &) const override;
-    AudioFrames audio_frames(const std::vector<float> &pcm) const override;
+    MuqModel(const ModelLoader &loader);
+    std::vector<float> text(Context &, const std::vector<int> &) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &pcm) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override;
@@ -273,7 +276,6 @@ class MuqModel final : public ModelArchitecture {
     ggml_tensor *attention(Graph &g, ggml_tensor *hidden, const AttentionWeights &weights) const;
     ggml_tensor *conformer_convolution(Graph &g, ggml_tensor *hidden, const ConvolutionWeights &weights) const;
     const ModelLoader &loader;
-    GraphRuntime runtime;
     nlohmann::json config, encoder;
     struct Parameters {
         int hidden, heads, kernel;
@@ -293,11 +295,13 @@ class MuqModel final : public ModelArchitecture {
 class MuqMulanModel final : public ModelArchitecture {
   public:
     static TensorLoadPolicy loading_policy(const ModelLoader &);
+    void initialize_context(Context &) const override;
     static bool tensor_quantizable(const ggml_tensor *);
-    MuqMulanModel(const ModelLoader &loader, int threads);
-    std::vector<float> text(const std::vector<int> &ids) const override;
-    AudioFrames audio_frames(const std::vector<float> &) const override;
-    std::vector<float> waveform_embedding(const std::vector<float> &pcm, size_t crop_offset = 0) const override;
+    MuqMulanModel(const ModelLoader &loader);
+    std::vector<float> text(Context &, const std::vector<int> &ids) const override;
+    AudioFrames audio_frames(Context &, const std::vector<float> &) const override;
+    std::vector<float> waveform_embedding(Context &, const std::vector<float> &pcm,
+                                          size_t crop_offset = 0) const override;
     TextParameters text_parameters() const override;
     int projection_dimension() const override;
     int mel_bins() const override { return 0; }
@@ -313,7 +317,6 @@ class MuqMulanModel final : public ModelArchitecture {
     ggml_tensor *biasless_norm(Graph &g, ggml_tensor *x, ggml_tensor *weight) const;
     ggml_tensor *project(Graph &g, ggml_tensor *x, const LayerWeights &weights) const;
     const ModelLoader &loader;
-    GraphRuntime runtime;
     MuqModel audio_backbone;
     nlohmann::json config, text_config;
     struct Parameters {

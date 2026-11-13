@@ -48,15 +48,19 @@ struct GraphOutput {
 };
 struct GraphStats {
     size_t builds = 0, hits = 0, weight_uploads = 0;
+    int threads = 0;
     std::string device;
     bool device_matmul = false;
 };
 class Graph;
+class ModelWeights;
 
-// Persistent backend and immutable weight ownership. One graph executes at a time.
+// Context-owned compute backends, scheduler and graph cache. Weight leaves may
+// be shared; one graph executes at a time in this runtime, not across the model.
 class GraphRuntime {
   public:
-    GraphRuntime(const ModelLoader &loader, int threads, bool f32_activations = false);
+    GraphRuntime(const ModelLoader &loader, int threads, bool f32_activations = false,
+                 std::shared_ptr<ModelWeights> weights = {});
     ~GraphRuntime();
     bool last_graph_used_vulkan() const;
     size_t vulkan_weight_uploads() const;

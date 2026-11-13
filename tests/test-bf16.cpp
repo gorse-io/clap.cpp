@@ -16,7 +16,7 @@
 #include <vector>
 
 using namespace clap::detail;
-using Context = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
+using TensorContext = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
 using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 static void require(bool ok, const std::string &message) {
     if (!ok)
@@ -37,7 +37,7 @@ static std::string narrow_name(const std::string &arch) {
     return name;
 }
 static void fixture(const std::string &path, const std::string &arch, ggml_type type, bool bundled = false) {
-    Context ctx(ggml_init({32 * 1024 * 1024, nullptr, false}), ggml_free);
+    TensorContext ctx(ggml_init({32 * 1024 * 1024, nullptr, false}), ggml_free);
     File file(gguf_init_empty(), gguf_free);
     gguf_set_val_str(file.get(), "general.architecture", arch.c_str());
     gguf_set_val_str(file.get(), "test.metadata", "preserved");
@@ -133,7 +133,7 @@ int main(int argc, char **argv) {
                 ModelLoader loader;
                 clap::detail::load_model_weights(loader, path);
             } else {
-                Context ctx(ggml_init({1024 * 1024, nullptr, false}), ggml_free);
+                TensorContext ctx(ggml_init({1024 * 1024, nullptr, false}), ggml_free);
                 auto *t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_BF16, 17, 2);
                 std::vector<float> values(34, 0.123456f), row(17);
                 ggml_fp32_to_bf16_row_ref(values.data(), static_cast<ggml_bf16_t *>(t->data), values.size());

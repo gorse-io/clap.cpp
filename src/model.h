@@ -21,6 +21,7 @@ struct AudioFrames {
 
 namespace clap::detail {
 // Model-level loading orchestration; individual rules live in src/models.
+class Context;
 void load_model_weights(ModelLoader &, const std::string &, bool inference = true);
 TensorLoadPolicy encoder_loading_policy(void (*validate_type)(const ggml_tensor *));
 void validate_encoder_storage(const ggml_tensor *, bool quantizable);
@@ -79,8 +80,9 @@ struct TextParameters {
 class ModelArchitecture {
   public:
     virtual ~ModelArchitecture() = default;
-    virtual std::vector<float> text(const std::vector<int> &ids) const = 0;
-    virtual AudioFrames audio_frames(const std::vector<float> &pcm) const = 0;
+    virtual void initialize_context(Context &) const = 0;
+    virtual std::vector<float> text(Context &, const std::vector<int> &ids) const = 0;
+    virtual AudioFrames audio_frames(Context &, const std::vector<float> &pcm) const = 0;
     virtual TextParameters text_parameters() const = 0;
     virtual int projection_dimension() const = 0;
     virtual int mel_bins() const = 0;
@@ -91,7 +93,7 @@ class ModelArchitecture {
     // A joint waveform model has a tokenizer and its own clip/embedding pooling.
     virtual bool has_text_encoder() const { return !is_waveform_encoder(); }
     virtual bool has_waveform_embeddings() const { return false; }
-    virtual std::vector<float> waveform_embedding(const std::vector<float> &, size_t = 0) const {
+    virtual std::vector<float> waveform_embedding(Context &, const std::vector<float> &, size_t = 0) const {
         throw std::runtime_error("CLAP: this architecture has no waveform embeddings");
     }
 
@@ -100,24 +102,42 @@ class ModelArchitecture {
     virtual void load_arch_tensors() = 0;
 };
 class Vocabulary;
-} // namespace clap::detail
-
-// Definition of the public opaque C handle, not a second C++ API or facade.
-// Reverse destruction order keeps the GGUF mapping alive for its architecture.
-struct CLAP {
-    clap::detail::ModelLoader loader;
-    std::unique_ptr<clap::detail::ModelArchitecture> architecture;
-    std::unique_ptr<clap::detail::Vocabulary> vocabulary;
-
-    CLAP(const std::string &path, const clap::RuntimeOptions &options);
-    ~CLAP();
+struct ModelWeightStats {
+    size_t host_tensors = 0, device_tensors = 0;
+    size_t host_bytes = 0, device_bytes = 0, uploads = 0;
 };
 
-namespace clap::detail {
-// Core-only operations shared by the C entry points. Upper layers use clap.h.
-std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max_length);
-std::vector<float> encode_text(CLAP &model, const std::string &utf8);
-std::vector<float> encode_audio(CLAP &model, const std::vector<float> &pcm, int sample_rate, size_t crop_offset);
-std::vector<float> encode_audio_file(CLAP &model, const std::string &path, size_t crop_offset);
-AudioFrames audio_frames(CLAP &model, const std::vector<float> &pcm, int sample_rate);
+// Model-lifetime, read-only leaf tensors and allocation backends. A completed
+// entry is shared by device/buffer/layout identity, never by a compute backend.
+class ModelWeights {
+  public:
+    explicit ModelWeights(const ModelLoader &);
+    ~ModelWeights();
+    ggml_backend_dev_t gpu_device() const;
+    bool uses_vulkan() const;
+    bool uses_metal() const;
+    int default_threads() const;
+    ModelWeightStats stats() const;
+    ggml_tensor *get(ggml_tensor *source, ggml_backend_t compute, bool device, bool &uploaded);
+
+  private:
+    struct State;
+    std::unique_ptr<State> state;
+};
+
+// Configuration, vocabulary and source tensors are immutable after construction.
+// Contexts retain this owner; destruction frees buffers before the GGUF mapping.
+struct Model {
+    ModelLoader loader;
+    std::shared_ptr<ModelWeights> weights;
+    std::unique_ptr<const ModelArchitecture> architecture;
+    std::unique_ptr<const Vocabulary> vocabulary;
+
+    Model(const std::string &path, const RuntimeOptions &options);
+    ~Model();
+};
 } // namespace clap::detail
+
+struct clap_model {
+    std::shared_ptr<const clap::detail::Model> value;
+};

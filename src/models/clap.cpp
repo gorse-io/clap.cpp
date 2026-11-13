@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "context.h"
 #include "models.h"
 
 #include <algorithm>
@@ -22,10 +23,12 @@ float cubic(float x) {
 }
 } // namespace
 
-ClapModel::ClapModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
+ClapModel::ClapModel(const ModelLoader &source) : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
 }
+
+void ClapModel::initialize_context(Context &context) const { context.runtime(this, loader, false); }
 
 void ClapModel::load_arch_hparams() {
     config = json::parse(loader.metadata("clap.config"));
@@ -135,7 +138,7 @@ int ClapModel::projection_dimension() const { return h.projection; }
 int ClapModel::mel_bins() const { return h.bins; }
 int ClapModel::sample_rate() const { return 48000; }
 bool ClapModel::is_waveform_encoder() const { return false; }
-AudioFrames ClapModel::audio_frames(const std::vector<float> &) const {
+AudioFrames ClapModel::audio_frames(Context &, const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLAP exposes one pooled audio projection, not frame representations");
 }
 
@@ -183,7 +186,8 @@ ggml_tensor *ClapModel::project(Graph &g, ggml_tensor *pooled, const Projection 
     return g.l2_normalize(g.linear(hidden, weights.output), 0);
 }
 
-std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
+std::vector<float> ClapModel::text(Context &context, const std::vector<int> &ids) const {
+    const auto &runtime = context.runtime(this, loader, false);
     const int dim = h.hidden, pad = h.pad, vocab = h.vocab;
     if (ids.empty() || ids.size() > static_cast<size_t>(h.positions - 2))
         throw std::runtime_error("CLAP: text length outside model context");
@@ -228,13 +232,15 @@ std::vector<float> ClapModel::text(const std::vector<int> &ids) const {
     return result;
 }
 
-std::vector<float> ClapModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+std::vector<float> ClapModel::waveform_embedding(Context &context, const std::vector<float> &pcm,
+                                                 size_t crop_offset) const {
     if (mel_bins() != 64)
         throw std::runtime_error("CLAP: waveform frontend requires 64 mel bins");
-    return encode_features(clap::log_mel(pcm, 48000, crop_offset), 1001);
+    return encode_features(context, clap::log_mel(pcm, 48000, crop_offset), 1001);
 }
 
-std::vector<float> ClapModel::encode_features(const std::vector<float> &features, int frames) const {
+std::vector<float> ClapModel::encode_features(Context &context, const std::vector<float> &features, int frames) const {
+    const auto &runtime = context.runtime(this, loader, false);
     const int bins = h.bins, spec = h.spec, ratio = spec / bins;
     const int target_time = spec * ratio;
     if (!(frames > 0 && frames <= target_time && features.size() == static_cast<size_t>(frames) * bins))

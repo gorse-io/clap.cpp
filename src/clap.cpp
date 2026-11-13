@@ -1,4 +1,5 @@
 #include "clap.h"
+#include "context.h"
 #include "model.h"
 
 #include <cmath>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <memory>
 #include <new>
 #include <utility>
 
@@ -78,28 +80,53 @@ std::vector<float> waveform(const float *pcm, size_t count, int rate) {
         require(std::isfinite(pcm[i]), "CLAP: PCM must be finite");
     return {pcm, pcm + count};
 }
+clap::RuntimeOptions runtime_options(const clap_runtime_options *options) {
+    clap::RuntimeOptions native;
+    if (options) {
+        require(options->threads >= 0, "CLAP: threads must be nonnegative");
+        require(options->activation_precision == CLAP_ACTIVATION_MODEL_DEFAULT ||
+                    options->activation_precision == CLAP_ACTIVATION_F32,
+                "CLAP: invalid activation precision");
+        native.threads = options->threads;
+        if (options->device)
+            native.device = options->device;
+        if (options->activation_precision == CLAP_ACTIVATION_F32)
+            native.activation_precision = clap::ActivationPrecision::F32;
+    }
+    return native;
+}
 } // namespace
 
 extern "C" {
 clap_runtime_options clap_default_options(void) { return {0, nullptr, CLAP_ACTIVATION_MODEL_DEFAULT}; }
+clap_context_options clap_default_context_options(void) { return {0}; }
 const char *clap_last_error(void) { return diagnostic; }
+clap_status clap_model_load(const char *path, const clap_runtime_options *options, clap_model **out) {
+    if (out)
+        *out = nullptr;
+    return protect([&] {
+        require(path && *path && out, "CLAP: nonempty model path and output slot are required");
+        const auto native = runtime_options(options);
+        *out = new clap_model{std::make_shared<clap::detail::Model>(path, native)};
+    });
+}
+void clap_model_free(clap_model *model) { delete model; }
+clap_status clap_context_create(const clap_model *model, const clap_context_options *options, CLAP **out) {
+    if (out)
+        *out = nullptr;
+    return protect([&] {
+        require(model && out, "CLAP: model and output slot are required");
+        const int threads = options ? options->threads : 0;
+        require(threads >= 0, "CLAP: threads must be nonnegative");
+        *out = new CLAP(model->value, threads);
+    });
+}
 clap_status clap_create(const char *path, const clap_runtime_options *options, CLAP **out) {
     if (out)
         *out = nullptr;
     return protect([&] {
         require(path && *path && out, "CLAP: nonempty model path and output slot are required");
-        clap::RuntimeOptions native;
-        if (options) {
-            require(options->threads >= 0, "CLAP: threads must be nonnegative");
-            require(options->activation_precision == CLAP_ACTIVATION_MODEL_DEFAULT ||
-                        options->activation_precision == CLAP_ACTIVATION_F32,
-                    "CLAP: invalid activation precision");
-            native.threads = options->threads;
-            if (options->device)
-                native.device = options->device;
-            if (options->activation_precision == CLAP_ACTIVATION_F32)
-                native.activation_precision = clap::ActivationPrecision::F32;
-        }
+        const auto native = runtime_options(options);
         *out = new CLAP(path, native);
     });
 }
@@ -159,7 +186,7 @@ clap_status clap_encode_text(CLAP *model, const char *utf8, float **out, size_t 
 clap_status clap_encode_tokens(CLAP *model, const int *tokens, size_t n, float **out, size_t *count) {
     return embedding(model, out, count, [&] {
         require(tokens && n && n <= std::vector<int>().max_size(), "CLAP: nonempty tokens are required");
-        return model->architecture->text(std::vector<int>(tokens, tokens + n));
+        return model->context.model().architecture->text(model->context, std::vector<int>(tokens, tokens + n));
     });
 }
 clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t n, int rate, size_t crop, float **out,
@@ -184,6 +211,8 @@ clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t n, int r
         out->dimension = static_cast<size_t>(frames.dimension);
     });
 }
-int clap_audio_sample_rate(const CLAP *model) { return model ? model->architecture->sample_rate() : 0; }
-int clap_projection_dimension(const CLAP *model) { return model ? model->architecture->projection_dimension() : 0; }
+int clap_audio_sample_rate(const CLAP *model) { return model ? model->context.model().architecture->sample_rate() : 0; }
+int clap_projection_dimension(const CLAP *model) {
+    return model ? model->context.model().architecture->projection_dimension() : 0;
+}
 } // extern "C"
