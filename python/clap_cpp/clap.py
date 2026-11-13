@@ -46,7 +46,6 @@ def _bind(name, result, *arguments):
 
 
 _Handle = C.c_void_p
-_Ints = C.POINTER(C.c_int)
 _Floats = C.POINTER(C.c_float)
 _Size = C.c_size_t
 _bind("clap_default_options", _Options)
@@ -55,13 +54,10 @@ _bind("clap_create", C.c_int, C.c_char_p, C.POINTER(_Options), C.POINTER(_Handle
 _bind("clap_destroy", None, _Handle)
 _bind("clap_available_devices", C.c_int, C.POINTER(C.POINTER(_Device)), C.POINTER(_Size))
 _bind("clap_free_devices", None, C.POINTER(_Device), _Size)
-_bind("clap_free", None, C.c_void_p)
 _bind("clap_free_audio_frames", None, C.POINTER(_Frames))
-_bind("clap_tokenize", C.c_int, _Handle, C.c_char_p, _Size, C.POINTER(_Ints), C.POINTER(_Size))
-_bind("clap_encode_text", C.c_int, _Handle, C.c_char_p, C.POINTER(_Floats), C.POINTER(_Size))
-_bind("clap_encode_tokens", C.c_int, _Handle, _Ints, _Size, C.POINTER(_Floats), C.POINTER(_Size))
-_bind("clap_encode_audio", C.c_int, _Handle, _Floats, _Size, C.c_int, _Size, C.POINTER(_Floats), C.POINTER(_Size))
-_bind("clap_encode_audio_file", C.c_int, _Handle, C.c_char_p, _Size, C.POINTER(_Floats), C.POINTER(_Size))
+_bind("clap_encode_text", C.c_int, _Handle, C.c_char_p, _Floats, _Size)
+_bind("clap_encode_audio", C.c_int, _Handle, _Floats, _Size, C.c_int, _Size, _Floats, _Size)
+_bind("clap_encode_audio_file", C.c_int, _Handle, C.c_char_p, _Size, _Floats, _Size)
 _bind("clap_get_audio_frames", C.c_int, _Handle, _Floats, _Size, C.c_int, C.POINTER(_Frames))
 _bind("clap_audio_sample_rate", C.c_int, _Handle)
 _bind("clap_projection_dimension", C.c_int, _Handle)
@@ -91,8 +87,6 @@ def _integer(value, name, minimum=0, maximum=(1 << (C.sizeof(C.c_int) * 8 - 1)) 
 
 
 _SIZE_MAX = (1 << (C.sizeof(_Size) * 8)) - 1
-_INT_MIN = -(1 << (C.sizeof(C.c_int) * 8 - 1))
-_MISSING = object()
 
 
 def _string(value):
@@ -163,16 +157,15 @@ class CLAP:
         if not self._handle:
             raise RuntimeError("CLAP is closed")
 
-    def _buffer(self, function, *args, integer=False):
+    def _buffer(self, function, *args):
         with self._lock:
             self._ensure_open()
-            values = _Ints() if integer else _Floats()
-            count = _Size()
-            try:
-                _check(function(self._handle, *args, C.byref(values), C.byref(count)))
-                return list(values[:count.value]) if count.value else []
-            finally:
-                self._native.clap_free(values)
+            dimension = self._native.clap_projection_dimension(self._handle)
+            if dimension <= 0:
+                raise RuntimeError("model projection dimension must be positive")
+            values = (C.c_float * dimension)()
+            _check(function(self._handle, *args, values, dimension))
+            return list(values)
 
     def _property(self, function):
         with self._lock:
@@ -187,24 +180,8 @@ class CLAP:
     def audio_sample_rate(self):
         return self._property(self._native.clap_audio_sample_rate)
 
-    def tokenize(self, text, max_length=512):
-        text = _string(text)
-        length = _integer(max_length, "max_length", 1, _SIZE_MAX)
-        return self._buffer(self._native.clap_tokenize, text, length, integer=True)
-
-    def encode_text(self, text=_MISSING, *, tokens=_MISSING):
-        tokens_keyword = tokens is not _MISSING
-        if text is _MISSING:
-            if tokens is _MISSING:
-                raise TypeError("encode_text requires text or tokens")
-            text = tokens
-        elif tokens is not _MISSING:
-            raise TypeError("specify either text or tokens, not both")
-        if isinstance(text, str) and not tokens_keyword:
-            return self._buffer(self._native.clap_encode_text, _string(text))
-        items = [_integer(token, "token", _INT_MIN) for token in _sequence(text)]
-        values = (C.c_int * len(items))(*items)
-        return self._buffer(self._native.clap_encode_tokens, values, len(items))
+    def encode_text(self, text):
+        return self._buffer(self._native.clap_encode_text, _string(text))
 
     def encode_audio(self, *args, **kwargs):
         # Preserve both pybind overloads, including keyword names and the file

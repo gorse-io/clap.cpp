@@ -35,13 +35,6 @@ void check(clap_status status) {
     throw std::runtime_error(message);
 }
 
-template <typename T> std::vector<T> take_buffer(T *data, std::size_t count) {
-    const std::unique_ptr<T, decltype(&clap_free)> owned(data, clap_free);
-    if (!count)
-        return {};
-    return {data, data + count};
-}
-
 void error_response(httplib::Response &response, int status, const std::string &type, const std::string &message) {
     response.status = status;
     response.set_content(json{{"error", {{"message", message}, {"type", type}, {"code", status}}}}.dump(),
@@ -145,20 +138,15 @@ void embeddings(const httplib::Request &request, httplib::Response &response, CL
 
     try {
         auto data = json::array();
-        std::size_t tokens = 0;
-        bool usage_available = true;
         {
-            // Vocabulary and inference both belong to the same non-thread-safe
-            // handle. Keep the complete batch atomic with respect to other calls.
+            // Keep the complete batch atomic on this non-thread-safe handle.
             const std::lock_guard<std::mutex> lock(inference_mutex);
             for (std::size_t index = 0; index < inputs.size(); ++index) {
                 const auto &input = inputs[index];
-                std::vector<float> embedding;
+                std::vector<float> embedding(static_cast<std::size_t>(dimensions));
                 if (input.is_string()) {
-                    float *values = nullptr;
-                    std::size_t count = 0;
-                    check(clap_encode_text(model, c_string(input.get_ref<const std::string &>()), &values, &count));
-                    embedding = take_buffer(values, count);
+                    check(clap_encode_text(model, c_string(input.get_ref<const std::string &>()), embedding.data(),
+                                           embedding.size()));
                 } else {
                     clap::Audio audio;
                     // Keep decoder errors separate from model inference errors.
@@ -170,12 +158,8 @@ void embeddings(const httplib::Request &request, httplib::Response &response, CL
                         invalid_request(response, error.what());
                         return;
                     }
-                    usage_available = false;
-                    float *values = nullptr;
-                    std::size_t count = 0;
                     check(clap_encode_audio(model, audio.samples.data(), audio.samples.size(), audio.sample_rate, 0,
-                                            &values, &count));
-                    embedding = take_buffer(values, count);
+                                            embedding.data(), embedding.size()));
                 }
                 if (embedding.size() != static_cast<std::size_t>(dimensions))
                     throw std::runtime_error("Model returned an unexpected embedding dimension");
@@ -183,29 +167,10 @@ void embeddings(const httplib::Request &request, httplib::Response &response, CL
                     if (!std::isfinite(value))
                         throw std::runtime_error("Model returned a non-finite embedding");
                 data.push_back({{"object", "embedding"}, {"index", index}, {"embedding", embedding}});
-                // clap_encode_text chooses its architecture's full context.
-                // The public tokenize() default is 512 and can truncate or be
-                // unsupported for smaller contexts. Omit usage rather than
-                // report an inaccurate count in either situation.
-                if (!input.is_string())
-                    continue;
-                try {
-                    int *values = nullptr;
-                    std::size_t count = 0;
-                    check(clap_tokenize(model, c_string(input.get_ref<const std::string &>()), 512, &values, &count));
-                    const auto ids = take_buffer(values, count);
-                    if (ids.size() >= 512)
-                        usage_available = false;
-                    else
-                        tokens += ids.size();
-                } catch (const std::exception &) {
-                    usage_available = false;
-                }
             }
         }
         json result = {{"object", "list"}, {"data", data}, {"model", identifier}};
-        if (usage_available)
-            result["usage"] = {{"prompt_tokens", tokens}, {"total_tokens", tokens}};
+        // Tokenization is internal; omit usage rather than invent token counts.
         response.set_content(result.dump(), "application/json");
     } catch (const std::exception &error) {
         error_response(response, 500, "server_error", error.what());

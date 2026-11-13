@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <utility>
 
 namespace {
@@ -64,13 +65,16 @@ template <typename T> void reset(T **p, size_t *n) {
     if (n)
         *n = 0;
 }
-template <typename F> clap_status embedding(CLAP *model, float **out, size_t *count, F &&f) {
-    reset(out, count);
+template <typename F> clap_status embedding(CLAP *model, float *out, size_t capacity, F &&f) {
     return protect([&] {
-        require(model && out && count, "CLAP: model and output slots are required");
+        require(model && out, "CLAP: model and output buffer are required");
+        const int dimension = clap_projection_dimension(model);
+        require(dimension > 0 && capacity >= static_cast<size_t>(dimension),
+                "CLAP: output capacity must be at least the projection dimension");
         const auto values = f();
-        *out = copy(values);
-        *count = values.size();
+        if (values.size() != static_cast<size_t>(dimension))
+            throw std::runtime_error("CLAP: unexpected embedding dimension");
+        std::memcpy(out, values.data(), values.size() * sizeof(float));
     });
 }
 std::vector<float> waveform(const float *pcm, size_t count, int rate) {
@@ -131,7 +135,6 @@ clap_status clap_create(const char *path, const clap_runtime_options *options, C
     });
 }
 void clap_destroy(CLAP *model) { delete model; }
-void clap_free(void *allocation) { std::free(allocation); }
 void clap_free_devices(clap_device *devices, size_t count) {
     if (!devices)
         return;
@@ -167,35 +170,19 @@ void clap_free_audio_frames(clap_audio_frames *frames) {
         *frames = {};
     }
 }
-clap_status clap_tokenize(const CLAP *model, const char *utf8, size_t max_length, int **out, size_t *count) {
-    reset(out, count);
-    return protect([&] {
-        require(model && utf8 && out && count && max_length > 0,
-                "CLAP: model, text, positive max_length and output slots are required");
-        const auto tokens = clap::detail::tokenize(*model, utf8, max_length);
-        *out = copy(tokens);
-        *count = tokens.size();
-    });
-}
-clap_status clap_encode_text(CLAP *model, const char *utf8, float **out, size_t *count) {
-    return embedding(model, out, count, [&] {
+clap_status clap_encode_text(CLAP *model, const char *utf8, float *out, size_t capacity) {
+    return embedding(model, out, capacity, [&] {
         require(utf8, "CLAP: text is required");
         return clap::detail::encode_text(*model, utf8);
     });
 }
-clap_status clap_encode_tokens(CLAP *model, const int *tokens, size_t n, float **out, size_t *count) {
-    return embedding(model, out, count, [&] {
-        require(tokens && n && n <= std::vector<int>().max_size(), "CLAP: nonempty tokens are required");
-        return model->context.model().architecture->text(model->context, std::vector<int>(tokens, tokens + n));
-    });
-}
-clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t n, int rate, size_t crop, float **out,
-                              size_t *count) {
-    return embedding(model, out, count,
+clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t n, int rate, size_t crop, float *out,
+                              size_t capacity) {
+    return embedding(model, out, capacity,
                      [&] { return clap::detail::encode_audio(*model, waveform(pcm, n, rate), rate, crop); });
 }
-clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop, float **out, size_t *count) {
-    return embedding(model, out, count, [&] {
+clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop, float *out, size_t capacity) {
+    return embedding(model, out, capacity, [&] {
         require(path && *path, "CLAP: audio path is required");
         return clap::detail::encode_audio_file(*model, path, crop);
     });

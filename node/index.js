@@ -39,10 +39,9 @@ const defaults = lib.func('clap_default_options', optionsType, []);
 const lastError = lib.func('clap_last_error', 'str', []);
 const create = lib.func('clap_create', 'int', ['str', koffi.pointer(optionsType), koffi.out(koffi.pointer(handle))]);
 const destroy = lib.func('clap_destroy', 'void', [handle]);
-const free = lib.func('clap_free', 'void', ['void *']);
-const outputs = [koffi.out(koffi.pointer('float', 2)), koffi.out(koffi.pointer('size_t'))];
+const projectionDimension = lib.func('clap_projection_dimension', 'int', [handle]);
+const outputs = [koffi.out(koffi.pointer('float')), 'size_t'];
 const text = lib.func('clap_encode_text', 'int', [handle, 'str', ...outputs]);
-const tokens = lib.func('clap_encode_tokens', 'int', [handle, 'const int *', 'size_t', ...outputs]);
 const audio = lib.func('clap_encode_audio', 'int', [handle, 'const float *', 'size_t', 'int', 'size_t', ...outputs]);
 const audioFile = lib.func('clap_encode_audio_file', 'int', [handle, 'str', 'size_t', ...outputs]);
 const maxInt = 2147483647;
@@ -51,9 +50,7 @@ const typedArrayPrototype = Object.getPrototypeOf(Float32Array.prototype);
 const lengthOf = Function.call.bind(Object.getOwnPropertyDescriptor(typedArrayPrototype, 'length').get);
 const copyInto = Function.call.bind(typedArrayPrototype.set);
 const isFloat32Array = types.isFloat32Array;
-const isInt32Array = types.isInt32Array;
 const FloatArray = Float32Array;
-const IntArray = Int32Array;
 
 function integer(value, name, min, max) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
@@ -66,25 +63,6 @@ function string(value, name, nonempty = false) {
     throw new TypeError(`${name} must be ${nonempty ? 'nonempty and ' : ''}a string containing no NUL bytes`);
   }
   return value;
-}
-function tokenCopy(value) {
-  let copy;
-  if (isInt32Array(value)) {
-    const length = lengthOf(value);
-    if (!length) throw new TypeError('tokens must be nonempty');
-    copy = new IntArray(length);
-    copyInto(copy, value);
-    for (let i = 0; i < length; ++i) integer(copy[i], 'token ID', 0, maxInt);
-  } else if (Array.isArray(value)) {
-    // Read length once: array Proxy traps and index getters can close a model or
-    // mutate the array. Finish every such read before borrowing its handle.
-    const length = integer(value.length, 'token count', 1, Math.min(maxSize, maxInt));
-    copy = new IntArray(length);
-    for (let i = 0; i < length; ++i) copy[i] = integer(value[i], 'token ID', 0, maxInt);
-  } else {
-    throw new TypeError('text must be a string, Int32Array or number[]');
-  }
-  return copy;
 }
 function pcmCopy(value) {
   if (!isFloat32Array(value)) throw new TypeError('PCM must be a nonempty Float32Array of mono samples');
@@ -111,18 +89,10 @@ function release(state) {
 const finalizer = new FinalizationRegistry(release);
 
 function embedding(fn, args) {
-  const values = [null];
-  const count = [0];
-  try {
-    check(fn(...args, values, count));
-    const length = integer(count[0], 'native embedding length', 0, maxSize);
-    if (!length) return new FloatArray(0);
-    // decode returns an owning typed array, not a view of the C allocation.
-    // The finally also runs if decoding or JS allocation throws.
-    return koffi.decode(values[0], 'float', length);
-  } finally {
-    if (values[0] !== null) free(values[0]);
-  }
+  const length = integer(projectionDimension(args[0]), 'native embedding length', 1, maxInt);
+  const values = new FloatArray(length);
+  check(fn(...args, values, length));
+  return values;
 }
 
 class CLAP {
@@ -156,11 +126,9 @@ class CLAP {
     // Brand-check before running user code; Object.create/copies/Proxy receivers
     // must never gain ownership or borrow another object's raw pointer.
     const state = this.#state;
-    const input = typeof value === 'string' ? string(value, 'text') : tokenCopy(value);
+    const input = string(value, 'text');
     if (state.pointer === null) throw new Error('CLAP is closed');
-    return typeof input === 'string'
-      ? embedding(text, [state.pointer, input])
-      : embedding(tokens, [state.pointer, input, lengthOf(input)]);
+    return embedding(text, [state.pointer, input]);
   }
 
   encodeAudio(value, sampleRateOrOffset, cropOffset = 0) {
