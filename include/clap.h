@@ -19,7 +19,8 @@
 extern "C" {
 #endif
 
-typedef struct CLAP CLAP;
+typedef struct CLAP CLAP;             /* Execution context. */
+typedef struct clap_model clap_model; /* Shared immutable model. */
 
 typedef enum clap_status { CLAP_OK = 0, CLAP_INVALID_ARGUMENT = 1, CLAP_OUT_OF_MEMORY = 2, CLAP_ERROR = 3 } clap_status;
 
@@ -34,6 +35,10 @@ typedef struct clap_runtime_options {
     clap_activation_precision activation_precision;
 } clap_runtime_options;
 
+typedef struct clap_context_options {
+    int threads; /* 0: inherit the model's thread default; otherwise positive. */
+} clap_context_options;
+
 typedef struct clap_device {
     const char *name;
     const char *description;
@@ -47,18 +52,33 @@ typedef struct clap_audio_frames {
 } clap_audio_frames;
 
 /* All input strings are NUL-terminated UTF-8, borrowed for the call only.
+ * Options and their strings are also borrowed for the call only.
  * Calls on the same handle must be serialized, including destruction. Distinct
  * handles may be used concurrently. No C++ exception crosses this API.
  * Fallible calls clear their output pointers/counts before validating inputs;
  * on failure all provided outputs remain zero/NULL. Pass fresh output slots:
  * overwriting a previous successful output does NOT free its allocation.
  * Each successful allocated output belongs to the caller, independently of the
- * model lifetime. Use ONLY its matching free below (never the C runtime free).
+ * model and context lifetimes. Use ONLY its matching free below (never the
+ * C runtime free).
  * NULL is accepted by every free function. */
 CLAP_API clap_runtime_options clap_default_options(void);
+CLAP_API clap_context_options clap_default_context_options(void);
 /* Diagnostic for the calling thread, valid until its next fallible API call.
- * Success clears it. Reading it and freeing outputs never change it. */
+ * Success clears it. Reading it, default-options queries, and destruction/free
+ * functions never change it. */
 CLAP_API const char *clap_last_error(void);
+/* Load shared weights and fix device/activation precision. Runtime options have
+ * the same semantics as clap_create. A successful model may create multiple
+ * contexts with independent execution state; those contexts may run concurrently.
+ * Freeing the public model handle does not invalidate existing contexts. */
+CLAP_API clap_status clap_model_load(const char *gguf_path, const clap_runtime_options *options, clap_model **out);
+CLAP_API void clap_model_free(clap_model *model);
+/* NULL options or threads == 0 inherit the model's load-time thread default;
+ * positive threads override it for this context; negative threads are invalid.
+ * The model and output slot are required. Destroy contexts with clap_destroy. */
+CLAP_API clap_status clap_context_create(const clap_model *model, const clap_context_options *options, CLAP **out);
+/* Compatibility convenience: load a private model and create one context. */
 CLAP_API clap_status clap_create(const char *gguf_path, const clap_runtime_options *options, CLAP **out);
 CLAP_API void clap_destroy(CLAP *model);
 CLAP_API clap_status clap_available_devices(clap_device **out, size_t *count);

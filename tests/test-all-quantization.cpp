@@ -19,7 +19,7 @@ static void require(bool ok, const std::string &message) {
     if (!ok)
         throw std::runtime_error(message);
 }
-using Context = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
+using TensorContext = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
 using File = std::unique_ptr<gguf_context, decltype(&gguf_free)>;
 struct Role {
     const char *name;
@@ -61,7 +61,7 @@ static std::vector<Role> roles(const std::string &arch) {
 }
 static void fixture(const std::string &path, const std::string &arch, ggml_type type, const std::vector<Role> &dense,
                     bool bad = false) {
-    Context ctx(ggml_init({16 * 1024 * 1024, nullptr, false}), ggml_free);
+    TensorContext ctx(ggml_init({16 * 1024 * 1024, nullptr, false}), ggml_free);
     File file(gguf_init_empty(), gguf_free);
     gguf_set_val_str(file.get(), "general.architecture", arch.c_str());
     auto add = [&](const char *name, std::vector<int64_t> shape, ggml_type storage) {
@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
                     // Read raw source tensor bytes independently of inference promotion.
                     ggml_context *raw = nullptr;
                     File original(gguf_init_from_file(source.c_str(), {false, &raw}), gguf_free);
-                    Context weights(raw, ggml_free);
+                    TensorContext weights(raw, ggml_free);
                     int q4 = 0, q6 = 0;
                     for (const auto &role : dense) {
                         auto *a = ggml_get_tensor(raw, role.name), *b = loader.weight(role.name);
@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
                         // Raw output must preserve the original type/bytes, including F16 MuQ.
                         ggml_context *qraw = nullptr;
                         File qfile(gguf_init_from_file(output.c_str(), {false, &qraw}), gguf_free);
-                        Context qweights(qraw, ggml_free);
+                        TensorContext qweights(qraw, ggml_free);
                         auto *a = ggml_get_tensor(raw, name), *b = ggml_get_tensor(qraw, name);
                         require(a->type == b->type && ggml_nbytes(a) == ggml_nbytes(b) &&
                                     std::memcmp(a->data, b->data, ggml_nbytes(a)) == 0,

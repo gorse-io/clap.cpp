@@ -1,32 +1,229 @@
-#include "audio.h"
 #include "model.h"
 #include "models/models.h"
 #include "quant.h"
 #include "vocab.h"
 
+#include <ggml-cpu.h>
 #include <nlohmann/json.hpp>
 
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <mutex>
 #include <stdexcept>
+#include <unordered_map>
+#include <utility>
 
-CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loader(options) {
+namespace {
+void load_backends() {
+    static std::once_flag once;
+    std::call_once(once, [] { ggml_backend_load_all(); });
+}
+bool is_gpu(ggml_backend_dev_t device) {
+    const auto type = ggml_backend_dev_type(device);
+    return type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU;
+}
+bool enabled(ggml_backend_dev_t device) {
+    const std::string backend = ggml_backend_reg_name(ggml_backend_dev_backend_reg(device));
+    const char *key = backend == "CUDA"     ? "CLAP_CUDA"
+                      : backend == "ROCm"   ? "CLAP_ROCM"
+                      : backend == "Vulkan" ? "CLAP_VULKAN"
+                      : backend == "MTL"    ? "CLAP_METAL"
+                                            : nullptr;
+    const char *value = key ? std::getenv(key) : nullptr;
+    return !value || std::strcmp(value, "0") != 0;
+}
+} // namespace
+namespace clap {
+std::vector<DeviceInfo> available_devices() {
+    load_backends();
+    std::vector<DeviceInfo> devices;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        auto device = ggml_backend_dev_get(i);
+        devices.push_back({ggml_backend_dev_name(device), ggml_backend_dev_description(device), is_gpu(device)});
+    }
+    return devices;
+}
+} // namespace clap
+
+namespace clap::detail {
+struct ModelWeights::State {
+    using Backend = std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)>;
+    using TensorContext = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
+    using Buffer = std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)>;
+    mutable std::mutex mutex;
+    Backend gpu{nullptr, ggml_backend_free};
+    Backend cpu{nullptr, ggml_backend_free};
+    struct Weight {
+        TensorContext context{nullptr, ggml_free};
+        Buffer buffer{nullptr, ggml_backend_buffer_free};
+        ggml_tensor *tensor = nullptr;
+    };
+    struct Key {
+        ggml_tensor *source;
+        ggml_backend_dev_t device;
+        ggml_backend_buffer_type_t buffer_type;
+        int64_t rows;
+        bool operator==(const Key &) const = default;
+    };
+    struct Hash {
+        size_t operator()(const Key &key) const noexcept {
+            size_t value = std::hash<ggml_tensor *>{}(key.source);
+            const auto mix = [&](size_t next) { value ^= next + size_t(0x9e3779b9) + (value << 6) + (value >> 2); };
+            mix(std::hash<ggml_backend_dev_t>{}(key.device));
+            mix(std::hash<ggml_backend_buffer_type_t>{}(key.buffer_type));
+            mix(std::hash<int64_t>{}(key.rows));
+            return value;
+        }
+    };
+    std::unordered_map<Key, std::unique_ptr<Weight>, Hash> entries;
+    int threads;
+    bool vulkan = false, metal = false;
+    ModelWeightStats stats;
+    explicit State(const ModelLoader &source) : threads(source.runtime_options().threads) {
+        std::string requested = source.runtime_options().device;
+        if (requested.empty()) {
+            const char *environment = std::getenv("CLAP_DEVICE");
+            requested = environment && *environment ? environment : "auto";
+        }
+        // Explicit CPU execution must not initialize GPU drivers or compile shaders.
+        if (requested != "cpu" && requested != "CPU")
+            load_backends();
+        cpu.reset(ggml_backend_cpu_init());
+        if (!cpu)
+            throw std::runtime_error("CLAP: CPU backend initialization failed");
+        if (requested == "auto") {
+            for (size_t i = 0; i < ggml_backend_dev_count() && !gpu; ++i) {
+                auto device = ggml_backend_dev_get(i);
+                if (is_gpu(device) && enabled(device))
+                    gpu.reset(ggml_backend_dev_init(device, nullptr));
+            }
+        } else if (requested != "cpu" && requested != ggml_backend_dev_name(ggml_backend_get_device(cpu.get()))) {
+            auto device = ggml_backend_dev_by_name(requested.c_str());
+            if (!device)
+                throw std::runtime_error("CLAP: unknown GGML device: " + requested + "; use clap devices");
+            gpu.reset(ggml_backend_dev_init(device, nullptr));
+            if (!gpu)
+                throw std::runtime_error("CLAP: cannot initialize requested GGML device: " + requested);
+        }
+        if (gpu) {
+            const std::string backend =
+                ggml_backend_reg_name(ggml_backend_dev_backend_reg(ggml_backend_get_device(gpu.get())));
+            vulkan = backend == "Vulkan";
+            metal = backend == "MTL";
+        }
+    }
+};
+ModelWeights::ModelWeights(const ModelLoader &loader) : state(std::make_unique<State>(loader)) {}
+ModelWeights::~ModelWeights() = default;
+ggml_backend_dev_t ModelWeights::gpu_device() const {
+    return state->gpu ? ggml_backend_get_device(state->gpu.get()) : nullptr;
+}
+bool ModelWeights::uses_vulkan() const { return state->vulkan; }
+bool ModelWeights::uses_metal() const { return state->metal; }
+int ModelWeights::default_threads() const { return state->threads; }
+ModelWeightStats ModelWeights::stats() const {
+    std::lock_guard<std::mutex> guard(state->mutex);
+    return state->stats;
+}
+ggml_tensor *ModelWeights::get(ggml_tensor *source, ggml_backend_t compute, bool device, bool &uploaded) {
+    uploaded = false;
+    std::lock_guard<std::mutex> guard(state->mutex);
+    auto allocation = device ? state->gpu.get() : state->cpu.get();
+    if (!allocation || !compute)
+        throw std::runtime_error("CLAP: shared weight backend is unavailable");
+    auto buffer_type = ggml_backend_get_default_buffer_type(allocation);
+    if (!device && reinterpret_cast<uintptr_t>(source->data) % ggml_backend_buft_get_alignment(buffer_type) == 0)
+        buffer_type = ggml_backend_cpu_buffer_type();
+    if (ggml_backend_get_device(compute) != ggml_backend_get_device(allocation) ||
+        !ggml_backend_supports_buft(compute, buffer_type))
+        throw std::runtime_error("CLAP: execution backend does not support shared model weights");
+    const int64_t rows = device && state->vulkan ? (source->ne[1] + 31) / 32 * 32 : source->ne[1];
+    const State::Key key{source, ggml_backend_get_device(allocation), buffer_type, rows};
+    const auto found = state->entries.find(key);
+    if (found != state->entries.end())
+        return found->second->tensor;
+    if (source->op != GGML_OP_NONE || !*ggml_get_name(source))
+        throw std::runtime_error("CLAP: shared model weights must be named leaf tensors");
+    const std::string name = ggml_get_name(source);
+    auto weight = std::make_unique<State::Weight>();
+    weight->context.reset(ggml_init({ggml_tensor_overhead(), nullptr, true}));
+    if (!weight->context)
+        throw std::runtime_error("CLAP: weight metadata allocation failed");
+    auto *tensor = ggml_dup_tensor(weight->context.get(), source);
+    ggml_set_name(tensor, name.c_str());
+    if (device) {
+        // Keep the cooperative-matrix tile workaround for the pinned Vulkan backend.
+        if (state->vulkan)
+            tensor->ne[1] = (tensor->ne[1] + 31) / 32 * 32;
+        tensor->nb[2] = tensor->nb[1] * tensor->ne[1];
+        tensor->nb[3] = tensor->nb[2] * tensor->ne[2];
+        weight->buffer.reset(ggml_backend_alloc_ctx_tensors(weight->context.get(), state->gpu.get()));
+        if (!weight->buffer)
+            throw std::runtime_error("CLAP: device weight allocation failed");
+        const size_t bytes = ggml_nbytes(source);
+        if (ggml_nbytes(tensor) > bytes)
+            ggml_backend_tensor_memset(tensor, 0, bytes, ggml_nbytes(tensor) - bytes);
+        ggml_backend_tensor_set(tensor, source->data, 0, bytes);
+    } else {
+        const size_t alignment =
+            ggml_backend_buft_get_alignment(ggml_backend_get_default_buffer_type(state->cpu.get()));
+        if (reinterpret_cast<uintptr_t>(source->data) % alignment) {
+            // Promoted F16 weights can come from std::vector storage with weaker alignment.
+            weight->buffer.reset(ggml_backend_alloc_ctx_tensors(weight->context.get(), state->cpu.get()));
+            if (!weight->buffer)
+                throw std::runtime_error("CLAP: aligned weight allocation failed");
+            ggml_backend_tensor_set(tensor, source->data, 0, ggml_nbytes(source));
+        } else {
+            weight->buffer.reset(ggml_backend_cpu_buffer_from_ptr(source->data, ggml_nbytes(source)));
+            if (!weight->buffer ||
+                ggml_backend_tensor_alloc(weight->buffer.get(), tensor, source->data) != GGML_STATUS_SUCCESS)
+                throw std::runtime_error("CLAP: mapped weight buffer initialization failed");
+        }
+    }
+    // Small affine vectors should follow adjacent compute instead of pinning it to the CPU.
+    ggml_backend_buffer_set_usage(weight->buffer.get(), device || !ggml_is_vector(source)
+                                                            ? GGML_BACKEND_BUFFER_USAGE_WEIGHTS
+                                                            : GGML_BACKEND_BUFFER_USAGE_ANY);
+    weight->tensor = tensor;
+    auto *result = weight->tensor;
+    const size_t bytes = ggml_backend_buffer_get_size(weight->buffer.get());
+    state->entries.emplace(key, std::move(weight));
+    if (device) {
+        ++state->stats.device_tensors;
+        state->stats.device_bytes += bytes;
+        ++state->stats.uploads;
+        uploaded = true;
+    } else {
+        ++state->stats.host_tensors;
+        state->stats.host_bytes += bytes;
+    }
+    return result;
+}
+} // namespace clap::detail
+
+clap::detail::Model::Model(const std::string &path, const clap::RuntimeOptions &options) : loader(options) {
     using namespace clap::detail;
-    const int threads = options.threads;
     clap::detail::load_model_weights(loader, path);
     const auto name = loader.metadata("general.architecture");
+    const auto initialize_weights = [&]() -> const ModelLoader & {
+        weights = std::make_shared<ModelWeights>(loader);
+        return loader;
+    };
     if (name == "clap")
-        architecture = std::make_unique<ClapModel>(loader, threads);
+        architecture = std::make_unique<ClapModel>(initialize_weights());
     else if (name == "clap2")
-        architecture = std::make_unique<Clap2Model>(loader, threads);
+        architecture = std::make_unique<Clap2Model>(initialize_weights());
     else if (name == "clamp3")
-        architecture = std::make_unique<Clamp3Model>(loader, threads);
+        architecture = std::make_unique<Clamp3Model>(initialize_weights());
     else if (name == "mert2")
-        architecture = std::make_unique<Mert2Model>(loader, threads);
+        architecture = std::make_unique<Mert2Model>(initialize_weights());
     else if (name == "mert")
-        architecture = std::make_unique<MertModel>(loader, threads);
+        architecture = std::make_unique<MertModel>(initialize_weights());
     else if (name == "muq_mulan")
-        architecture = std::make_unique<MuqMulanModel>(loader, threads);
+        architecture = std::make_unique<MuqMulanModel>(initialize_weights());
     else if (name == "muq")
-        architecture = std::make_unique<MuqModel>(loader, threads);
+        architecture = std::make_unique<MuqModel>(initialize_weights());
     else
         throw std::runtime_error("CLAP: unsupported GGUF architecture: " + name);
     loader.validate_tensor_coverage();
@@ -41,7 +238,7 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
             vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
     }
 }
-CLAP::~CLAP() = default;
+clap::detail::Model::~Model() = default;
 
 namespace clap::detail {
 namespace {
@@ -139,53 +336,4 @@ BatchNormWeights BatchNormWeights::create(const ModelLoader &loader, const std::
             loader.create_tensor(prefix + ".running_var", {width})};
 }
 
-std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max_length) {
-    if (model.vocabulary == nullptr)
-        throw std::runtime_error("CLAP: this model has no text tokenizer");
-    return model.vocabulary->tokenize(utf8, max_length);
-}
-std::vector<float> encode_text(CLAP &model, const std::string &utf8) {
-    if (model.vocabulary == nullptr)
-        throw std::runtime_error("CLAP: this model has no text encoder");
-    return model.architecture->text(tokenize(model, utf8, model.architecture->text_parameters().context_length));
-}
-std::vector<float> encode_audio(CLAP &model, const std::vector<float> &pcm, int sample_rate, size_t crop_offset) {
-    if (model.architecture->has_waveform_embeddings()) {
-        if (sample_rate <= 0)
-            throw std::runtime_error("CLAP: audio sample rate must be positive");
-        const int target = model.architecture->sample_rate();
-        if (sample_rate == target)
-            return model.architecture->waveform_embedding(pcm, crop_offset);
-        return model.architecture->waveform_embedding(resample_audio({pcm, sample_rate}, target).samples, crop_offset);
-    }
-    if (model.architecture->is_waveform_encoder()) {
-        if (crop_offset != 0)
-            throw std::runtime_error(
-                "CLAP: waveform encoders process the complete waveform; crop offsets are unsupported");
-        const auto sequence = audio_frames(model, pcm, sample_rate);
-        std::vector<float> pooled(sequence.dimension);
-        for (int frame = 0; frame < sequence.frames; ++frame)
-            for (int column = 0; column < sequence.dimension; ++column)
-                pooled[column] +=
-                    sequence.values[static_cast<size_t>(frame) * sequence.dimension + column] / sequence.frames;
-        return pooled;
-    }
-    throw std::runtime_error("CLAP: this model has no waveform audio encoder");
-}
-
-std::vector<float> encode_audio_file(CLAP &model, const std::string &path, size_t crop_offset) {
-    const auto audio = decode_audio(path);
-    return encode_audio(model, audio.samples, audio.sample_rate, crop_offset);
-}
-
-AudioFrames audio_frames(CLAP &model, const std::vector<float> &pcm, int sample_rate) {
-    if (!(model.architecture->is_waveform_encoder()))
-        throw std::runtime_error("CLAP: this model does not expose frame representations");
-    if (!(sample_rate > 0))
-        throw std::runtime_error("CLAP: audio sample rate must be positive");
-    const int target = model.architecture->sample_rate();
-    if (sample_rate == target)
-        return model.architecture->audio_frames(pcm);
-    return model.architecture->audio_frames(resample_audio({pcm, sample_rate}, target).samples);
-}
 } // namespace clap::detail

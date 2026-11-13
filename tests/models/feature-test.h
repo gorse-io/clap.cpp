@@ -2,6 +2,7 @@
 // Test-only access to private tensor-input encoders and MERT feature extraction;
 // never installed or linked into the production CLI. Keeps numerical oracles
 // independent of the bundled waveform pipeline.
+#include "../../src/context.h"
 #include "../../src/models/models.h"
 #include "audio.h"
 
@@ -18,21 +19,29 @@ struct FeatureTestAccess {
         clap::detail::load_model_weights(loader, path);
         if (loader.metadata("general.architecture") != "mert")
             throw std::runtime_error("test feature extraction requires a standalone MERT model");
-        MertModel model(loader, 2);
+        auto weights = std::make_shared<ModelWeights>(loader);
+        MertModel model(loader);
+        Context context(weights, 2);
+        model.initialize_context(context);
         if (sample_rate == 24000)
-            return model.clamp3_features(pcm);
-        return model.clamp3_features(resample_audio({pcm, sample_rate}, 24000).samples);
+            return model.clamp3_features(context, pcm);
+        return model.clamp3_features(context, resample_audio({pcm, sample_rate}, 24000).samples);
     }
     static std::vector<float> encode(const std::string &path, const std::vector<float> &values, int frames,
                                      const RuntimeOptions &options = {}) {
         ModelLoader loader(options);
         clap::detail::load_model_weights(loader, path);
+        auto weights = std::make_shared<ModelWeights>(loader);
         if (loader.metadata("general.architecture") == "clap") {
-            ClapModel model(loader, 2);
-            return model.encode_features(values, frames);
+            ClapModel model(loader);
+            Context context(weights, 2);
+            model.initialize_context(context);
+            return model.encode_features(context, values, frames);
         }
-        Clamp3Model model(loader, 2);
-        return model.encode_features(values, frames);
+        Clamp3Model model(loader);
+        Context context(weights, 2);
+        model.initialize_context(context);
+        return model.encode_features(context, values, frames);
     }
 };
 } // namespace clap::detail

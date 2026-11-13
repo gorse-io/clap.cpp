@@ -1,4 +1,5 @@
 #include "graph.h"
+#include "model.h"
 
 #include <ggml-cpu.h>
 
@@ -8,38 +9,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-namespace {
-void load_backends() {
-    static std::once_flag once;
-    std::call_once(once, [] { ggml_backend_load_all(); });
-}
-bool is_gpu(ggml_backend_dev_t device) {
-    const auto type = ggml_backend_dev_type(device);
-    return type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU;
-}
-bool enabled(ggml_backend_dev_t device) {
-    const std::string backend = ggml_backend_reg_name(ggml_backend_dev_backend_reg(device));
-    const char *key = backend == "CUDA"     ? "CLAP_CUDA"
-                      : backend == "ROCm"   ? "CLAP_ROCM"
-                      : backend == "Vulkan" ? "CLAP_VULKAN"
-                      : backend == "MTL"    ? "CLAP_METAL"
-                                            : nullptr;
-    const char *value = key ? std::getenv(key) : nullptr;
-    return !value || std::strcmp(value, "0") != 0;
-}
-} // namespace
-namespace clap {
-std::vector<DeviceInfo> available_devices() {
-    load_backends();
-    std::vector<DeviceInfo> devices;
-    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-        auto device = ggml_backend_dev_get(i);
-        devices.push_back({ggml_backend_dev_name(device), ggml_backend_dev_description(device), is_gpu(device)});
-    }
-    return devices;
-}
-} // namespace clap
-
 namespace clap::detail {
 HostMatrix::HostMatrix(int r, int c) : rows(r), cols(c), data() {
     if (!(r > 0 && c > 0))
@@ -48,71 +17,48 @@ HostMatrix::HostMatrix(int r, int c) : rows(r), cols(c), data() {
 }
 
 namespace {
-using Context = std::unique_ptr<ggml_context, decltype(&ggml_free)>;
-using Buffer = std::unique_ptr<ggml_backend_buffer, decltype(&ggml_backend_buffer_free)>;
 using Backend = std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)>;
 } // namespace
 struct GraphRuntime::State {
     const ModelLoader &loader;
     bool f32_activations;
     std::mutex mutex;
+    std::shared_ptr<ModelWeights> weights;
     Backend gpu{nullptr, ggml_backend_free};
     Backend cpu{nullptr, ggml_backend_free};
-    struct Weight {
-        Context context{nullptr, ggml_free};
-        Buffer buffer{nullptr, ggml_backend_buffer_free};
-        ggml_tensor *tensor = nullptr;
-    };
-    std::unordered_map<ggml_tensor *, std::unique_ptr<Weight>> weights[2];
     std::unique_ptr<ggml_backend_sched, decltype(&ggml_backend_sched_free)> scheduler{nullptr, ggml_backend_sched_free};
     size_t scheduler_capacity = 0;
     bool vulkan = false, metal = false;
     bool last_gpu = false;
     size_t uploads = 0;
+    int threads;
     GraphStats stats;
     std::string cache_key;
-    // Destroy cached graph before its scheduler, backends and weight buffers.
+    // Destroy cached graph before its scheduler, compute backends and model store.
     std::unique_ptr<Graph> cache;
-    State(const ModelLoader &source, int threads, bool preserve_activations)
-        : loader(source), f32_activations(preserve_activations || source.f32_activation_compute()) {
+    State(const ModelLoader &source, int requested_threads, bool preserve_activations,
+          std::shared_ptr<ModelWeights> shared_weights)
+        : loader(source), f32_activations(preserve_activations || source.f32_activation_compute()),
+          weights(shared_weights ? std::move(shared_weights) : std::make_shared<ModelWeights>(source)),
+          threads(requested_threads > 0 ? requested_threads : int(std::max(1u, std::thread::hardware_concurrency()))) {
         f32_activations |= source.runtime_options().activation_precision == ActivationPrecision::F32;
-        std::string requested = source.runtime_options().device;
-        if (requested.empty()) {
-            const char *environment = std::getenv("CLAP_DEVICE");
-            requested = environment && *environment ? environment : "auto";
-        }
-        // Explicit CPU execution must not initialize GPU drivers or compile shaders.
-        if (requested != "cpu" && requested != "CPU")
-            load_backends();
         cpu.reset(ggml_backend_cpu_init());
         if (!cpu)
             throw std::runtime_error("CLAP: CPU backend initialization failed");
-        ggml_backend_cpu_set_n_threads(cpu.get(),
-                                       threads > 0 ? threads : int(std::max(1u, std::thread::hardware_concurrency())));
-        if (requested == "auto") {
-            for (size_t i = 0; i < ggml_backend_dev_count() && !gpu; ++i) {
-                auto device = ggml_backend_dev_get(i);
-                if (is_gpu(device) && enabled(device))
-                    gpu.reset(ggml_backend_dev_init(device, nullptr));
-            }
-        } else if (requested != "cpu" && requested != ggml_backend_dev_name(ggml_backend_get_device(cpu.get()))) {
-            auto device = ggml_backend_dev_by_name(requested.c_str());
-            if (!device)
-                throw std::runtime_error("CLAP: unknown GGML device: " + requested + "; use clap devices");
+        ggml_backend_cpu_set_n_threads(cpu.get(), threads);
+        if (auto device = weights->gpu_device()) {
             gpu.reset(ggml_backend_dev_init(device, nullptr));
             if (!gpu)
-                throw std::runtime_error("CLAP: cannot initialize requested GGML device: " + requested);
+                throw std::runtime_error("CLAP: cannot initialize requested GGML device: " +
+                                         std::string(ggml_backend_dev_name(device)));
         }
-        if (gpu) {
-            const std::string backend =
-                ggml_backend_reg_name(ggml_backend_dev_backend_reg(ggml_backend_get_device(gpu.get())));
-            vulkan = backend == "Vulkan";
-            metal = backend == "MTL";
-        }
+        vulkan = weights->uses_vulkan();
+        metal = weights->uses_metal();
     }
 };
-GraphRuntime::GraphRuntime(const ModelLoader &loader, int threads, bool f32_activations)
-    : state(std::make_unique<State>(loader, threads, f32_activations)) {}
+GraphRuntime::GraphRuntime(const ModelLoader &loader, int threads, bool f32_activations,
+                           std::shared_ptr<ModelWeights> weights)
+    : state(std::make_unique<State>(loader, threads, f32_activations, std::move(weights))) {}
 GraphRuntime::~GraphRuntime() = default;
 bool GraphRuntime::last_graph_used_vulkan() const {
     std::lock_guard<std::mutex> guard(state->mutex);
@@ -128,6 +74,7 @@ GraphStats GraphRuntime::stats() const {
     stats.device = ggml_backend_dev_name(ggml_backend_get_device(state->gpu ? state->gpu.get() : state->cpu.get()));
     stats.device_matmul = state->last_gpu;
     stats.weight_uploads = state->uploads;
+    stats.threads = state->threads;
     return stats;
 }
 GraphInput::GraphInput(const std::vector<float> &values, int64_t cols, int64_t count)
@@ -234,54 +181,10 @@ ggml_tensor *Graph::indices(const std::vector<int> &data) {
     return tensor;
 }
 ggml_tensor *Graph::raw_weight(ggml_tensor *source, bool dense) {
-    const std::string name = ggml_get_name(source);
     const bool device = dense && runtime.gpu;
-    auto &weights = runtime.weights[device];
-    auto found = weights.find(source);
-    if (found != weights.end())
-        return found->second->tensor;
-    auto weight = std::make_unique<GraphRuntime::State::Weight>();
-    weight->context.reset(ggml_init({ggml_tensor_overhead(), nullptr, true}));
-    if (!weight->context)
-        throw std::runtime_error("CLAP: weight metadata allocation failed");
-    auto *tensor = ggml_dup_tensor(weight->context.get(), source);
-    ggml_set_name(tensor, name.c_str());
-    if (device) {
-        // Keep the cooperative-matrix tile workaround for the pinned Vulkan backend.
-        if (runtime.vulkan)
-            tensor->ne[1] = (tensor->ne[1] + 31) / 32 * 32;
-        tensor->nb[2] = tensor->nb[1] * tensor->ne[1];
-        tensor->nb[3] = tensor->nb[2] * tensor->ne[2];
-        weight->buffer.reset(ggml_backend_alloc_ctx_tensors(weight->context.get(), runtime.gpu.get()));
-        if (!weight->buffer)
-            throw std::runtime_error("CLAP: device weight allocation failed");
-        const size_t bytes = ggml_nbytes(source);
-        if (ggml_nbytes(tensor) > bytes)
-            ggml_backend_tensor_memset(tensor, 0, bytes, ggml_nbytes(tensor) - bytes);
-        ggml_backend_tensor_set(tensor, source->data, 0, bytes);
-        ++runtime.uploads;
-    } else {
-        const size_t alignment =
-            ggml_backend_buft_get_alignment(ggml_backend_get_default_buffer_type(runtime.cpu.get()));
-        if (reinterpret_cast<uintptr_t>(source->data) % alignment) {
-            // Promoted F16 weights can come from std::vector storage with weaker alignment.
-            weight->buffer.reset(ggml_backend_alloc_ctx_tensors(weight->context.get(), runtime.cpu.get()));
-            if (!weight->buffer)
-                throw std::runtime_error("CLAP: aligned weight allocation failed");
-            ggml_backend_tensor_set(tensor, source->data, 0, ggml_nbytes(source));
-        } else {
-            weight->buffer.reset(ggml_backend_cpu_buffer_from_ptr(source->data, ggml_nbytes(source)));
-            if (!weight->buffer ||
-                ggml_backend_tensor_alloc(weight->buffer.get(), tensor, source->data) != GGML_STATUS_SUCCESS)
-                throw std::runtime_error("CLAP: mapped weight buffer initialization failed");
-        }
-    }
-    // Small affine vectors should follow adjacent compute instead of pinning it to the CPU.
-    ggml_backend_buffer_set_usage(weight->buffer.get(), device || !ggml_is_vector(source)
-                                                            ? GGML_BACKEND_BUFFER_USAGE_WEIGHTS
-                                                            : GGML_BACKEND_BUFFER_USAGE_ANY);
-    weight->tensor = tensor;
-    weights.emplace(source, std::move(weight));
+    bool uploaded = false;
+    auto *tensor = runtime.weights->get(source, device ? runtime.gpu.get() : runtime.cpu.get(), device, uploaded);
+    runtime.uploads += uploaded ? 1 : 0;
     return tensor;
 }
 ggml_tensor *Graph::weight(ggml_tensor *source, bool f32) {

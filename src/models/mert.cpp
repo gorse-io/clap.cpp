@@ -1,3 +1,4 @@
+#include "context.h"
 #include "models.h"
 
 #include <algorithm>
@@ -23,12 +24,13 @@ TensorLoadPolicy MertModel::loading_policy(const ModelLoader &) {
     return policy;
 }
 
-MertModel::MertModel(const ModelLoader &source, int threads, const std::string &tensor_prefix,
-                     const std::string &metadata_prefix)
-    : loader(source, tensor_prefix, metadata_prefix), runtime(loader, threads, true) {
+MertModel::MertModel(const ModelLoader &source, const std::string &tensor_prefix, const std::string &metadata_prefix)
+    : loader(source, tensor_prefix, metadata_prefix) {
     load_arch_hparams();
     load_arch_tensors();
 }
+
+void MertModel::initialize_context(Context &context) const { context.runtime(this, loader, true); }
 
 void MertModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("mert.config"));
@@ -122,7 +124,7 @@ void MertModel::load_arch_tensors() {
     }
 }
 
-std::vector<float> MertModel::text(const std::vector<int> &) const {
+std::vector<float> MertModel::text(Context &, const std::vector<int> &) const {
     throw std::runtime_error("MERT-v1 has no text encoder");
 }
 
@@ -154,7 +156,8 @@ ggml_tensor *MertModel::attention(Graph &g, ggml_tensor *x, const AttentionWeigh
     return g.linear(g.attention(q, k, v, h.heads), weights.output);
 }
 
-HostMatrix MertModel::forward(const std::vector<float> &pcm, std::vector<float> *layer_mean) const {
+HostMatrix MertModel::forward(Context &context, const std::vector<float> &pcm, std::vector<float> *layer_mean) const {
+    const auto &runtime = context.runtime(this, loader, true);
     auto outputs =
         runtime.run_cached(layer_mean ? "mean-layers" : "frames", {GraphInput(pcm, 1, pcm.size())}, [&](Graph &g) {
             auto *ctx = g.ctx();
@@ -215,11 +218,11 @@ HostMatrix MertModel::forward(const std::vector<float> &pcm, std::vector<float> 
     return result;
 }
 
-AudioFrames MertModel::audio_frames(const std::vector<float> &pcm) const {
-    auto output = forward(normalize(pcm), nullptr);
+AudioFrames MertModel::audio_frames(Context &context, const std::vector<float> &pcm) const {
+    auto output = forward(context, normalize(pcm), nullptr);
     return {std::move(output.data), output.rows, output.cols};
 }
-AudioFrames MertModel::clamp3_features(const std::vector<float> &pcm) const {
+AudioFrames MertModel::clamp3_features(Context &context, const std::vector<float> &pcm) const {
     if (pcm.size() < 24000)
         throw std::runtime_error("CLaMP3 MERT extraction requires at least one second of audio");
     auto normalized = normalize(pcm);
@@ -231,7 +234,7 @@ AudioFrames MertModel::clamp3_features(const std::vector<float> &pcm) const {
         if (count < 24000)
             break;
         std::vector<float> chunk(normalized.begin() + start, normalized.begin() + start + count), mean;
-        forward(chunk, &mean);
+        forward(context, chunk, &mean);
         result.values.insert(result.values.end(), mean.begin(), mean.end());
         ++result.frames;
     }

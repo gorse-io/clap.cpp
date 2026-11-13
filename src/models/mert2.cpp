@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "context.h"
 #include "models.h"
 #include "quant.h"
 
@@ -28,10 +29,12 @@ TensorLoadPolicy Mert2Model::loading_policy(const ModelLoader &) {
 }
 
 using json = nlohmann::json;
-Mert2Model::Mert2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
+Mert2Model::Mert2Model(const ModelLoader &source) : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
 }
+
+void Mert2Model::initialize_context(Context &context) const { context.runtime(this, loader, false); }
 
 void Mert2Model::load_arch_hparams() {
     config = json::parse(loader.metadata("mert2.config"));
@@ -151,7 +154,7 @@ int Mert2Model::mel_bins() const { return h.bins; }
 int Mert2Model::sample_rate() const { return h.sample_rate; }
 bool Mert2Model::is_waveform_encoder() const { return true; }
 
-std::vector<float> Mert2Model::text(const std::vector<int> &) const {
+std::vector<float> Mert2Model::text(Context &, const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MERT2 has no text encoder");
 }
 
@@ -236,7 +239,8 @@ ggml_tensor *Mert2Model::conformer_convolution(Graph &g, ggml_tensor *hidden, co
     return g.conv1d(value, weights.output, 1, 1, 0, 1);
 }
 
-AudioFrames Mert2Model::audio_frames(const std::vector<float> &pcm) const {
+AudioFrames Mert2Model::audio_frames(Context &context, const std::vector<float> &pcm) const {
+    const auto &runtime = context.runtime(this, loader, false);
     const size_t maximum = (size_t{1} << 30) / sizeof(float);
     if (!(pcm.size() >= h.minimum_samples))
         throw std::runtime_error("CLAP: MERT2 waveform is shorter than minimum_input_samples");

@@ -1,3 +1,4 @@
+#include "context.h"
 #include "models.h"
 #include "quant.h"
 
@@ -68,10 +69,13 @@ void positive(const nlohmann::json &obj, const char *key) {
         throw std::runtime_error(std::string("CLAP: invalid MuLan dimension: ") + key);
 }
 } // namespace
-MuqMulanModel::MuqMulanModel(const ModelLoader &source, int threads)
-    : loader(source), runtime(source, threads), audio_backbone(source, threads) {
+MuqMulanModel::MuqMulanModel(const ModelLoader &source) : loader(source), audio_backbone(source) {
     load_arch_hparams();
     load_arch_tensors();
+}
+void MuqMulanModel::initialize_context(Context &context) const {
+    context.runtime(this, loader, false);
+    audio_backbone.initialize_context(context);
 }
 void MuqMulanModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq_mulan.config"));
@@ -171,7 +175,7 @@ TextParameters MuqMulanModel::text_parameters() const {
     return {0, 2, std::numeric_limits<size_t>::max()};
 }
 int MuqMulanModel::projection_dimension() const { return h.projection; }
-AudioFrames MuqMulanModel::audio_frames(const std::vector<float> &) const {
+AudioFrames MuqMulanModel::audio_frames(Context &, const std::vector<float> &) const {
     throw std::runtime_error("CLAP: MuLan exposes embeddings, not frames");
 }
 ggml_tensor *MuqMulanModel::encode_text(Graph &g, ggml_tensor *embeddings) const {
@@ -219,7 +223,8 @@ ggml_tensor *MuqMulanModel::adapter(Graph &g, ggml_tensor *x) const {
 ggml_tensor *MuqMulanModel::project(Graph &g, ggml_tensor *x, const LayerWeights &weights) const {
     return g.l2_normalize(g.linear(g.mean_pool(x), weights));
 }
-std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
+std::vector<float> MuqMulanModel::text(Context &context, const std::vector<int> &ids) const {
+    const auto &runtime = context.runtime(this, loader, false);
     const int positions = h.positions, vocab = h.vocab;
     if (ids.empty() || ids.size() > static_cast<size_t>(positions - 2))
         throw std::runtime_error("CLAP: MuLan text is empty or exceeds XLM-R context; truncation/chunking unsupported");
@@ -242,7 +247,9 @@ std::vector<float> MuqMulanModel::text(const std::vector<int> &ids) const {
     });
     return std::move(outputs.front().values);
 }
-std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &pcm, size_t crop_offset) const {
+std::vector<float> MuqMulanModel::waveform_embedding(Context &context, const std::vector<float> &pcm,
+                                                     size_t crop_offset) const {
+    const auto &runtime = context.runtime(this, loader, false);
     if (crop_offset != 0)
         throw std::runtime_error("CLAP: crop offsets are unsupported for this model");
     if (pcm.empty() || pcm.size() > (size_t{1} << 28) ||
@@ -257,7 +264,7 @@ std::vector<float> MuqMulanModel::waveform_embedding(const std::vector<float> &p
         // Exactly one prefix slice, even when it cannot fill a ten-second clip.
         if (remaining < delta)
             clip.insert(clip.end(), pcm.begin(), pcm.begin() + std::min(delta - remaining, pcm.size()));
-        auto frames = audio_backbone.audio_frames(clip);
+        auto frames = audio_backbone.audio_frames(context, clip);
         const auto outputs =
             runtime.run_cached("audio", {GraphInput(frames.values, frames.dimension, frames.frames)}, [&](Graph &g) {
                 return std::vector<ggml_tensor *>{

@@ -17,9 +17,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <thread>
 
 namespace {
 bool fail_allocations = false;
@@ -59,4 +61,78 @@ TEST(ABI, OutOfMemory) {
     EXPECT_EQ(CLAP_OUT_OF_MEMORY, status);
     EXPECT_EQ(nullptr, model);
     EXPECT_TRUE(valid_error);
+}
+
+TEST(ABI, ModelLoadOutOfMemory) {
+    auto *model = reinterpret_cast<clap_model *>(1);
+    clap_status status;
+    bool valid_error;
+    bool diagnostic_preserved;
+    int default_threads;
+    {
+        AllocationFailureScope failure_scope;
+        status = clap_model_load("unused.gguf", nullptr, &model);
+        const char *error = clap_last_error();
+        valid_error = std::strstr(error, "out of memory") != nullptr;
+        char saved[1024];
+        std::snprintf(saved, sizeof(saved), "%s", error);
+        default_threads = clap_default_context_options().threads;
+        (void)clap_default_options();
+        clap_model_free(nullptr);
+        clap_destroy(nullptr);
+        clap_free(nullptr);
+        clap_free_devices(nullptr, 0);
+        clap_free_audio_frames(nullptr);
+        diagnostic_preserved = std::strcmp(saved, clap_last_error()) == 0;
+    }
+    EXPECT_EQ(CLAP_OUT_OF_MEMORY, status);
+    EXPECT_EQ(nullptr, model);
+    EXPECT_TRUE(valid_error);
+    EXPECT_EQ(0, default_threads);
+    EXPECT_TRUE(diagnostic_preserved);
+}
+
+TEST(ABI, SharedModelOutputResetAndValidationWithoutAllocations) {
+    clap_status model_status;
+    clap_status context_status;
+    bool valid_model_error;
+    bool valid_context_error;
+    auto *model = reinterpret_cast<clap_model *>(1);
+    auto *context = reinterpret_cast<CLAP *>(1);
+    {
+        AllocationFailureScope failure_scope;
+        model_status = clap_model_load(nullptr, nullptr, &model);
+        valid_model_error = *clap_last_error() != '\0';
+        context_status = clap_context_create(nullptr, nullptr, &context);
+        valid_context_error = *clap_last_error() != '\0';
+    }
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, model_status);
+    EXPECT_EQ(nullptr, model);
+    EXPECT_TRUE(valid_model_error);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, context_status);
+    EXPECT_EQ(nullptr, context);
+    EXPECT_TRUE(valid_context_error);
+}
+
+TEST(ABI, SharedModelDiagnosticsAreThreadLocal) {
+    clap_model *model = nullptr;
+    ASSERT_EQ(CLAP_INVALID_ARGUMENT, clap_model_load(nullptr, nullptr, &model));
+    char saved[1024];
+    std::snprintf(saved, sizeof(saved), "%s", clap_last_error());
+    clap_status worker_status = CLAP_OK;
+    bool worker_initially_clear = false;
+    bool worker_error_present = false;
+    std::thread worker([&] {
+        worker_initially_clear = *clap_last_error() == '\0';
+        clap_model *worker_model = nullptr;
+        auto options = clap_default_options();
+        options.threads = -1;
+        worker_status = clap_model_load("unused.gguf", &options, &worker_model);
+        worker_error_present = std::strstr(clap_last_error(), "threads must be nonnegative") != nullptr;
+    });
+    worker.join();
+    EXPECT_TRUE(worker_initially_clear);
+    EXPECT_EQ(CLAP_INVALID_ARGUMENT, worker_status);
+    EXPECT_TRUE(worker_error_present);
+    EXPECT_STREQ(saved, clap_last_error());
 }

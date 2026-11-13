@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "context.h"
 #include "models.h"
 
 #include <algorithm>
@@ -16,10 +17,12 @@ TensorLoadPolicy Clap2Model::loading_policy(const ModelLoader &) {
     });
 }
 
-Clap2Model::Clap2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads, true) {
+Clap2Model::Clap2Model(const ModelLoader &source) : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
 }
+void Clap2Model::initialize_context(Context &context) const { context.runtime(this, loader, true); }
+
 void Clap2Model::load_arch_hparams() {
     const auto config = nlohmann::json::parse(loader.metadata("clap2.config"));
     const auto processor = nlohmann::json::parse(loader.metadata("clap2.processor_config"));
@@ -269,7 +272,8 @@ ggml_tensor *Clap2Model::pool(Graph &g, ggml_tensor *x, bool is_audio, ggml_tens
         out = g.linear(out, text_projection);
     return g.l2_normalize(out);
 }
-std::vector<float> Clap2Model::text(const std::vector<int> &ids) const {
+std::vector<float> Clap2Model::text(Context &context, const std::vector<int> &ids) const {
+    const auto &runtime = context.runtime(this, loader, true);
     if (ids.empty() || ids.size() > size_t(h.positions))
         throw std::runtime_error("CLAP: invalid CLAP2 text length");
     std::vector<float> mask(ids.size());
@@ -354,7 +358,9 @@ HostMatrix Clap2Model::patches(const HostMatrix &mel) const {
                 }
     return out;
 }
-std::vector<float> Clap2Model::waveform_embedding(const std::vector<float> &pcm, size_t offset) const {
+std::vector<float> Clap2Model::waveform_embedding(Context &context, const std::vector<float> &pcm,
+                                                  size_t offset) const {
+    const auto &runtime = context.runtime(this, loader, true);
     if (offset)
         throw std::runtime_error("CLAP: CLAP2 processes the complete waveform; crop offsets are unsupported");
     const auto features = frontend(pcm);
@@ -370,7 +376,7 @@ std::vector<float> Clap2Model::waveform_embedding(const std::vector<float> &pcm,
     });
     return result.front().values;
 }
-AudioFrames Clap2Model::audio_frames(const std::vector<float> &) const {
+AudioFrames Clap2Model::audio_frames(Context &, const std::vector<float> &) const {
     throw std::runtime_error("CLAP: CLAP2 exposes pooled audio embeddings, not frame representations");
 }
 } // namespace clap::detail

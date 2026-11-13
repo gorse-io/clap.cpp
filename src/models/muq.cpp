@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "context.h"
 #include "models.h"
 #include "quant.h"
 
@@ -29,10 +30,12 @@ TensorLoadPolicy MuqModel::loading_policy(const ModelLoader &) {
     return policy;
 }
 
-MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
+MuqModel::MuqModel(const ModelLoader &source) : loader(source) {
     load_arch_hparams();
     load_arch_tensors();
 }
+
+void MuqModel::initialize_context(Context &context) const { context.runtime(this, loader, false); }
 void MuqModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq.config"));
     encoder = config.at("w2v2_config");
@@ -138,7 +141,7 @@ int MuqModel::projection_dimension() const { return h.hidden; }
 int MuqModel::mel_bins() const { return 128; }
 int MuqModel::sample_rate() const { return 24000; }
 bool MuqModel::is_waveform_encoder() const { return true; }
-std::vector<float> MuqModel::text(const std::vector<int> &) const {
+std::vector<float> MuqModel::text(Context &, const std::vector<int> &) const {
     throw std::runtime_error("CLAP: MuQ has no text encoder");
 }
 HostMatrix MuqModel::frontend(const std::vector<float> &pcm) const {
@@ -239,7 +242,8 @@ ggml_tensor *MuqModel::conformer_convolution(Graph &g, ggml_tensor *hidden, cons
     value = ggml_silu(ctx, batch_norm(g, value, weights.batch_norm));
     return g.conv1d(value, weights.output, 1, 1, 0, 1);
 }
-AudioFrames MuqModel::audio_frames(const std::vector<float> &pcm) const {
+AudioFrames MuqModel::audio_frames(Context &context, const std::vector<float> &pcm) const {
+    const auto &runtime = context.runtime(this, loader, false);
     if (!(pcm.size() >= 1025))
         throw std::runtime_error("CLAP: MuQ waveform must contain at least 1025 samples");
     if (!(pcm.size() <= (size_t{1} << 30) / sizeof(float)))

@@ -76,6 +76,7 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    find_package(Threads REQUIRED)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/googletest/CMakeLists.txt")
         message(FATAL_ERROR
             "GoogleTest submodule is missing. Run: git submodule update --init --recursive")
@@ -94,6 +95,25 @@ if(BUILD_TESTING)
             VERBATIM)
     endif()
     add_test(NAME test-model-loader COMMAND test-model-loader)
+
+    add_executable(test-c-header tests/test-c-header.c)
+    set_target_properties(test-c-header PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS OFF)
+    target_link_libraries(test-c-header PRIVATE clap)
+    add_test(NAME test-clap-c-header COMMAND test-c-header)
+
+    add_executable(test-context tests/test-context.cpp)
+    target_include_directories(test-context PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-context PRIVATE clap nlohmann_json::nlohmann_json Threads::Threads)
+    add_test(NAME test-model-context
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/contexts.py"
+                "$<TARGET_FILE:test-context>" "${CMAKE_CURRENT_BINARY_DIR}/context-fixture")
+    set_tests_properties(test-model-context PROPERTIES TIMEOUT 90)
+    if(GGML_CUDA OR GGML_HIP OR GGML_METAL OR GGML_VULKAN)
+        add_test(NAME test-model-context-device
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/contexts.py"
+                    "$<TARGET_FILE:test-context>" "${CMAKE_CURRENT_BINARY_DIR}/context-device-fixture" --device)
+        set_tests_properties(test-model-context-device PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
+    endif()
 
     if(NOT BUILD_SHARED_LIBS)
         add_executable(test-abi tests/test-abi.cpp)
@@ -455,7 +475,7 @@ endif()
 get_property(CLAP_LOCAL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(target IN LISTS CLAP_LOCAL_TARGETS)
     get_target_property(kind ${target} TYPE)
-    if(kind STREQUAL "EXECUTABLE")
+    if(kind STREQUAL "EXECUTABLE" AND NOT target STREQUAL "test-c-header")
         target_compile_features(${target} PRIVATE cxx_std_20)
     endif()
 endforeach()

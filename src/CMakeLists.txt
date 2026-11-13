@@ -6,6 +6,8 @@ set(CLAP_CORE_SOURCES
     clap.cpp
     model.h
     model.cpp
+    context.h
+    context.cpp
     model-loader.cpp
     quant.h
     quant.cpp
