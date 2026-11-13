@@ -185,6 +185,46 @@ jobs:
         run: |
           mvn -B -f java/pom.xml "-Dclap.test.classesDirectory=$GITHUB_WORKSPACE/java/target/clap-cpp-0.1.0-SNAPSHOT.jar" surefire:test
 
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            runtime: linux-x64
+          - os: ubuntu-24.04-arm
+            runtime: linux-arm64
+          - os: macos-latest
+            runtime: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+          cache: false
+      - name: Build shared C runtime
+        uses: ./.github/actions/build-libraries
+        with:
+          target: ${{ matrix.runtime }}
+      - name: Configure CGO
+        shell: bash
+        run: |
+          library="$GITHUB_WORKSPACE/libraries/${{ matrix.runtime }}/clap_cpp"
+          echo "CGO_LDFLAGS=-L$library" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$library" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$library" >> "$GITHUB_ENV"
+      - name: Format, vet and test
+        working-directory: go
+        shell: bash
+        run: |
+          test -z "$(gofmt -l clap.go clap_test.go examples/embed/main.go)"
+          go vet ./...
+          go test -race -count=1 ./...
+          GOEXPERIMENT=cgocheck2 go test -count=1 ./...
+
   rust:
     strategy:
       fail-fast: false
