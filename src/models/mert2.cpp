@@ -13,7 +13,6 @@ using json = nlohmann::json;
 Mert2Model::Mert2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
 }
 
 void Mert2Model::load_arch_hparams() {
@@ -57,60 +56,7 @@ void Mert2Model::load_arch_hparams() {
         throw std::runtime_error("CLAP: MERT2 context metadata must cover at least 30 seconds");
 }
 
-void Mert2Model::load_arch_tensors() const {
-    const int bins = config.at("num_mel_bins"), frequencies = config.at("n_fft").get<int>() / 2 + 1;
-    loader.shape("feature_extractor.mel_mean", {bins});
-    loader.shape("feature_extractor.mel_std", {bins});
-    loader.shape("feature_extractor.spectrogram.window", {config.at("win_length").get<int>()});
-    loader.shape("feature_extractor.mel_scale.fb", {bins, frequencies});
-
-    const auto channels = config.at("subsampling_channels");
-    const auto depths = config.at("subsampling_depths");
-    int input = bins;
-    const float ignored = config.at("subsampling_layer_norm_eps");
-    (void)ignored;
-    for (int stage = 0; stage < 3; ++stage) {
-        const int output = channels[stage];
-        const std::string root = "subsampling_module." + std::to_string(stage);
-        if (stage > 0) {
-            loader.norm_shape(root + ".resampling_layer.0", input);
-            loader.shape(root + ".resampling_layer.2.weight", {2, input, output});
-            loader.shape(root + ".resampling_layer.2.bias", {output});
-        }
-        for (int layer = 0; layer < depths[stage].get<int>(); ++layer) {
-            const std::string prefix = root + ".convnext_layers." + std::to_string(layer);
-            loader.shape(prefix + ".depthwise_block.1.weight", {7, 1, output});
-            loader.shape(prefix + ".depthwise_block.1.bias", {output});
-            loader.norm_shape(prefix + ".pointwise_block.0", output);
-            loader.linear_shape(prefix + ".pointwise_block.1", output, output * 4);
-            loader.shape(prefix + ".pointwise_block.3.weight", {output * 4, 1, 1});
-            loader.shape(prefix + ".pointwise_block.3.bias", {output * 4, 1, 1});
-            loader.linear_shape(prefix + ".pointwise_block.4", output * 4, output);
-        }
-        input = output;
-    }
-
-    const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
-    const int kernel = config.at("conv_depthwise_kernel_size");
-    for (int layer = 0; layer < config.at("num_hidden_layers").get<int>(); ++layer) {
-        const std::string prefix = "layers." + std::to_string(layer);
-        for (const auto *name : {"ffn1_layer_norm", "attn_layer_norm", "ffn2_layer_norm", "final_layer_norm"})
-            loader.norm_shape(prefix + "." + name, hidden);
-        for (const auto *ffn : {"ffn1", "ffn2"}) {
-            loader.linear_shape(prefix + "." + ffn + ".w_1", hidden, intermediate);
-            loader.linear_shape(prefix + "." + ffn + ".w_2", intermediate, hidden);
-        }
-        for (const auto *projection : {"query_proj", "key_proj", "value_proj", "out_proj"})
-            loader.linear_shape(prefix + ".attn." + projection, hidden, hidden);
-        loader.norm_shape(prefix + ".conv_module.layer_norm", hidden);
-        loader.shape(prefix + ".conv_module.conv_block.1.weight", {1, hidden, hidden * 2});
-        loader.shape(prefix + ".conv_module.conv_block.3.weight", {kernel, 1, hidden});
-        loader.norm_shape(prefix + ".conv_module.conv_block.4.1", hidden);
-        loader.shape(prefix + ".conv_module.conv_block.6.weight", {1, hidden, hidden});
-    }
-}
-
-void Mert2Model::bind_tensors() {
+void Mert2Model::load_arch_tensors() {
     h = {config.at("hidden_size"),
          config.at("num_mel_bins"),
          config.at("sampling_rate"),
@@ -122,45 +68,61 @@ void Mert2Model::bind_tensors() {
          config.at("layer_norm_eps"),
          config.at("subsampling_layer_norm_eps"),
          config.at("rotary_embedding_base")};
-    window = loader.weight("feature_extractor.spectrogram.window");
-    filters = loader.weight("feature_extractor.mel_scale.fb");
-    mean = loader.weight("feature_extractor.mel_mean");
-    stddev = loader.weight("feature_extractor.mel_std");
+    const int bins = config.at("num_mel_bins"), frequencies = config.at("n_fft").get<int>() / 2 + 1;
+    mean = loader.create_tensor("feature_extractor.mel_mean", {bins});
+    stddev = loader.create_tensor("feature_extractor.mel_std", {bins});
+    window = loader.create_tensor("feature_extractor.spectrogram.window", {config.at("win_length").get<int>()});
+    filters = loader.create_tensor("feature_extractor.mel_scale.fb", {bins, frequencies});
+
+    const auto channels = config.at("subsampling_channels");
+    const auto depths = config.at("subsampling_depths");
+    int input = bins;
+    const float ignored = config.at("subsampling_layer_norm_eps");
+    (void)ignored;
     for (int i = 0; i < 3; ++i) {
         Stage stage;
-        stage.width = config.at("subsampling_channels")[i];
+        const int output = channels[i];
+        stage.width = output;
         const auto root = "subsampling_module." + std::to_string(i);
         if (i > 0) {
-            stage.norm = LayerWeights::bind(loader, root + ".resampling_layer.0");
-            stage.resample = LayerWeights::bind(loader, root + ".resampling_layer.2");
+            stage.norm = create_norm(loader, root + ".resampling_layer.0", input);
+            stage.resample = create_layer(loader, root + ".resampling_layer.2", {2, input, output}, {output});
         }
-        for (int j = 0; j < config.at("subsampling_depths")[i].get<int>(); ++j) {
+        for (int j = 0; j < depths[i].get<int>(); ++j) {
             const auto p = root + ".convnext_layers." + std::to_string(j);
-            stage.blocks.push_back({LayerWeights::bind(loader, p + ".depthwise_block.1"),
-                                    LayerWeights::bind(loader, p + ".pointwise_block.0"),
-                                    LayerWeights::bind(loader, p + ".pointwise_block.1"),
-                                    LayerWeights::bind(loader, p + ".pointwise_block.3"),
-                                    LayerWeights::bind(loader, p + ".pointwise_block.4")});
+            stage.blocks.push_back(
+                {create_layer(loader, p + ".depthwise_block.1", {7, 1, output}, {output}),
+                 create_norm(loader, p + ".pointwise_block.0", output),
+                 create_linear(loader, p + ".pointwise_block.1", output, output * 4),
+                 create_layer(loader, p + ".pointwise_block.3", {output * 4, 1, 1}, {output * 4, 1, 1}),
+                 create_linear(loader, p + ".pointwise_block.4", output * 4, output)});
         }
         stages.push_back(std::move(stage));
+        input = output;
     }
+
+    const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
+    const int kernel = config.at("conv_depthwise_kernel_size");
     for (int i = 0; i < config.at("num_hidden_layers").get<int>(); ++i) {
         const auto p = "layers." + std::to_string(i);
         ConformerWeights layer;
-        layer.ffn1 = {LayerWeights::bind(loader, p + ".ffn1_layer_norm"), LayerWeights::bind(loader, p + ".ffn1.w_1"),
-                      LayerWeights::bind(loader, p + ".ffn1.w_2")};
-        layer.ffn2 = {LayerWeights::bind(loader, p + ".ffn2_layer_norm"), LayerWeights::bind(loader, p + ".ffn2.w_1"),
-                      LayerWeights::bind(loader, p + ".ffn2.w_2")};
-        layer.attention_norm = LayerWeights::bind(loader, p + ".attn_layer_norm");
-        layer.final_norm = LayerWeights::bind(loader, p + ".final_layer_norm");
-        layer.attention = {
-            LayerWeights::bind(loader, p + ".attn.query_proj"), LayerWeights::bind(loader, p + ".attn.key_proj"),
-            LayerWeights::bind(loader, p + ".attn.value_proj"), LayerWeights::bind(loader, p + ".attn.out_proj")};
-        layer.convolution.norm = LayerWeights::bind(loader, p + ".conv_module.layer_norm");
-        layer.convolution.input = LayerWeights::bind(loader, p + ".conv_module.conv_block.1", false);
-        layer.convolution.depthwise = LayerWeights::bind(loader, p + ".conv_module.conv_block.3", false);
-        layer.convolution.output_norm = LayerWeights::bind(loader, p + ".conv_module.conv_block.4.1");
-        layer.convolution.output = LayerWeights::bind(loader, p + ".conv_module.conv_block.6", false);
+        layer.ffn1.norm = create_norm(loader, p + ".ffn1_layer_norm", hidden);
+        layer.attention_norm = create_norm(loader, p + ".attn_layer_norm", hidden);
+        layer.ffn2.norm = create_norm(loader, p + ".ffn2_layer_norm", hidden);
+        layer.final_norm = create_norm(loader, p + ".final_layer_norm", hidden);
+        layer.ffn1.input = create_linear(loader, p + ".ffn1.w_1", hidden, intermediate);
+        layer.ffn1.output = create_linear(loader, p + ".ffn1.w_2", intermediate, hidden);
+        layer.ffn2.input = create_linear(loader, p + ".ffn2.w_1", hidden, intermediate);
+        layer.ffn2.output = create_linear(loader, p + ".ffn2.w_2", intermediate, hidden);
+        layer.attention = {create_linear(loader, p + ".attn.query_proj", hidden, hidden),
+                           create_linear(loader, p + ".attn.key_proj", hidden, hidden),
+                           create_linear(loader, p + ".attn.value_proj", hidden, hidden),
+                           create_linear(loader, p + ".attn.out_proj", hidden, hidden)};
+        layer.convolution.norm = create_norm(loader, p + ".conv_module.layer_norm", hidden);
+        layer.convolution.input = create_layer(loader, p + ".conv_module.conv_block.1", {1, hidden, hidden * 2});
+        layer.convolution.depthwise = create_layer(loader, p + ".conv_module.conv_block.3", {kernel, 1, hidden});
+        layer.convolution.output_norm = create_norm(loader, p + ".conv_module.conv_block.4.1", hidden);
+        layer.convolution.output = create_layer(loader, p + ".conv_module.conv_block.6", {1, hidden, hidden});
         layers.push_back(layer);
     }
 }

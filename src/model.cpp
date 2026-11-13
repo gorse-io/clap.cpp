@@ -41,24 +41,42 @@ CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loade
 CLAP::~CLAP() = default;
 
 namespace clap::detail {
-EmbeddingWeights bind_embeddings(const ModelLoader &loader, const std::string &prefix, bool word) {
-    return {word ? loader.weight(prefix + ".word_embeddings.weight") : nullptr,
-            loader.weight(prefix + ".position_embeddings.weight"),
-            loader.weight(prefix + ".token_type_embeddings.weight"), LayerWeights::bind(loader, prefix + ".LayerNorm")};
+LayerWeights create_layer(const ModelLoader &loader, const std::string &name,
+                          std::initializer_list<int64_t> weight_dims, std::initializer_list<int64_t> bias_dims) {
+    auto *weight = loader.create_tensor(name + ".weight", weight_dims);
+    auto *bias = bias_dims.size() ? loader.create_tensor(name + ".bias", bias_dims) : nullptr;
+    return {weight, bias};
 }
-TransformerWeights bind_bert_layer(const ModelLoader &loader, const std::string &prefix) {
-    return {{LayerWeights::bind(loader, prefix + ".attention.self.query"),
-             LayerWeights::bind(loader, prefix + ".attention.self.key"),
-             LayerWeights::bind(loader, prefix + ".attention.self.value"),
-             LayerWeights::bind(loader, prefix + ".attention.output.dense")},
-            LayerWeights::bind(loader, prefix + ".attention.output.LayerNorm"),
-            LayerWeights::bind(loader, prefix + ".output.LayerNorm"),
-            LayerWeights::bind(loader, prefix + ".intermediate.dense"),
-            LayerWeights::bind(loader, prefix + ".output.dense")};
+LayerWeights create_linear(const ModelLoader &loader, const std::string &name, int64_t input, int64_t output,
+                           bool bias) {
+    return bias ? create_layer(loader, name, {input, output}, {output}) : create_layer(loader, name, {input, output});
 }
-BatchNormWeights BatchNormWeights::bind(const ModelLoader &loader, const std::string &prefix) {
-    return {LayerWeights::bind(loader, prefix), loader.weight(prefix + ".running_mean"),
-            loader.weight(prefix + ".running_var")};
+LayerWeights create_norm(const ModelLoader &loader, const std::string &name, int64_t width) {
+    return create_layer(loader, name, {width}, {width});
+}
+EmbeddingWeights create_embeddings(const ModelLoader &loader, const std::string &prefix, int64_t hidden, int64_t vocab,
+                                   int64_t positions, int64_t types, bool word) {
+    return {word ? loader.create_tensor(prefix + ".word_embeddings.weight", {hidden, vocab}) : nullptr,
+            loader.create_tensor(prefix + ".position_embeddings.weight", {hidden, positions}),
+            loader.create_tensor(prefix + ".token_type_embeddings.weight", {hidden, types}),
+            create_norm(loader, prefix + ".LayerNorm", hidden)};
+}
+TransformerWeights create_bert_layer(const ModelLoader &loader, const std::string &prefix, int64_t hidden,
+                                     int64_t intermediate) {
+    TransformerWeights layer;
+    layer.attention = {create_linear(loader, prefix + ".attention.self.query", hidden, hidden),
+                       create_linear(loader, prefix + ".attention.self.key", hidden, hidden),
+                       create_linear(loader, prefix + ".attention.self.value", hidden, hidden),
+                       create_linear(loader, prefix + ".attention.output.dense", hidden, hidden)};
+    layer.attention_norm = create_norm(loader, prefix + ".attention.output.LayerNorm", hidden);
+    layer.intermediate = create_linear(loader, prefix + ".intermediate.dense", hidden, intermediate);
+    layer.output = create_linear(loader, prefix + ".output.dense", intermediate, hidden);
+    layer.output_norm = create_norm(loader, prefix + ".output.LayerNorm", hidden);
+    return layer;
+}
+BatchNormWeights BatchNormWeights::create(const ModelLoader &loader, const std::string &prefix, int64_t width) {
+    return {create_norm(loader, prefix, width), loader.create_tensor(prefix + ".running_mean", {width}),
+            loader.create_tensor(prefix + ".running_var", {width})};
 }
 
 std::vector<int> tokenize(const CLAP &model, const std::string &utf8, size_t max_length) {

@@ -11,7 +11,6 @@ using json = nlohmann::json;
 Clamp3Model::Clamp3Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
     if (loader.has_metadata_prefix("clamp3.audio_frontend")) {
         if (loader.metadata("clamp3.audio_frontend") != "mert-v1")
             throw std::runtime_error("CLAP: unsupported CLaMP3 audio frontend");
@@ -87,35 +86,9 @@ void Clamp3Model::load_arch_hparams() {
         throw std::runtime_error("CLAP: invalid projection dimension");
 }
 
-void Clamp3Model::load_arch_tensors() const {
-    auto validate = [&](const json &c, const std::string &prefix, bool word_embeddings) {
-        const int dim = c.at("hidden_size"), layers = c.at("num_hidden_layers");
-        if (word_embeddings)
-            loader.shape(prefix + ".embeddings.word_embeddings.weight", {dim, c.at("vocab_size").get<int>()});
-        loader.shape(prefix + ".embeddings.position_embeddings.weight",
-                     {dim, c.at("max_position_embeddings").get<int>()});
-        loader.shape(prefix + ".embeddings.token_type_embeddings.weight", {dim, c.at("type_vocab_size").get<int>()});
-        loader.norm_shape(prefix + ".embeddings.LayerNorm", dim);
-        for (int layer = 0; layer < layers; ++layer) {
-            const auto p = prefix + ".encoder.layer." + std::to_string(layer);
-            for (const auto *name : {"query", "key", "value"})
-                loader.linear_shape(p + ".attention.self." + name, dim, dim);
-            loader.linear_shape(p + ".attention.output.dense", dim, dim);
-            loader.norm_shape(p + ".attention.output.LayerNorm", dim);
-            loader.linear_shape(p + ".intermediate.dense", dim, c.at("intermediate_size"));
-            loader.linear_shape(p + ".output.dense", c.at("intermediate_size"), dim);
-            loader.norm_shape(p + ".output.LayerNorm", dim);
-        }
-    };
-    validate(text_config, "text", true);
-    validate(audio_config, "audio", false);
-    loader.linear_shape("text_proj", text_config.at("hidden_size"), config.at("projection_dim"));
-    loader.linear_shape("audio_proj", audio_config.at("hidden_size"), config.at("projection_dim"));
-}
-
-void Clamp3Model::bind_tensors() {
+void Clamp3Model::load_arch_tensors() {
     projection_dim = config.at("projection_dim");
-    auto bind = [&](Branch &branch, const json &c, const std::string &prefix, bool text) {
+    auto create = [&](Branch &branch, const json &c, const std::string &prefix, bool text) {
         branch.hidden = c.at("hidden_size");
         branch.heads = c.at("num_attention_heads");
         branch.epsilon = c.at("layer_norm_eps");
@@ -124,13 +97,17 @@ void Clamp3Model::bind_tensors() {
         branch.vocab = c.value("vocab_size", 0);
         branch.bos = text ? c.at("bos_token_id").get<int>() : 0;
         branch.eos = text ? c.at("eos_token_id").get<int>() : 0;
-        branch.embeddings = bind_embeddings(loader, prefix + ".embeddings", text);
+        // Audio consumes MERT features, not a word table (nor a required audio vocabulary).
+        branch.embeddings = create_embeddings(loader, prefix + ".embeddings", branch.hidden, branch.vocab,
+                                              branch.positions, c.at("type_vocab_size").get<int>(), text);
         for (int i = 0; i < c.at("num_hidden_layers").get<int>(); ++i)
-            branch.layers.push_back(bind_bert_layer(loader, prefix + ".encoder.layer." + std::to_string(i)));
-        branch.projection = LayerWeights::bind(loader, prefix + "_proj");
+            branch.layers.push_back(create_bert_layer(loader, prefix + ".encoder.layer." + std::to_string(i),
+                                                      branch.hidden, c.at("intermediate_size").get<int>()));
     };
-    bind(audio_branch, audio_config, "audio", false);
-    bind(text_branch, text_config, "text", true);
+    create(text_branch, text_config, "text", true);
+    create(audio_branch, audio_config, "audio", false);
+    text_branch.projection = create_linear(loader, "text_proj", text_branch.hidden, projection_dim);
+    audio_branch.projection = create_linear(loader, "audio_proj", audio_branch.hidden, projection_dim);
 }
 
 TextParameters Clamp3Model::text_parameters() const {

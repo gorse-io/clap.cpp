@@ -22,8 +22,13 @@ struct AudioFrames {
 } // namespace clap
 
 namespace clap::detail {
-// Shared model tensors, bound once after GGUF shape validation. Architecture
-// graphs consume these pointers without resolving tensor names.
+// Shared model tensors. Creation validates each GGUF tensor and binds the
+// returned pointer in one declaration; graphs never resolve tensor names.
+LayerWeights create_layer(const ModelLoader &loader, const std::string &name,
+                          std::initializer_list<int64_t> weight_dims, std::initializer_list<int64_t> bias_dims = {});
+LayerWeights create_linear(const ModelLoader &loader, const std::string &name, int64_t input, int64_t output,
+                           bool bias = true);
+LayerWeights create_norm(const ModelLoader &loader, const std::string &name, int64_t width);
 struct AttentionWeights {
     LayerWeights query, key, value, output;
     ggml_tensor *relative_bias = nullptr;
@@ -36,12 +41,14 @@ struct EmbeddingWeights {
     ggml_tensor *word = nullptr, *position = nullptr, *type = nullptr;
     LayerWeights norm;
 };
-EmbeddingWeights bind_embeddings(const ModelLoader &loader, const std::string &prefix, bool word = true);
-TransformerWeights bind_bert_layer(const ModelLoader &loader, const std::string &prefix);
+EmbeddingWeights create_embeddings(const ModelLoader &loader, const std::string &prefix, int64_t hidden, int64_t vocab,
+                                   int64_t positions, int64_t types, bool word = true);
+TransformerWeights create_bert_layer(const ModelLoader &loader, const std::string &prefix, int64_t hidden,
+                                     int64_t intermediate);
 struct BatchNormWeights {
     LayerWeights affine;
     ggml_tensor *mean = nullptr, *variance = nullptr;
-    static BatchNormWeights bind(const ModelLoader &loader, const std::string &prefix);
+    static BatchNormWeights create(const ModelLoader &loader, const std::string &prefix, int64_t width);
 };
 struct FeedForwardWeights {
     LayerWeights norm, input, output;
@@ -87,7 +94,7 @@ class ModelArchitecture {
 
   protected:
     virtual void load_arch_hparams() = 0;
-    virtual void load_arch_tensors() const = 0;
+    virtual void load_arch_tensors() = 0;
 };
 class Vocabulary;
 } // namespace clap::detail

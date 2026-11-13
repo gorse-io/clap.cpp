@@ -23,7 +23,6 @@ float cubic(float x) {
 ClapModel::ClapModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
 }
 
 void ClapModel::load_arch_hparams() {
@@ -55,72 +54,64 @@ void ClapModel::load_arch_hparams() {
         throw std::runtime_error("CLAP: audio hidden size mismatch");
 }
 
-void ClapModel::load_arch_tensors() const {
+void ClapModel::load_arch_tensors() {
     const int spec = a.at("spec_size"), bins = a.at("num_mel_bins"), window = a.at("window_size");
     int dim = a.at("patch_embeds_hidden_size");
-    loader.shape("audio.patch_embed.proj.weight", {4, 4, 1, dim});
-    loader.shape("audio.patch_embed.proj.bias", {dim});
-    loader.norm_shape("audio.patch_embed.norm", dim);
-    loader.norm_shape("audio.batch_norm", bins);
-    loader.shape("audio.batch_norm.running_mean", {bins});
-    loader.shape("audio.batch_norm.running_var", {bins});
+    patch = create_layer(loader, "audio.patch_embed.proj", {4, 4, 1, dim}, {dim});
+    patch_norm = create_norm(loader, "audio.patch_embed.norm", dim);
+    batch_norm = BatchNormWeights::create(loader, "audio.batch_norm", bins);
     for (int s = 0; s < 4; ++s) {
         const int heads = a.at("num_attention_heads")[s], depth = a.at("depths")[s];
         if (!(heads > 0 && dim % heads == 0 && depth > 0))
             throw std::runtime_error("CLAP: invalid audio attention dimensions");
         if (!(spec / (4 << s) >= window))
             throw std::runtime_error("CLAP: window larger than stage resolution is unsupported");
+        Stage stage;
+        stage.heads = heads;
         for (int b = 0; b < depth; ++b) {
             const std::string p = "audio.layers." + std::to_string(s) + ".blocks." + std::to_string(b);
-            loader.norm_shape(p + ".layernorm_before", dim);
-            loader.norm_shape(p + ".layernorm_after", dim);
-            for (const auto *q : {"query", "key", "value"})
-                loader.linear_shape(p + ".attention.self." + q, dim, dim);
-            loader.shape(p + ".attention.self.rel_bias", {heads, (2 * window - 1) * (2 * window - 1)});
-            loader.linear_shape(p + ".attention.output.dense", dim, dim);
+            TransformerWeights block;
+            block.attention_norm = create_norm(loader, p + ".layernorm_before", dim);
+            block.output_norm = create_norm(loader, p + ".layernorm_after", dim);
+            block.attention.query = create_linear(loader, p + ".attention.self.query", dim, dim);
+            block.attention.key = create_linear(loader, p + ".attention.self.key", dim, dim);
+            block.attention.value = create_linear(loader, p + ".attention.self.value", dim, dim);
+            block.attention.relative_bias =
+                loader.create_tensor(p + ".attention.self.rel_bias", {heads, (2 * window - 1) * (2 * window - 1)});
+            block.attention.output = create_linear(loader, p + ".attention.output.dense", dim, dim);
             const int inner = static_cast<int>(dim * a.at("mlp_ratio").get<double>());
-            loader.linear_shape(p + ".intermediate.dense", dim, inner);
-            loader.linear_shape(p + ".output.dense", inner, dim);
+            block.intermediate = create_linear(loader, p + ".intermediate.dense", dim, inner);
+            block.output = create_linear(loader, p + ".output.dense", inner, dim);
+            stage.blocks.push_back(block);
         }
         if (s < 3) {
             const auto p = "audio.layers." + std::to_string(s) + ".downsample";
-            loader.norm_shape(p + ".norm", dim * 4);
-            loader.linear_shape(p + ".reduction", dim * 4, dim * 2, false);
+            stage.norm = create_norm(loader, p + ".norm", dim * 4);
+            stage.reduction = create_linear(loader, p + ".reduction", dim * 4, dim * 2, false);
         }
+        stages.push_back(std::move(stage));
         dim *= 2;
     }
-    loader.norm_shape("audio.norm", dim / 2);
+    audio_norm = create_norm(loader, "audio.norm", dim / 2);
     dim = t.at("hidden_size");
     const int heads = t.at("num_attention_heads"), layers = t.at("num_hidden_layers");
     if (!(dim > 0 && heads > 0 && dim % heads == 0 && layers > 0 && t.at("type_vocab_size").get<int>() > 0))
         throw std::runtime_error("CLAP: invalid text dimensions");
-    loader.shape("text.embeddings.word_embeddings.weight", {dim, t.at("vocab_size").get<int>()});
-    loader.shape("text.embeddings.position_embeddings.weight", {dim, t.at("max_position_embeddings").get<int>()});
-    loader.shape("text.embeddings.token_type_embeddings.weight", {dim, t.at("type_vocab_size").get<int>()});
-    loader.norm_shape("text.embeddings.LayerNorm", dim);
-    for (int l = 0; l < layers; ++l) {
-        const auto p = "text.encoder.layer." + std::to_string(l);
-        for (const auto *q : {"query", "key", "value"})
-            loader.linear_shape(p + ".attention.self." + q, dim, dim);
-        loader.linear_shape(p + ".attention.output.dense", dim, dim);
-        loader.norm_shape(p + ".attention.output.LayerNorm", dim);
-        const int inner = t.at("intermediate_size");
-        loader.linear_shape(p + ".intermediate.dense", dim, inner);
-        loader.linear_shape(p + ".output.dense", inner, dim);
-        loader.norm_shape(p + ".output.LayerNorm", dim);
-    }
-    loader.linear_shape("text.pooler.dense", dim, dim);
+    embeddings = create_embeddings(loader, "text.embeddings", dim, t.at("vocab_size").get<int>(),
+                                   t.at("max_position_embeddings").get<int>(), t.at("type_vocab_size").get<int>());
+    for (int l = 0; l < layers; ++l)
+        text_layers.push_back(create_bert_layer(loader, "text.encoder.layer." + std::to_string(l), dim,
+                                                t.at("intermediate_size").get<int>()));
+    pooler = create_linear(loader, "text.pooler.dense", dim, dim);
     for (const auto *branch : {"audio", "text"}) {
         const auto &c = std::string(branch) == "audio" ? a : t;
         const int pd = c.at("projection_dim");
         if (!(pd > 0 && pd == config.at("projection_dim")))
             throw std::runtime_error("CLAP: projection dimensions disagree");
-        loader.linear_shape(std::string(branch) + "_proj.linear1", c.at("hidden_size"), pd);
-        loader.linear_shape(std::string(branch) + "_proj.linear2", pd, pd);
+        auto &projection = std::string(branch) == "audio" ? audio_projection : text_projection;
+        projection.input = create_linear(loader, std::string(branch) + "_proj.linear1", c.at("hidden_size"), pd);
+        projection.output = create_linear(loader, std::string(branch) + "_proj.linear2", pd, pd);
     }
-}
-
-void ClapModel::bind_tensors() {
     h = {config.at("projection_dim"),
          a.at("num_mel_bins"),
          a.at("spec_size"),
@@ -135,42 +126,6 @@ void ClapModel::bind_tensors() {
          t.at("eos_token_id"),
          a.value("layer_norm_eps", 1e-5f),
          t.at("layer_norm_eps")};
-    embeddings = bind_embeddings(loader, "text.embeddings");
-    for (int i = 0; i < t.at("num_hidden_layers").get<int>(); ++i)
-        text_layers.push_back(bind_bert_layer(loader, "text.encoder.layer." + std::to_string(i)));
-    for (int i = 0; i < 4; ++i) {
-        Stage stage;
-        stage.heads = a.at("num_attention_heads")[i];
-        const auto root = "audio.layers." + std::to_string(i);
-        for (int j = 0; j < a.at("depths")[i].get<int>(); ++j) {
-            const auto p = root + ".blocks." + std::to_string(j);
-            TransformerWeights block;
-            block.attention = {LayerWeights::bind(loader, p + ".attention.self.query"),
-                               LayerWeights::bind(loader, p + ".attention.self.key"),
-                               LayerWeights::bind(loader, p + ".attention.self.value"),
-                               LayerWeights::bind(loader, p + ".attention.output.dense"),
-                               loader.weight(p + ".attention.self.rel_bias")};
-            block.attention_norm = LayerWeights::bind(loader, p + ".layernorm_before");
-            block.output_norm = LayerWeights::bind(loader, p + ".layernorm_after");
-            block.intermediate = LayerWeights::bind(loader, p + ".intermediate.dense");
-            block.output = LayerWeights::bind(loader, p + ".output.dense");
-            stage.blocks.push_back(block);
-        }
-        if (i < 3) {
-            stage.norm = LayerWeights::bind(loader, root + ".downsample.norm");
-            stage.reduction = LayerWeights::bind(loader, root + ".downsample.reduction", false);
-        }
-        stages.push_back(std::move(stage));
-    }
-    patch = LayerWeights::bind(loader, "audio.patch_embed.proj");
-    patch_norm = LayerWeights::bind(loader, "audio.patch_embed.norm");
-    audio_norm = LayerWeights::bind(loader, "audio.norm");
-    pooler = LayerWeights::bind(loader, "text.pooler.dense");
-    audio_projection = {LayerWeights::bind(loader, "audio_proj.linear1"),
-                        LayerWeights::bind(loader, "audio_proj.linear2")};
-    text_projection = {LayerWeights::bind(loader, "text_proj.linear1"),
-                       LayerWeights::bind(loader, "text_proj.linear2")};
-    batch_norm = BatchNormWeights::bind(loader, "audio.batch_norm");
 }
 
 TextParameters ClapModel::text_parameters() const { return {h.bos, h.eos, static_cast<size_t>(h.positions - 2)}; }

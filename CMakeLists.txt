@@ -89,6 +89,11 @@ if(BUILD_TESTING)
         target_compile_definitions(gtest INTERFACE GTEST_LINKED_AS_SHARED_LIBRARY=1)
     endif()
 
+    add_executable(test-model-loader tests/test-model-loader.cpp)
+    target_include_directories(test-model-loader PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test-model-loader PRIVATE clap GTest::gtest_main nlohmann_json::nlohmann_json)
+    add_test(NAME test-model-loader COMMAND test-model-loader)
+
     if(NOT BUILD_SHARED_LIBS)
         add_executable(test-abi tests/test-abi.cpp)
         target_link_libraries(test-abi PRIVATE clap GTest::gtest_main)

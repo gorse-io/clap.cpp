@@ -30,6 +30,8 @@ std::vector<DeviceInfo> available_devices();
 
 namespace clap::detail {
 
+enum class TensorRequirement { Required, Optional };
+
 // Architecture-independent GGUF ownership, mapping, metadata and tensor checks.
 // Keep this alive longer than all model architectures and tensor operations.
 class ModelLoader {
@@ -50,9 +52,10 @@ class ModelLoader {
     void load(const std::string &path, bool inference = true);
     std::string metadata(const char *key) const;
     ggml_tensor *weight(const std::string &name) const;
-    void shape(const std::string &name, std::initializer_list<int64_t> dims) const;
-    void linear_shape(const std::string &name, int in, int out, bool bias = true) const;
-    void norm_shape(const std::string &name, int dim) const;
+    // Resolve and validate an existing mapped tensor, as llama.cpp's
+    // create_tensor contract does; this does not allocate model weights.
+    ggml_tensor *create_tensor(const std::string &name, std::initializer_list<int64_t> dims,
+                               TensorRequirement requirement = TensorRequirement::Required) const;
     bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
     void validate_tensor_coverage() const;
 
