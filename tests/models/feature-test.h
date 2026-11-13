@@ -2,6 +2,7 @@
 // Test-only access to private tensor-input encoders and MERT feature extraction;
 // never installed or linked into the production CLI. Keeps numerical oracles
 // independent of the bundled waveform pipeline.
+#include "../../src/models/model-policy.h"
 #include "../../src/models/models.h"
 #include "audio.h"
 
@@ -15,7 +16,7 @@ struct FeatureTestAccess {
         if (sample_rate <= 0)
             throw std::runtime_error("test feature extraction: audio sample rate must be positive");
         ModelLoader loader(options);
-        loader.load(path);
+        clap::detail::load_model_weights(loader, path);
         if (loader.metadata("general.architecture") != "mert")
             throw std::runtime_error("test feature extraction requires a standalone MERT model");
         MertModel model(loader, 2);
@@ -26,7 +27,7 @@ struct FeatureTestAccess {
     static std::vector<float> encode(const std::string &path, const std::vector<float> &values, int frames,
                                      const RuntimeOptions &options = {}) {
         ModelLoader loader(options);
-        loader.load(path);
+        clap::detail::load_model_weights(loader, path);
         if (loader.metadata("general.architecture") == "clap") {
             ClapModel model(loader, 2);
             return model.encode_features(values, frames);

@@ -1,7 +1,5 @@
 #include "model-loader.h"
-#include "quant.h"
 
-#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -46,8 +44,8 @@ ggml_tensor *ModelLoader::create_tensor(const std::string &name, std::initialize
     if (requirement == TensorRequirement::Optional && tensor_index.find(name) == tensor_index.end())
         return nullptr;
     auto *w = weight(name);
-    if (mulan && dims.size() == 1 && w->type != GGML_TYPE_F32)
-        throw std::runtime_error("CLAP: MuLan vectors require F32: " + name);
+    if (policy.validate_tensor_contract)
+        policy.validate_tensor_contract(w, dims);
     int i = 0;
     for (auto d : dims) {
         if (w->ne[i++] != d)
@@ -61,13 +59,12 @@ ggml_tensor *ModelLoader::create_tensor(const std::string &name, std::initialize
 }
 
 void ModelLoader::validate_tensor_coverage() const {
-    if (!f32_activations && !bundled)
+    if (!policy.unrecognized_tensor_error)
         return;
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         const std::string name = gguf_get_tensor_name(gguf, i);
         if (validated_shapes.count(name) == 0)
-            throw std::runtime_error(
-                std::string(mulan ? "CLAP: unrecognized MuLan tensor: " : "CLAP: unrecognized model tensor: ") + name);
+            throw std::runtime_error(std::string(policy.unrecognized_tensor_error) + name);
     }
 }
 
@@ -97,7 +94,7 @@ bool ModelLoader::has_tensor_prefix(const std::string &prefix) const {
     return false;
 }
 
-void ModelLoader::load(const std::string &path, bool inference) {
+void ModelLoader::load(const std::string &path, bool inference, TensorLoadPolicySelector select_policy) {
     gguf = gguf_init_from_file(path.c_str(), {true, &weights});
     if (!(gguf && weights))
         throw std::runtime_error("CLAP: cannot load GGUF " + path);
@@ -129,28 +126,14 @@ void ModelLoader::load(const std::string &path, bool inference) {
         throw std::runtime_error("CLAP: cannot read weights");
     mapping = storage.data();
 #endif
-    const auto architecture = gguf_find_key(gguf, "general.architecture");
-    const bool muq = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING &&
-                     metadata("general.architecture") == "muq";
-    mulan = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING &&
-            metadata("general.architecture") == "muq_mulan";
-    const bool named = architecture >= 0 && gguf_get_kv_type(gguf, architecture) == GGUF_TYPE_STRING;
-    bundled = named && metadata("general.architecture") == "clamp3" && has_metadata_prefix("clamp3.audio_frontend");
-    const std::string arch = named ? metadata("general.architecture") : "";
-    f32_activations = encoder_architecture(arch) || arch == "clap2";
+    policy = select_policy ? select_policy(*this) : TensorLoadPolicy{};
     const auto data_offset = gguf_get_data_offset(gguf);
     if (!(data_offset <= mapping_size))
         throw std::runtime_error("CLAP: truncated GGUF data");
     for (int64_t i = 0; i < gguf_get_n_tensors(gguf); ++i) {
         auto *w = weight(gguf_get_tensor_name(gguf, i));
-        const std::string tensor_name = gguf_get_tensor_name(gguf, i);
-        if ((bundled && tensor_name.rfind("mert.", 0) == 0) && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16 &&
-            w->type != GGML_TYPE_BF16)
-            throw std::runtime_error("CLAP: MERT supports F32/F16/BF16 weights only");
-        if (arch == "clap2" && ggml_is_quantized(w->type))
-            throw std::runtime_error("CLAP: CLAP2 block-quantized weights are not supported; use F32/F16/BF16");
-        if (encoder_architecture(arch) && ggml_is_quantized(w->type) && !encoder_quantizable(w, arch))
-            throw std::runtime_error("CLAP: quantized non-dense/embedding tensor is unsupported: " + tensor_name);
+        if (policy.validate_tensor_type)
+            policy.validate_tensor_type(w);
         if (!(w->type == GGML_TYPE_F32 || w->type == GGML_TYPE_F16 || w->type == GGML_TYPE_BF16 ||
               w->type == GGML_TYPE_Q8_0 || w->type == GGML_TYPE_Q4_K || w->type == GGML_TYPE_Q6_K))
             throw std::runtime_error("CLAP: only F32/F16/BF16/Q8_0/Q4_K/Q6_K weights supported");
@@ -158,38 +141,9 @@ void ModelLoader::load(const std::string &path, bool inference) {
         if (!(offset <= mapping_size - data_offset && ggml_nbytes(w) <= mapping_size - data_offset - offset))
             throw std::runtime_error("CLAP: truncated tensor data");
         w->data = static_cast<char *>(mapping) + data_offset + offset;
-        const std::string name = gguf_get_tensor_name(gguf, i);
-        const bool muq_backbone = mulan && (name.rfind("conv.", 0) == 0 || name.rfind("conformer.", 0) == 0);
-        if (mulan) {
-            // Non-module frontend buffers and all 1D normalization/statistic
-            // tensors are F32. Dense/embedding and MuQ kernels may be F16.
-            if ((name.rfind("frontend.", 0) == 0 || name.find(".running_") != std::string::npos ||
-                 (muq_backbone && ggml_n_dims(w) == 1)) &&
-                w->type != GGML_TYPE_F32)
-                throw std::runtime_error("CLAP: MuLan frontend/buffers/vectors require F32: " + name);
-            const bool batch_variance = name.size() >= 12 && name.compare(name.size() - 12, 12, ".running_var") == 0;
-            // Scan each packed block once (scalar() would decode it per element).
-            float block[256];
-            const int64_t width = ggml_is_quantized(w->type) ? ggml_blck_size(w->type) : 1;
-            for (int64_t start = 0; start < ggml_nelements(w); start += width) {
-                if (width > 1)
-                    ggml_get_type_traits(w->type)->to_float(
-                        static_cast<const char *>(w->data) + (start / width) * ggml_type_size(w->type), block, width);
-                else
-                    block[0] = scalar(w, static_cast<size_t>(start));
-                for (int64_t j = 0; j < width; ++j) {
-                    const float value = block[j];
-                    if (!std::isfinite(value))
-                        throw std::runtime_error("CLAP: non-finite MuLan tensor: " + name);
-                    if (batch_variance && value < 0)
-                        throw std::runtime_error("CLAP: negative MuLan batch variance: " + name);
-                }
-            }
-        }
-        if (inference && (muq || muq_backbone) && w->type == GGML_TYPE_F16) {
-            // GGML's F16 matmul packs F32 inputs to F16 too. MuQ's learned
-            // feature norms amplify that extra rounding; preserve the
-            // storage-rounded, F32-activation reference by promoting weights.
+        if (policy.validate_tensor_data)
+            policy.validate_tensor_data(w);
+        if (inference && w->type == GGML_TYPE_F16 && policy.promote_f16 && policy.promote_f16(w)) {
             promoted_weights.emplace_back(static_cast<size_t>(ggml_nelements(w)));
             auto &values = promoted_weights.back();
             ggml_fp16_to_fp32_row(static_cast<const ggml_fp16_t *>(w->data), values.data(), ggml_nelements(w));

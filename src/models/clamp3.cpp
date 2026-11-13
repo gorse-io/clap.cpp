@@ -1,3 +1,4 @@
+#include "model-policy.h"
 #include "models.h"
 
 #include <algorithm>
@@ -6,6 +7,19 @@
 #include <stdexcept>
 
 namespace clap::detail {
+TensorLoadPolicy Clamp3Model::loading_policy(const ModelLoader &loader) {
+    TensorLoadPolicy policy;
+    if (loader.has_metadata_prefix("clamp3.audio_frontend")) {
+        policy.unrecognized_tensor_error = "CLAP: unrecognized model tensor: ";
+        policy.validate_tensor_type = [](const ggml_tensor *w) {
+            if (std::string(w->name).rfind("mert.", 0) == 0 && w->type != GGML_TYPE_F32 && w->type != GGML_TYPE_F16 &&
+                w->type != GGML_TYPE_BF16)
+                throw std::runtime_error("CLAP: MERT supports F32/F16/BF16 weights only");
+        };
+    }
+    return policy;
+}
+
 using json = nlohmann::json;
 
 Clamp3Model::Clamp3Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {

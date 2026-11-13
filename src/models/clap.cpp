@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "model-policy.h"
 #include "models.h"
 
 #include <algorithm>
@@ -7,6 +8,8 @@
 #include <stdexcept>
 
 namespace clap::detail {
+TensorLoadPolicy ClapModel::loading_policy(const ModelLoader &) { return {}; }
+
 using json = nlohmann::json;
 namespace {
 // PyTorch bicubic interpolation, A=-0.75, align_corners=True.

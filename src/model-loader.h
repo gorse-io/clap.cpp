@@ -32,6 +32,19 @@ namespace clap::detail {
 
 enum class TensorRequirement { Required, Optional };
 
+// Supplied by the model layer; the generic loader does not select architectures.
+// Validators run at the same per-tensor stages as the storage checks they extend.
+struct TensorLoadPolicy {
+    bool f32_activations = false;
+    const char *unrecognized_tensor_error = nullptr;
+    void (*validate_tensor_type)(const ggml_tensor *) = nullptr;
+    void (*validate_tensor_data)(const ggml_tensor *) = nullptr;
+    bool (*promote_f16)(const ggml_tensor *) = nullptr;
+    void (*validate_tensor_contract)(const ggml_tensor *, std::initializer_list<int64_t>) = nullptr;
+};
+class ModelLoader;
+using TensorLoadPolicySelector = TensorLoadPolicy (*)(const ModelLoader &);
+
 // Architecture-independent GGUF ownership, mapping, metadata and tensor checks.
 // Keep this alive longer than all model architectures and tensor operations.
 class ModelLoader {
@@ -48,15 +61,16 @@ class ModelLoader {
     ModelLoader(const ModelLoader &) = delete;
     ModelLoader &operator=(const ModelLoader &) = delete;
 
-    // Storage tools must not promote F16 bytes before conversion/copying.
-    void load(const std::string &path, bool inference = true);
+    // No selector means neutral storage loading. Model callers supply policies
+    // explicitly; storage tools disable promotion before conversion/copying.
+    void load(const std::string &path, bool inference = true, TensorLoadPolicySelector select_policy = nullptr);
     std::string metadata(const char *key) const;
     ggml_tensor *weight(const std::string &name) const;
     // Resolve and validate an existing mapped tensor, as llama.cpp's
     // create_tensor contract does; this does not allocate model weights.
     ggml_tensor *create_tensor(const std::string &name, std::initializer_list<int64_t> dims,
                                TensorRequirement requirement = TensorRequirement::Required) const;
-    bool f32_activation_compute() const { return source ? source->f32_activation_compute() : f32_activations; }
+    bool f32_activation_compute() const { return source ? source->f32_activation_compute() : policy.f32_activations; }
     void validate_tensor_coverage() const;
 
   private:
@@ -64,16 +78,14 @@ class ModelLoader {
     std::unordered_map<std::string, ggml_tensor *> tensor_index;
     const ModelLoader *source = nullptr;
     std::string tensor_prefix, metadata_prefix;
-    bool bundled = false;
-    bool mulan = false;
-    bool f32_activations = false;
+    TensorLoadPolicy policy;
     mutable std::unordered_set<std::string> validated_shapes;
     gguf_context *gguf = nullptr;
     ggml_context *weights = nullptr;
     void *mapping = nullptr;
     size_t mapping_size = 0;
-    // MuQ F16 is a storage format, not F16 activation compute. Owning promoted
-    // buffers here preserves stable tensor identities and model/backend lifetime.
+    // Policies can request F32 storage while the owner retains stable tensor
+    // identities and the promoted buffers for the complete model lifetime.
     std::vector<std::vector<float>> promoted_weights;
 #ifdef _WIN32
     std::vector<char> storage;

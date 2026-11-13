@@ -1,5 +1,6 @@
 #include "graph-test-helpers.h"
 #include "model-loader.h"
+#include "models/model-policy.h"
 #include "quant.h"
 
 #include <ggml.h>
@@ -100,7 +101,7 @@ int main(int argc, char **argv) {
                     std::filesystem::remove(output);
                     require(cmd_quantize(source, output, preset) == 0, arch + " quantization refused");
                     ModelLoader loader;
-                    loader.load(output);
+                    clap::detail::load_model_weights(loader, output);
                     bool uncovered = false;
                     try {
                         loader.validate_tensor_coverage();
@@ -169,7 +170,7 @@ int main(int argc, char **argv) {
                 bool rejected = false;
                 try {
                     ModelLoader loader;
-                    loader.load(bad);
+                    clap::detail::load_model_weights(loader, bad);
                 } catch (const std::exception &) {
                     rejected = true;
                 }

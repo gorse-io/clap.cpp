@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "model-policy.h"
 #include "models.h"
 #include "quant.h"
 
@@ -6,9 +7,27 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <regex>
 #include <stdexcept>
 
 namespace clap::detail {
+bool Mert2Model::tensor_quantizable(const ggml_tensor *w) {
+    if (ggml_n_dims(w) != 2)
+        return false;
+    const std::string name(w->name);
+    static const std::regex mert2(
+        R"((subsampling_module\.[0-9]+\.convnext_layers\.[0-9]+\.pointwise_block\.(1|4)|layers\.[0-9]+\.(attn\.(query_proj|key_proj|value_proj|out_proj)|ffn[12]\.w_[12]))\.weight)");
+    return std::regex_match(name, mert2);
+}
+
+TensorLoadPolicy Mert2Model::loading_policy(const ModelLoader &) {
+    auto policy = encoder_loading_policy([](const ggml_tensor *w) {
+        if (ggml_is_quantized(w->type))
+            validate_encoder_storage(w, Mert2Model::tensor_quantizable(w));
+    });
+    return policy;
+}
+
 using json = nlohmann::json;
 Mert2Model::Mert2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();

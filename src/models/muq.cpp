@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "model-policy.h"
 #include "models.h"
 #include "quant.h"
 
@@ -6,9 +7,29 @@
 #include <cmath>
 #include <complex>
 #include <limits>
+#include <regex>
 #include <stdexcept>
 
 namespace clap::detail {
+bool MuqModel::tensor_quantizable(const ggml_tensor *w) {
+    if (ggml_n_dims(w) != 2)
+        return false;
+    const std::string name(w->name);
+    static const std::regex muq(
+        R"((conv\.linear|conformer\.layers\.[0-9]+\.(self_attn\.linear_(q|k|v|out)|ffn[12]\.(intermediate_dense|output_dense)))\.weight)");
+    return std::regex_match(name, muq);
+}
+
+TensorLoadPolicy MuqModel::loading_policy(const ModelLoader &) {
+    auto policy = encoder_loading_policy([](const ggml_tensor *w) {
+        if (ggml_is_quantized(w->type))
+            validate_encoder_storage(w, MuqModel::tensor_quantizable(w));
+    });
+    // The generic loader applies this request only to inference F16 storage.
+    policy.promote_f16 = [](const ggml_tensor *) { return true; };
+    return policy;
+}
+
 MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();

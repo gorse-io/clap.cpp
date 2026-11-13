@@ -1,5 +1,6 @@
 #include "graph-test-helpers.h"
 #include "model-loader.h"
+#include "models/model-policy.h"
 #include "quant.h"
 
 #include <ggml.h>
@@ -66,8 +67,8 @@ static void fixture(const std::string &path, const std::string &arch, ggml_type 
 }
 static void verify(const std::string &source, const std::string &output, const std::string &arch) {
     ModelLoader input, result;
-    input.load(source, false);
-    result.load(output, false);
+    clap::detail::load_model_weights(input, source, false);
+    clap::detail::load_model_weights(result, output, false);
     File file(gguf_init_from_file(output.c_str(), {true, nullptr}), gguf_free);
     require(gguf_get_val_u32(file.get(), gguf_find_key(file.get(), "general.file_type")) == 32,
             "BF16 model file type must be 32, not tensor type 30");
@@ -100,7 +101,7 @@ static void verify(const std::string &source, const std::string &output, const s
         }
     }
     ModelLoader inference;
-    inference.load(output);
+    clap::detail::load_model_weights(inference, output);
     GraphRuntime ops(inference, 2);
     HostMatrix x(3, 256);
     for (size_t i = 0; i < x.data.size(); ++i)
@@ -130,7 +131,7 @@ int main(int argc, char **argv) {
             fixture(path, "clamp3", GGML_TYPE_BF16, true);
             if (std::string(argv[2]) == "loader") {
                 ModelLoader loader;
-                loader.load(path);
+                clap::detail::load_model_weights(loader, path);
             } else {
                 Context ctx(ggml_init({1024 * 1024, nullptr, false}), ggml_free);
                 auto *t = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_BF16, 17, 2);
@@ -155,8 +156,8 @@ int main(int argc, char **argv) {
                     std::filesystem::remove(q);
                     require(cmd_quantize(output, q, preset) == 0, "BF16 floating source rejected: " + preset);
                     ModelLoader floating, packed;
-                    floating.load(output, false);
-                    packed.load(q, false);
+                    clap::detail::load_model_weights(floating, output, false);
+                    clap::detail::load_model_weights(packed, q, false);
                     auto *a = floating.weight(dense_name(arch)), *b = packed.weight(dense_name(arch));
                     require(b->type == (preset == "Q8_0" ? GGML_TYPE_Q8_0 : GGML_TYPE_Q4_K), "BF16 source target type");
                     std::vector<float> values(ggml_nelements(a));
@@ -172,7 +173,7 @@ int main(int argc, char **argv) {
         const auto bundle = std::string(argv[1]) + "/bundle.gguf";
         fixture(bundle, "clamp3", GGML_TYPE_BF16, true);
         ModelLoader loader;
-        loader.load(bundle);
+        clap::detail::load_model_weights(loader, bundle);
         auto *weight = loader.weight("mert.layers.0.attention.q_proj.weight");
         require(std::isfinite(scalar(weight, 3)), "bundled BF16 MERT");
         GraphRuntime runtime(loader, 2);

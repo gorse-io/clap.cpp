@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "model.h"
+#include "models/model-policy.h"
 #include "models/models.h"
 #include "vocab.h"
 
@@ -8,7 +9,7 @@
 CLAP::CLAP(const std::string &path, const clap::RuntimeOptions &options) : loader(options) {
     using namespace clap::detail;
     const int threads = options.threads;
-    loader.load(path);
+    clap::detail::load_model_weights(loader, path);
     const auto name = loader.metadata("general.architecture");
     if (name == "clap")
         architecture = std::make_unique<ClapModel>(loader, threads);
