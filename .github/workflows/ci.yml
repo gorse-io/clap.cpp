@@ -166,16 +166,12 @@ jobs:
           java-version: '11'
           cache: maven
           cache-dependency-path: java/pom.xml
-      - name: Test Java 11 with the shared runtime
+      - name: Test Java 11 from the bundled JAR
         if: matrix.os != 'windows-11-arm'
         shell: bash
         run: |
-          case "$RUNNER_OS" in
-            Linux) library=libclap.so ;;
-            macOS) library=libclap.dylib ;;
-            Windows) library=clap.dll ;;
-          esac
-          mvn -B -f java/pom.xml "-Dclap.library.path=$GITHUB_WORKSPACE/libraries/${{ matrix.runtime }}/clap_cpp/$library" verify
+          mvn -B -f java/pom.xml -DskipTests clean package
+          mvn -B -f java/pom.xml "-Dclap.test.classesDirectory=$GITHUB_WORKSPACE/java/target/clap-cpp-0.1.0-SNAPSHOT.jar" surefire:test
       - uses: actions/setup-java@v4
         if: matrix.os != 'windows-11-arm'
         with:
@@ -183,16 +179,11 @@ jobs:
           java-version: '21'
           cache: maven
           cache-dependency-path: java/pom.xml
-      - name: Test Java 21 with the shared runtime
+      - name: Test Java 21 from the bundled JAR
         if: matrix.os != 'windows-11-arm'
         shell: bash
         run: |
-          case "$RUNNER_OS" in
-            Linux) library=libclap.so ;;
-            macOS) library=libclap.dylib ;;
-            Windows) library=clap.dll ;;
-          esac
-          mvn -B -f java/pom.xml "-Dclap.library.path=$GITHUB_WORKSPACE/libraries/${{ matrix.runtime }}/clap_cpp/$library" verify
+          mvn -B -f java/pom.xml "-Dclap.test.classesDirectory=$GITHUB_WORKSPACE/java/target/clap-cpp-0.1.0-SNAPSHOT.jar" surefire:test
 
   rust:
     strategy:

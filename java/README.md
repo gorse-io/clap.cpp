@@ -1,11 +1,12 @@
 # clap.cpp Java bindings
 
-Requires Java 11+ and the clap.cpp shared library. Uses JNA; native binaries are
-not bundled in the JAR.
+Requires Java 11+. The JAR bundles staged native libraries; JNA loads the matching
+library automatically.
 
 ## Install
 
-From the repository root, install the development snapshot locally:
+Stage native runtimes under `libraries/<platform>/clap_cpp` using the shared
+native build, then install the development snapshot from the repository root:
 
 ```sh
 mvn -f java/pom.xml -DskipTests install
@@ -21,8 +22,9 @@ Add the Maven dependency (not yet published to Maven Central):
 </dependency>
 ```
 
-Set `-Dclap.library.path=/absolute/path/to/libclap.so` when running Java.
-Use `libclap.dylib` on macOS or `clap.dll` on Windows.
+The JAR includes whichever Linux x64/ARM64, macOS ARM64, and Windows x64/ARM64
+runtimes are staged when packaging. No library path is needed for bundled
+platforms; `-Dclap.library.path=/absolute/path/to/library` overrides loading.
 
 ## Usage
 

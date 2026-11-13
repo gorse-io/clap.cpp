@@ -9,6 +9,8 @@
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <clap.native.directory>${project.basedir}/../libraries</clap.native.directory>
+    <clap.test.classesDirectory>${project.build.outputDirectory}</clap.test.classesDirectory>
     <jna.version>5.19.1</jna.version>
     <junit.version>5.11.4</junit.version>
   </properties>
@@ -18,10 +20,42 @@
     <dependency><groupId>com.aresstack</groupId><artifactId>huggingface4j</artifactId><version>0.1.1</version><scope>test</scope></dependency>
   </dependencies>
   <build>
+    <resources>
+      <resource>
+        <directory>${clap.native.directory}/linux-x64/clap_cpp</directory>
+        <targetPath>linux-x86-64</targetPath>
+        <filtering>false</filtering>
+      </resource>
+      <resource>
+        <directory>${clap.native.directory}/linux-arm64/clap_cpp</directory>
+        <targetPath>linux-aarch64</targetPath>
+        <filtering>false</filtering>
+      </resource>
+      <resource>
+        <directory>${clap.native.directory}/darwin-arm64/clap_cpp</directory>
+        <targetPath>darwin-aarch64</targetPath>
+        <filtering>false</filtering>
+      </resource>
+      <resource>
+        <directory>${clap.native.directory}/win32-x64/clap_cpp</directory>
+        <targetPath>win32-x86-64</targetPath>
+        <filtering>false</filtering>
+      </resource>
+      <resource>
+        <directory>${clap.native.directory}/win32-arm64/clap_cpp</directory>
+        <targetPath>win32-aarch64</targetPath>
+        <filtering>false</filtering>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/..</directory>
+        <targetPath>META-INF</targetPath>
+        <includes><include>LICENSE</include></includes>
+      </resource>
+    </resources>
     <plugins>
       <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
-      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version><configuration><includes><include>**/TestClap.java</include></includes><failIfNoTests>true</failIfNoTests></configuration></plugin>
-      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-source-plugin</artifactId><version>3.3.1</version><executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version><configuration><classesDirectory>${clap.test.classesDirectory}</classesDirectory><includes><include>**/TestClap.java</include></includes><failIfNoTests>true</failIfNoTests></configuration></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-source-plugin</artifactId><version>3.3.1</version><configuration><excludeResources>true</excludeResources></configuration><executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions></plugin>
     </plugins>
   </build>
 </project>
