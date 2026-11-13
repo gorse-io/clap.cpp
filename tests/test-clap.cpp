@@ -43,18 +43,16 @@ void download_model(const std::filesystem::path &path) {
     client.set_follow_location(true);
     client.set_connection_timeout(30);
     client.set_read_timeout(120);
-    const auto response = client.Get(
-        "/gorse-io/larger_clap_general-GGUF/resolve/main/larger_clap_general-q4_k_m.gguf",
-        [&](const char *data, size_t size) {
-            output.write(data, static_cast<std::streamsize>(size));
-            return static_cast<bool>(output);
-        });
+    const auto response = client.Get("/gorse-io/larger_clap_general-GGUF/resolve/main/larger_clap_general-q4_k_m.gguf",
+                                     [&](const char *data, size_t size) {
+                                         output.write(data, static_cast<std::streamsize>(size));
+                                         return static_cast<bool>(output);
+                                     });
     output.close();
     if (!response || response->status != 200 || !output) {
         std::filesystem::remove(partial);
-        throw std::runtime_error("Model download failed: " +
-                                 (response ? "HTTP " + std::to_string(response->status)
-                                           : httplib::to_string(response.error())));
+        throw std::runtime_error("Model download failed: " + (response ? "HTTP " + std::to_string(response->status)
+                                                                       : httplib::to_string(response.error())));
     }
     std::filesystem::rename(partial, path);
 }
@@ -99,10 +97,12 @@ TEST(CLAP, AudioTextSimilarity) {
     ASSERT_EQ(clap_encode_audio_file(clap.get(), CLAP_TEST_AUDIO, 0, &audio_embedding.values, &audio_embedding.count),
               CLAP_OK)
         << clap_last_error();
-    ASSERT_EQ(clap_encode_text(clap.get(), "Sound of a dog", &text_embedding_1.values, &text_embedding_1.count), CLAP_OK)
-        << clap_last_error();
-    ASSERT_EQ(clap_encode_text(clap.get(), "Sound of vaccum cleaner", &text_embedding_2.values, &text_embedding_2.count),
+    ASSERT_EQ(clap_encode_text(clap.get(), "Sound of a dog", &text_embedding_1.values, &text_embedding_1.count),
               CLAP_OK)
+        << clap_last_error();
+    ASSERT_EQ(
+        clap_encode_text(clap.get(), "Sound of vaccum cleaner", &text_embedding_2.values, &text_embedding_2.count),
+        CLAP_OK)
         << clap_last_error();
     ASSERT_GT(audio_embedding.count, 0u);
     ASSERT_EQ(audio_embedding.count, text_embedding_1.count);
