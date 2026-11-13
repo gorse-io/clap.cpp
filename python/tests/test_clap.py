@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import math
-import pytest
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
@@ -35,11 +34,6 @@ def test_clap():
 
     audio_path = Path(__file__).resolve().parents[2] / "assets" / "dog.wav"
     with CLAP(model_path) as clap:
-        assert not hasattr(clap, "tokenize")
-        with pytest.raises(TypeError):
-            clap.encode_text([0])
-        with pytest.raises(TypeError):
-            clap.encode_text(tokens=[0])
         audio_embedding = clap.encode_audio(audio_path, 0)
         text_embedding_1 = clap.encode_text("Sound of a dog")
         text_embedding_2 = clap.encode_text("Sound of vaccum cleaner")

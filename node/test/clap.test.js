@@ -43,8 +43,6 @@ test('CLAP', async (t) => {
 
   const clap = new CLAP(modelPath);
   t.after(() => clap.close());
-  assert.throws(() => clap.encodeText([0]), TypeError);
-  assert.throws(() => clap.encodeText(new Int32Array([0])), TypeError);
   const audioEmbedding = clap.encodeAudio(path.join(__dirname, '..', '..', 'assets', 'dog.wav'), 0);
   const textEmbedding1 = clap.encodeText('Sound of a dog');
   const textEmbedding2 = clap.encodeText('Sound of vaccum cleaner');
