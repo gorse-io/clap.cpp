@@ -34,13 +34,18 @@ ggml_tensor *ModelLoader::weight(const std::string &name) const {
         throw std::runtime_error("CLAP: missing tensor " + name);
     return w;
 }
-void ModelLoader::shape(const std::string &name, std::initializer_list<int64_t> dims) const {
-    if (source) {
-        source->shape(tensor_prefix + name, dims);
-        return;
-    }
-    const auto *w = weight(name);
-    validated_shapes.insert(name);
+ggml_tensor *ModelLoader::create_tensor(const std::string &name, std::initializer_list<int64_t> dims,
+                                        TensorRequirement requirement) const {
+    if (dims.size() == 0 || dims.size() > GGML_MAX_DIMS)
+        throw std::runtime_error("CLAP: invalid tensor contract: " + name);
+    for (const auto dim : dims)
+        if (dim <= 0)
+            throw std::runtime_error("CLAP: invalid tensor contract: " + name);
+    if (source)
+        return source->create_tensor(tensor_prefix + name, dims, requirement);
+    if (requirement == TensorRequirement::Optional && tensor_index.find(name) == tensor_index.end())
+        return nullptr;
+    auto *w = weight(name);
     if (mulan && dims.size() == 1 && w->type != GGML_TYPE_F32)
         throw std::runtime_error("CLAP: MuLan vectors require F32: " + name);
     int i = 0;
@@ -51,15 +56,8 @@ void ModelLoader::shape(const std::string &name, std::initializer_list<int64_t> 
     while (i < GGML_MAX_DIMS)
         if (w->ne[i++] != 1)
             throw std::runtime_error("CLAP: wrong tensor rank: " + name);
-}
-void ModelLoader::linear_shape(const std::string &name, int in, int out, bool bias) const {
-    shape(name + ".weight", {in, out});
-    if (bias)
-        shape(name + ".bias", {out});
-}
-void ModelLoader::norm_shape(const std::string &name, int dim) const {
-    shape(name + ".weight", {dim});
-    shape(name + ".bias", {dim});
+    validated_shapes.insert(name);
+    return w;
 }
 
 void ModelLoader::validate_tensor_coverage() const {

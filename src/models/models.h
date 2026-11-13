@@ -28,8 +28,7 @@ class ClapModel final : public ModelArchitecture {
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
-    void bind_tensors();
-    void load_arch_tensors() const override;
+    void load_arch_tensors() override;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights, int heads, int tokens,
                            ggml_tensor *mask = nullptr, int window = 0, int shift = 0, int grid = 0) const;
     struct Projection;
@@ -74,8 +73,7 @@ class Clap2Model final : public ModelArchitecture {
   private:
     friend struct FeatureTestAccess;
     void load_arch_hparams() override;
-    void load_arch_tensors() const override;
-    void bind_tensors();
+    void load_arch_tensors() override;
     HostMatrix frontend(const std::vector<float> &) const;
     HostMatrix patches(const HostMatrix &) const;
     ggml_tensor *rms(Graph &, ggml_tensor *, ggml_tensor *, float) const;
@@ -134,8 +132,7 @@ class Clamp3Model final : public ModelArchitecture {
     friend struct FeatureTestAccess;
     std::vector<float> encode_features(const std::vector<float> &features, int frames) const;
     void load_arch_hparams() override;
-    void bind_tensors();
-    void load_arch_tensors() const override;
+    void load_arch_tensors() override;
     struct Branch;
     ggml_tensor *encode(Graph &g, ggml_tensor *embeddings, const std::vector<int> &mask, const Branch &branch) const;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const std::vector<int> &mask, const AttentionWeights &weights,
@@ -175,8 +172,7 @@ class Mert2Model final : public ModelArchitecture {
 
   private:
     void load_arch_hparams() override;
-    void bind_tensors();
-    void load_arch_tensors() const override;
+    void load_arch_tensors() override;
     HostMatrix frontend(const std::vector<float> &pcm) const;
     ggml_tensor *subsample(Graph &g, ggml_tensor *hidden) const;
     ggml_tensor *attention(Graph &g, ggml_tensor *hidden, const AttentionWeights &weights) const;
@@ -221,8 +217,7 @@ class MertModel final : public ModelArchitecture {
 
   private:
     void load_arch_hparams() override;
-    void bind_tensors();
-    void load_arch_tensors() const override;
+    void load_arch_tensors() override;
     std::vector<float> normalize(const std::vector<float> &pcm) const;
     HostMatrix forward(const std::vector<float> &normalized, std::vector<float> *layer_mean) const;
     ggml_tensor *attention(Graph &g, ggml_tensor *x, const AttentionWeights &weights) const;
@@ -261,8 +256,7 @@ class MuqModel final : public ModelArchitecture {
         ggml_tensor *values;
     };
     void load_arch_hparams() override;
-    void bind_tensors();
-    void load_arch_tensors() const override;
+    void load_arch_tensors() override;
     HostMatrix frontend(const std::vector<float> &pcm) const;
     ggml_tensor *subsample(Graph &g, ggml_tensor *mel) const;
     Image conv2d(Graph &g, const Image &input, const LayerWeights &weights, int stride) const;
@@ -302,8 +296,7 @@ class MuqMulanModel final : public ModelArchitecture {
 
   private:
     void load_arch_hparams() override;
-    void bind_tensors();
-    void load_arch_tensors() const override;
+    void load_arch_tensors() override;
     ggml_tensor *encode_text(Graph &g, ggml_tensor *x) const;
     ggml_tensor *adapter(Graph &g, ggml_tensor *x) const;
     ggml_tensor *biasless_norm(Graph &g, ggml_tensor *x, ggml_tensor *weight) const;

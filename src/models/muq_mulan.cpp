@@ -16,7 +16,6 @@ MuqMulanModel::MuqMulanModel(const ModelLoader &source, int threads)
     : loader(source), runtime(source, threads), audio_backbone(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
 }
 void MuqMulanModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq_mulan.config"));
@@ -69,47 +68,7 @@ void MuqMulanModel::load_arch_hparams() {
         vocab.at(1).at(0) != "<pad>" || vocab.at(2).at(0) != "</s>" || vocab.at(3).at(0) != "<unk>")
         throw std::runtime_error("CLAP: MuLan tokenizer/config mismatch");
 }
-void MuqMulanModel::load_arch_tensors() const {
-    const int d = text_config.at("hidden_size"), dim = config.at("text_transformer").at("dim");
-    loader.shape("text.embeddings.word_embeddings.weight", {d, text_config.at("vocab_size").get<int>()});
-    loader.shape("text.embeddings.position_embeddings.weight",
-                 {d, text_config.at("max_position_embeddings").get<int>()});
-    loader.shape("text.embeddings.token_type_embeddings.weight", {d, text_config.at("type_vocab_size").get<int>()});
-    loader.norm_shape("text.embeddings.LayerNorm", d);
-    for (int i = 0; i < text_config.at("num_hidden_layers").get<int>(); ++i) {
-        const auto p = "text.encoder.layer." + std::to_string(i);
-        for (const auto *name : {"query", "key", "value"})
-            loader.linear_shape(p + ".attention.self." + name, d, d);
-        loader.linear_shape(p + ".attention.output.dense", d, d);
-        loader.norm_shape(p + ".attention.output.LayerNorm", d);
-        loader.linear_shape(p + ".intermediate.dense", d, text_config.at("intermediate_size"));
-        loader.linear_shape(p + ".output.dense", text_config.at("intermediate_size"), d);
-        loader.norm_shape(p + ".output.LayerNorm", d);
-    }
-    const auto &t = config.at("text_transformer");
-    const int inner = t.at("heads").get<int>() * t.at("dim_head").get<int>();
-    const int ff = static_cast<int>(dim * t.at("ff_mult").get<double>() * 2 / 3);
-    if (ff <= 0)
-        throw std::runtime_error("CLAP: invalid MuLan GEGLU width");
-    for (int i = 0; i < t.at("tf_depth").get<int>(); ++i) {
-        const auto p = "adapter.layers." + std::to_string(i);
-        loader.shape(p + ".0.norm.learned_gamma", {dim});
-        loader.shape(p + ".0.q_scale", {t.at("dim_head").get<int>()});
-        loader.shape(p + ".0.k_scale", {t.at("dim_head").get<int>()});
-        loader.linear_shape(p + ".0.to_q", dim, inner, false);
-        loader.linear_shape(p + ".0.to_kv", dim, 2 * inner, false);
-        loader.linear_shape(p + ".0.to_out.0", inner, dim, false);
-        loader.shape(p + ".1.0.learned_gamma", {dim});
-        loader.linear_shape(p + ".1.1", dim, 2 * ff, false);
-        loader.linear_shape(p + ".1.4", ff, dim, false);
-    }
-    loader.linear_shape("audio_proj", audio_backbone.projection_dimension(), config.at("audio_transformer").at("dim"));
-    loader.linear_shape("audio_latent", config.at("audio_transformer").at("dim"),
-                        config.at("mulan").at("dim_latent").get<int>());
-    loader.linear_shape("text_proj", dim, config.at("mulan").at("dim_latent").get<int>());
-}
-
-void MuqMulanModel::bind_tensors() {
+void MuqMulanModel::load_arch_tensors() {
     h = {config.at("mulan").at("dim_latent"),
          text_config.at("max_position_embeddings"),
          text_config.at("vocab_size"),
@@ -118,21 +77,36 @@ void MuqMulanModel::bind_tensors() {
          config.at("text_transformer").at("dim_head"),
          config.at("mulan").at("clip_secs"),
          text_config.at("layer_norm_eps")};
-    embeddings = bind_embeddings(loader, "text.embeddings");
+    const int d = text_config.at("hidden_size"), dim = config.at("text_transformer").at("dim");
+    embeddings = create_embeddings(loader, "text.embeddings", d, text_config.at("vocab_size").get<int>(),
+                                   text_config.at("max_position_embeddings").get<int>(),
+                                   text_config.at("type_vocab_size").get<int>());
     for (int i = 0; i < text_config.at("num_hidden_layers").get<int>(); ++i)
-        text_layers.push_back(bind_bert_layer(loader, "text.encoder.layer." + std::to_string(i)));
-    for (int i = 0; i < config.at("text_transformer").at("tf_depth").get<int>(); ++i) {
+        text_layers.push_back(create_bert_layer(loader, "text.encoder.layer." + std::to_string(i), d,
+                                                text_config.at("intermediate_size").get<int>()));
+    const auto &t = config.at("text_transformer");
+    const int inner = t.at("heads").get<int>() * t.at("dim_head").get<int>();
+    const int ff = static_cast<int>(dim * t.at("ff_mult").get<double>() * 2 / 3);
+    if (ff <= 0)
+        throw std::runtime_error("CLAP: invalid MuLan GEGLU width");
+    for (int i = 0; i < t.at("tf_depth").get<int>(); ++i) {
         const auto p = "adapter.layers." + std::to_string(i);
-        adapter_layers.push_back(
-            {loader.weight(p + ".0.norm.learned_gamma"), loader.weight(p + ".1.0.learned_gamma"),
-             loader.weight(p + ".0.q_scale"), loader.weight(p + ".0.k_scale"),
-             LayerWeights::bind(loader, p + ".0.to_q", false), LayerWeights::bind(loader, p + ".0.to_kv", false),
-             LayerWeights::bind(loader, p + ".0.to_out.0", false), LayerWeights::bind(loader, p + ".1.1", false),
-             LayerWeights::bind(loader, p + ".1.4", false)});
+        auto *norm = loader.create_tensor(p + ".0.norm.learned_gamma", {dim});
+        auto *q_scale = loader.create_tensor(p + ".0.q_scale", {t.at("dim_head").get<int>()});
+        auto *k_scale = loader.create_tensor(p + ".0.k_scale", {t.at("dim_head").get<int>()});
+        auto query = create_linear(loader, p + ".0.to_q", dim, inner, false);
+        auto key_value = create_linear(loader, p + ".0.to_kv", dim, 2 * inner, false);
+        auto output = create_linear(loader, p + ".0.to_out.0", inner, dim, false);
+        auto *ffn_norm = loader.create_tensor(p + ".1.0.learned_gamma", {dim});
+        auto ffn_input = create_linear(loader, p + ".1.1", dim, 2 * ff, false);
+        auto ffn_output = create_linear(loader, p + ".1.4", ff, dim, false);
+        adapter_layers.push_back({norm, ffn_norm, q_scale, k_scale, query, key_value, output, ffn_input, ffn_output});
     }
-    text_projection = LayerWeights::bind(loader, "text_proj");
-    audio_projection = LayerWeights::bind(loader, "audio_proj");
-    audio_latent = LayerWeights::bind(loader, "audio_latent");
+    audio_projection = create_linear(loader, "audio_proj", audio_backbone.projection_dimension(),
+                                     config.at("audio_transformer").at("dim").get<int>());
+    audio_latent = create_linear(loader, "audio_latent", config.at("audio_transformer").at("dim").get<int>(),
+                                 config.at("mulan").at("dim_latent").get<int>());
+    text_projection = create_linear(loader, "text_proj", dim, config.at("mulan").at("dim_latent").get<int>());
 }
 
 TextParameters MuqMulanModel::text_parameters() const {

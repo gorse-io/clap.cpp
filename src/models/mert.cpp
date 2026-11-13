@@ -10,7 +10,6 @@ MertModel::MertModel(const ModelLoader &source, int threads, const std::string &
     : loader(source, tensor_prefix, metadata_prefix), runtime(loader, threads, true) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
 }
 
 void MertModel::load_arch_hparams() {
@@ -62,38 +61,7 @@ void MertModel::load_arch_hparams() {
         throw std::runtime_error("invalid MERT layer_norm_eps");
 }
 
-void MertModel::load_arch_tensors() const {
-    int input = 1;
-    const auto dims = config.at("conv_dim"), kernels = config.at("conv_kernel");
-    for (size_t i = 0; i < dims.size(); ++i) {
-        const int output = dims[i];
-        const auto prefix = "frontend." + std::to_string(i);
-        loader.shape(prefix + ".conv.weight", {kernels[i].get<int>(), input, output});
-        if (config.at("conv_bias").get<bool>())
-            loader.shape(prefix + ".conv.bias", {output});
-        if (i == 0)
-            loader.norm_shape(prefix + ".layer_norm", output);
-        input = output;
-    }
-    const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
-    loader.norm_shape("projection.layer_norm", input);
-    loader.linear_shape("projection.projection", input, hidden);
-    loader.shape("position.weight", {config.at("num_conv_pos_embeddings").get<int>(),
-                                     hidden / config.at("num_conv_pos_embedding_groups").get<int>(), hidden});
-    loader.shape("position.bias", {hidden});
-    loader.norm_shape("encoder.layer_norm", hidden);
-    for (int i = 0; i < config.at("num_hidden_layers").get<int>(); ++i) {
-        const auto prefix = "layers." + std::to_string(i);
-        for (const char *part : {"q_proj", "k_proj", "v_proj", "out_proj"})
-            loader.linear_shape(prefix + ".attention." + part, hidden, hidden);
-        loader.norm_shape(prefix + ".layer_norm", hidden);
-        loader.norm_shape(prefix + ".final_layer_norm", hidden);
-        loader.linear_shape(prefix + ".ffn.in", hidden, intermediate);
-        loader.linear_shape(prefix + ".ffn.out", intermediate, hidden);
-    }
-}
-
-void MertModel::bind_tensors() {
+void MertModel::load_arch_tensors() {
     h = {config.at("hidden_size"),
          config.at("num_attention_heads"),
          config.at("num_conv_pos_embeddings"),
@@ -103,23 +71,36 @@ void MertModel::bind_tensors() {
          config.at("conv_kernel"),
          config.at("conv_stride"),
          config.at("conv_bias")};
-    for (size_t i = 0; i < h.channels.size(); ++i)
-        convolutions.push_back(LayerWeights::bind(loader, "frontend." + std::to_string(i) + ".conv", h.conv_bias));
-    frontend_norm = LayerWeights::bind(loader, "frontend.0.layer_norm");
-    projection_norm = LayerWeights::bind(loader, "projection.layer_norm");
-    projection = LayerWeights::bind(loader, "projection.projection");
-    position = LayerWeights::bind(loader, "position");
-    encoder_norm = LayerWeights::bind(loader, "encoder.layer_norm");
+    int input = 1;
+    const auto dims = config.at("conv_dim"), kernels = config.at("conv_kernel");
+    for (size_t i = 0; i < dims.size(); ++i) {
+        const int output = dims[i];
+        const auto prefix = "frontend." + std::to_string(i);
+        convolutions.push_back(
+            create_layer(loader, prefix + ".conv", {kernels[i].get<int>(), input, output},
+                         h.conv_bias ? std::initializer_list<int64_t>{output} : std::initializer_list<int64_t>{}));
+        if (i == 0)
+            frontend_norm = create_norm(loader, prefix + ".layer_norm", output);
+        input = output;
+    }
+    const int hidden = config.at("hidden_size"), intermediate = config.at("intermediate_size");
+    projection_norm = create_norm(loader, "projection.layer_norm", input);
+    projection = create_linear(loader, "projection.projection", input, hidden);
+    position = create_layer(loader, "position",
+                            {config.at("num_conv_pos_embeddings").get<int>(),
+                             hidden / config.at("num_conv_pos_embedding_groups").get<int>(), hidden},
+                            {hidden});
+    encoder_norm = create_norm(loader, "encoder.layer_norm", hidden);
     for (int i = 0; i < config.at("num_hidden_layers").get<int>(); ++i) {
         const auto p = "layers." + std::to_string(i);
-        layers.push_back(
-            {{LayerWeights::bind(loader, p + ".attention.q_proj"), LayerWeights::bind(loader, p + ".attention.k_proj"),
-              LayerWeights::bind(loader, p + ".attention.v_proj"),
-              LayerWeights::bind(loader, p + ".attention.out_proj")},
-             LayerWeights::bind(loader, p + ".layer_norm"),
-             LayerWeights::bind(loader, p + ".final_layer_norm"),
-             LayerWeights::bind(loader, p + ".ffn.in"),
-             LayerWeights::bind(loader, p + ".ffn.out")});
+        layers.push_back({{create_linear(loader, p + ".attention.q_proj", hidden, hidden),
+                           create_linear(loader, p + ".attention.k_proj", hidden, hidden),
+                           create_linear(loader, p + ".attention.v_proj", hidden, hidden),
+                           create_linear(loader, p + ".attention.out_proj", hidden, hidden)},
+                          create_norm(loader, p + ".layer_norm", hidden),
+                          create_norm(loader, p + ".final_layer_norm", hidden),
+                          create_linear(loader, p + ".ffn.in", hidden, intermediate),
+                          create_linear(loader, p + ".ffn.out", intermediate, hidden)});
     }
 }
 

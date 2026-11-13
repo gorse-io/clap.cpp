@@ -12,7 +12,6 @@ namespace clap::detail {
 MuqModel::MuqModel(const ModelLoader &source, int threads) : loader(source), runtime(source, threads) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
 }
 void MuqModel::load_arch_hparams() {
     config = nlohmann::json::parse(loader.metadata("muq.config"));
@@ -64,47 +63,7 @@ void MuqModel::load_arch_hparams() {
     scalar(config.at("stat"), "melspec_2048_std", true);
     scalar(config.at("stat"), "melspec_2048_mean", false);
 }
-void MuqModel::load_arch_tensors() const {
-    loader.shape("frontend.window", {2048});
-    loader.shape("frontend.filters", {128, 1025});
-    const int channels = config.at("conv_dim"), hidden = config.at("encoder_dim");
-    auto batch = [&](const std::string &name, int width) {
-        loader.norm_shape(name, width);
-        loader.shape(name + ".running_mean", {width});
-        loader.shape(name + ".running_var", {width});
-    };
-    for (int stage = 0; stage < 2; ++stage) {
-        const std::string root = "conv.conv." + std::to_string(stage);
-        for (int layer = 1; layer <= 3; ++layer) {
-            const int input = stage == 0 && layer != 2 ? 1 : channels;
-            const auto conv = root + ".conv" + std::to_string(layer);
-            loader.shape(conv + ".weight", {3, 3, input, channels});
-            loader.shape(conv + ".bias", {channels});
-            batch(root + ".bn" + std::to_string(layer), channels);
-        }
-    }
-    loader.linear_shape("conv.linear", channels * 32, hidden);
-    loader.norm_shape("conformer.layer_norm", hidden);
-    for (int layer = 0; layer < config.at("encoder_depth").get<int>(); ++layer) {
-        const std::string root = "conformer.layers." + std::to_string(layer);
-        for (const auto *norm : {"ffn1_layer_norm", "ffn2_layer_norm", "self_attn_layer_norm", "final_layer_norm"})
-            loader.norm_shape(root + "." + norm, hidden);
-        for (const auto *ffn : {"ffn1", "ffn2"}) {
-            loader.linear_shape(root + "." + ffn + ".intermediate_dense", hidden, encoder.at("intermediate_size"));
-            loader.linear_shape(root + "." + ffn + ".output_dense", encoder.at("intermediate_size"), hidden);
-        }
-        for (const auto *projection : {"linear_q", "linear_k", "linear_v", "linear_out"})
-            loader.linear_shape(root + ".self_attn." + projection, hidden, hidden);
-        loader.norm_shape(root + ".conv_module.layer_norm", hidden);
-        loader.shape(root + ".conv_module.pointwise_conv1.weight", {1, hidden, hidden * 2});
-        loader.shape(root + ".conv_module.depthwise_conv.weight",
-                     {encoder.at("conv_depthwise_kernel_size").get<int>(), 1, hidden});
-        batch(root + ".conv_module.batch_norm", hidden);
-        loader.shape(root + ".conv_module.pointwise_conv2.weight", {1, hidden, hidden});
-    }
-}
-
-void MuqModel::bind_tensors() {
+void MuqModel::load_arch_tensors() {
     h = {config.at("encoder_dim"),
          encoder.at("num_attention_heads"),
          encoder.at("conv_depthwise_kernel_size"),
@@ -112,36 +71,44 @@ void MuqModel::bind_tensors() {
          encoder.at("rotary_embedding_base"),
          config.at("stat").at("melspec_2048_mean"),
          config.at("stat").at("melspec_2048_std")};
-    window = loader.weight("frontend.window");
-    filters = loader.weight("frontend.filters");
+    window = loader.create_tensor("frontend.window", {2048});
+    filters = loader.create_tensor("frontend.filters", {128, 1025});
+    const int channels = config.at("conv_dim"), hidden = config.at("encoder_dim");
     for (int i = 0; i < 2; ++i) {
         const auto p = "conv.conv." + std::to_string(i);
-        stages.push_back({LayerWeights::bind(loader, p + ".conv1"), LayerWeights::bind(loader, p + ".conv2"),
-                          LayerWeights::bind(loader, p + ".conv3"), BatchNormWeights::bind(loader, p + ".bn1"),
-                          BatchNormWeights::bind(loader, p + ".bn2"), BatchNormWeights::bind(loader, p + ".bn3")});
+        const int input = i == 0 ? 1 : channels;
+        auto conv1 = create_layer(loader, p + ".conv1", {3, 3, input, channels}, {channels});
+        auto bn1 = BatchNormWeights::create(loader, p + ".bn1", channels);
+        auto conv2 = create_layer(loader, p + ".conv2", {3, 3, channels, channels}, {channels});
+        auto bn2 = BatchNormWeights::create(loader, p + ".bn2", channels);
+        auto conv3 = create_layer(loader, p + ".conv3", {3, 3, input, channels}, {channels});
+        auto bn3 = BatchNormWeights::create(loader, p + ".bn3", channels);
+        stages.push_back({conv1, conv2, conv3, bn1, bn2, bn3});
     }
-    projection = LayerWeights::bind(loader, "conv.linear");
-    final_norm = LayerWeights::bind(loader, "conformer.layer_norm");
+    projection = create_linear(loader, "conv.linear", channels * 32, hidden);
+    final_norm = create_norm(loader, "conformer.layer_norm", hidden);
+    const int intermediate = encoder.at("intermediate_size");
+    const int kernel = encoder.at("conv_depthwise_kernel_size");
     for (int i = 0; i < config.at("encoder_depth").get<int>(); ++i) {
         const auto p = "conformer.layers." + std::to_string(i);
         ConformerWeights layer;
-        layer.ffn1 = {LayerWeights::bind(loader, p + ".ffn1_layer_norm"),
-                      LayerWeights::bind(loader, p + ".ffn1.intermediate_dense"),
-                      LayerWeights::bind(loader, p + ".ffn1.output_dense")};
-        layer.ffn2 = {LayerWeights::bind(loader, p + ".ffn2_layer_norm"),
-                      LayerWeights::bind(loader, p + ".ffn2.intermediate_dense"),
-                      LayerWeights::bind(loader, p + ".ffn2.output_dense")};
-        layer.attention_norm = LayerWeights::bind(loader, p + ".self_attn_layer_norm");
-        layer.final_norm = LayerWeights::bind(loader, p + ".final_layer_norm");
-        layer.attention = {LayerWeights::bind(loader, p + ".self_attn.linear_q"),
-                           LayerWeights::bind(loader, p + ".self_attn.linear_k"),
-                           LayerWeights::bind(loader, p + ".self_attn.linear_v"),
-                           LayerWeights::bind(loader, p + ".self_attn.linear_out")};
-        layer.convolution.norm = LayerWeights::bind(loader, p + ".conv_module.layer_norm");
-        layer.convolution.input = LayerWeights::bind(loader, p + ".conv_module.pointwise_conv1", false);
-        layer.convolution.depthwise = LayerWeights::bind(loader, p + ".conv_module.depthwise_conv", false);
-        layer.convolution.batch_norm = BatchNormWeights::bind(loader, p + ".conv_module.batch_norm");
-        layer.convolution.output = LayerWeights::bind(loader, p + ".conv_module.pointwise_conv2", false);
+        layer.ffn1.norm = create_norm(loader, p + ".ffn1_layer_norm", hidden);
+        layer.ffn2.norm = create_norm(loader, p + ".ffn2_layer_norm", hidden);
+        layer.attention_norm = create_norm(loader, p + ".self_attn_layer_norm", hidden);
+        layer.final_norm = create_norm(loader, p + ".final_layer_norm", hidden);
+        layer.ffn1.input = create_linear(loader, p + ".ffn1.intermediate_dense", hidden, intermediate);
+        layer.ffn1.output = create_linear(loader, p + ".ffn1.output_dense", intermediate, hidden);
+        layer.ffn2.input = create_linear(loader, p + ".ffn2.intermediate_dense", hidden, intermediate);
+        layer.ffn2.output = create_linear(loader, p + ".ffn2.output_dense", intermediate, hidden);
+        layer.attention = {create_linear(loader, p + ".self_attn.linear_q", hidden, hidden),
+                           create_linear(loader, p + ".self_attn.linear_k", hidden, hidden),
+                           create_linear(loader, p + ".self_attn.linear_v", hidden, hidden),
+                           create_linear(loader, p + ".self_attn.linear_out", hidden, hidden)};
+        layer.convolution.norm = create_norm(loader, p + ".conv_module.layer_norm", hidden);
+        layer.convolution.input = create_layer(loader, p + ".conv_module.pointwise_conv1", {1, hidden, hidden * 2});
+        layer.convolution.depthwise = create_layer(loader, p + ".conv_module.depthwise_conv", {kernel, 1, hidden});
+        layer.convolution.batch_norm = BatchNormWeights::create(loader, p + ".conv_module.batch_norm", hidden);
+        layer.convolution.output = create_layer(loader, p + ".conv_module.pointwise_conv2", {1, hidden, hidden});
         layers.push_back(layer);
     }
 }

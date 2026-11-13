@@ -12,7 +12,6 @@ namespace clap::detail {
 Clap2Model::Clap2Model(const ModelLoader &source, int threads) : loader(source), runtime(source, threads, true) {
     load_arch_hparams();
     load_arch_tensors();
-    bind_tensors();
 }
 void Clap2Model::load_arch_hparams() {
     const auto config = nlohmann::json::parse(loader.metadata("clap2.config"));
@@ -97,100 +96,58 @@ void Clap2Model::load_arch_hparams() {
     audio_branch.h = parameters(audio);
     text_branch.h = parameters(txt);
 }
-void Clap2Model::load_arch_tensors() const {
-    for (bool is_audio : {true, false}) {
-        const auto &parameters = is_audio ? audio_branch.h : text_branch.h;
-        const std::string root = is_audio ? "audio_model" : "text_model";
-        const int w = parameters.hidden, m = parameters.intermediate, d = w / parameters.heads;
-        auto norm = [&](const std::string &s, int size) { loader.shape(s + ".weight", {size}); };
-        norm(root + ".norm", w);
-        if (is_audio) {
-            loader.linear_shape(root + ".embeddings.patch_embedding", h.patch * h.patch, w, false);
-            loader.shape(root + ".embeddings.register_tokens", {w, 1, 1});
-            norm(root + ".embeddings.layernorm", w);
-        } else
-            loader.shape(root + ".embed_tokens.weight", {w, h.vocab});
-        for (int i = 0; i < parameters.layers; ++i) {
-            const auto p = root + ".encoder.layers." + std::to_string(i);
-            norm(p + ".input_layernorm", w);
-            norm(p + ".post_attention_layernorm", w);
-            loader.linear_shape(p + ".self_attn.qkv_proj", w, 3 * w, is_audio);
-            loader.linear_shape(p + ".self_attn.o_proj", w, w, is_audio);
-            loader.linear_shape(p + ".mlp.gate_up_proj", w, 2 * m, is_audio);
-            loader.linear_shape(p + ".mlp.down_proj", m, w, is_audio);
-            if (is_audio) {
-                loader.shape(p + ".layer_scale1.lambda1", {w});
-                loader.shape(p + ".layer_scale2.lambda1", {w});
-            } else {
-                norm(p + ".self_attn.q_norm", d);
-                norm(p + ".self_attn.k_norm", d);
-            }
-        }
-        const auto head = root + ".head";
-        loader.shape(head + ".probe", {w, 1, 1});
-        loader.linear_shape(head + ".q_proj", w, w, is_audio);
-        loader.linear_shape(head + ".kv_proj", w, 2 * w, is_audio);
-        if (is_audio) {
-            loader.linear_shape(head + ".o_proj", w, w);
-            norm(head + ".layernorm", w);
-            loader.linear_shape(head + ".fc1", w, m);
-            loader.linear_shape(head + ".fc2", m, w);
-        } else {
-            norm(head + ".q_norm", d);
-            norm(head + ".k_norm", d);
-        }
-    }
-    const int projection = h.projection, aw = audio_branch.h.hidden, tw = text_branch.h.hidden;
-    loader.linear_shape("audio_projection.linear1", aw, projection);
-    loader.linear_shape("audio_projection.linear2", projection, projection);
-    loader.linear_shape("text_projection", tw, projection, false);
-    loader.shape("logit_scale", {1});
-}
-void Clap2Model::bind_tensors() {
+void Clap2Model::load_arch_tensors() {
     for (bool is_audio : {true, false}) {
         auto &branch = is_audio ? audio_branch : text_branch;
+        const auto &parameters = branch.h;
         const std::string root = is_audio ? "audio_model" : "text_model";
-        branch.norm = loader.weight(root + ".norm.weight");
-        for (int i = 0; i < branch.h.layers; ++i) {
+        const int w = parameters.hidden, m = parameters.intermediate, d = w / parameters.heads;
+        branch.norm = loader.create_tensor(root + ".norm.weight", {w});
+        if (is_audio) {
+            patch_embedding = create_linear(loader, root + ".embeddings.patch_embedding", h.patch * h.patch, w, false);
+            register_tokens = loader.create_tensor(root + ".embeddings.register_tokens", {w, 1, 1});
+            patch_norm = loader.create_tensor(root + ".embeddings.layernorm.weight", {w});
+        } else
+            text_embeddings = loader.create_tensor(root + ".embed_tokens.weight", {w, h.vocab});
+        for (int i = 0; i < parameters.layers; ++i) {
             const auto p = root + ".encoder.layers." + std::to_string(i);
             Layer layer;
-            layer.input_norm = loader.weight(p + ".input_layernorm.weight");
-            layer.post_attention_norm = loader.weight(p + ".post_attention_layernorm.weight");
-            layer.qkv = LayerWeights::bind(loader, p + ".self_attn.qkv_proj", is_audio);
-            layer.attention_output = LayerWeights::bind(loader, p + ".self_attn.o_proj", is_audio);
-            layer.gate_up = LayerWeights::bind(loader, p + ".mlp.gate_up_proj", is_audio);
-            layer.down = LayerWeights::bind(loader, p + ".mlp.down_proj", is_audio);
+            layer.input_norm = loader.create_tensor(p + ".input_layernorm.weight", {w});
+            layer.post_attention_norm = loader.create_tensor(p + ".post_attention_layernorm.weight", {w});
+            layer.qkv = create_linear(loader, p + ".self_attn.qkv_proj", w, 3 * w, is_audio);
+            layer.attention_output = create_linear(loader, p + ".self_attn.o_proj", w, w, is_audio);
+            layer.gate_up = create_linear(loader, p + ".mlp.gate_up_proj", w, 2 * m, is_audio);
+            layer.down = create_linear(loader, p + ".mlp.down_proj", m, w, is_audio);
             if (is_audio) {
-                layer.attention_scale = loader.weight(p + ".layer_scale1.lambda1");
-                layer.mlp_scale = loader.weight(p + ".layer_scale2.lambda1");
+                layer.attention_scale = loader.create_tensor(p + ".layer_scale1.lambda1", {w});
+                layer.mlp_scale = loader.create_tensor(p + ".layer_scale2.lambda1", {w});
             } else {
-                layer.q_norm = loader.weight(p + ".self_attn.q_norm.weight");
-                layer.k_norm = loader.weight(p + ".self_attn.k_norm.weight");
+                layer.q_norm = loader.create_tensor(p + ".self_attn.q_norm.weight", {d});
+                layer.k_norm = loader.create_tensor(p + ".self_attn.k_norm.weight", {d});
             }
             branch.layers.push_back(layer);
         }
         const auto p = root + ".head";
         auto &head = branch.head;
-        head.probe = loader.weight(p + ".probe");
-        head.query = LayerWeights::bind(loader, p + ".q_proj", is_audio);
-        head.key_value = LayerWeights::bind(loader, p + ".kv_proj", is_audio);
+        head.probe = loader.create_tensor(p + ".probe", {w, 1, 1});
+        head.query = create_linear(loader, p + ".q_proj", w, w, is_audio);
+        head.key_value = create_linear(loader, p + ".kv_proj", w, 2 * w, is_audio);
         if (is_audio) {
-            head.output = LayerWeights::bind(loader, p + ".o_proj");
-            head.norm = loader.weight(p + ".layernorm.weight");
-            head.fc1 = LayerWeights::bind(loader, p + ".fc1");
-            head.fc2 = LayerWeights::bind(loader, p + ".fc2");
+            head.output = create_linear(loader, p + ".o_proj", w, w);
+            head.norm = loader.create_tensor(p + ".layernorm.weight", {w});
+            head.fc1 = create_linear(loader, p + ".fc1", w, m);
+            head.fc2 = create_linear(loader, p + ".fc2", m, w);
         } else {
-            head.q_norm = loader.weight(p + ".q_norm.weight");
-            head.k_norm = loader.weight(p + ".k_norm.weight");
+            head.q_norm = loader.create_tensor(p + ".q_norm.weight", {d});
+            head.k_norm = loader.create_tensor(p + ".k_norm.weight", {d});
         }
     }
-    text_embeddings = loader.weight("text_model.embed_tokens.weight");
-    patch_embedding = LayerWeights::bind(loader, "audio_model.embeddings.patch_embedding", false);
-    register_tokens = loader.weight("audio_model.embeddings.register_tokens");
-    patch_norm = loader.weight("audio_model.embeddings.layernorm.weight");
-    audio_projection_input = LayerWeights::bind(loader, "audio_projection.linear1");
-    audio_projection_output = LayerWeights::bind(loader, "audio_projection.linear2");
-    text_projection = LayerWeights::bind(loader, "text_projection", false);
+    const int projection = h.projection, aw = audio_branch.h.hidden, tw = text_branch.h.hidden;
+    audio_projection_input = create_linear(loader, "audio_projection.linear1", aw, projection);
+    audio_projection_output = create_linear(loader, "audio_projection.linear2", projection, projection);
+    text_projection = create_linear(loader, "text_projection", tw, projection, false);
+    // Required checkpoint metadata tensor; inference does not consume its value.
+    (void)loader.create_tensor("logit_scale", {1});
 }
 TextParameters Clap2Model::text_parameters() const { return {h.bos, h.eos, static_cast<size_t>(h.positions)}; }
 int Clap2Model::projection_dimension() const { return h.projection; }
