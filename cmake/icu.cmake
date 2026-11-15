@@ -24,7 +24,6 @@ target_compile_definitions(clap-icu-options INTERFACE
     U_STATIC_IMPLEMENTATION
     U_CHARSET_IS_UTF8=1
     UCONFIG_NO_CONVERSION=1
-    UCONFIG_NO_NORMALIZATION=1
     UCONFIG_NO_FORMATTING=1
     UCONFIG_NO_SERVICE=1
     UCONFIG_NO_FILE_IO=1
@@ -32,7 +31,8 @@ target_compile_definitions(clap-icu-options INTERFACE
 
 # Unicode character/case/property tables are compiled into common's generated
 # *_data.h files in upstream source. The model's regex does not require locale,
-# collation, normalization or converter data. Stubdata satisfies the ICU data
+# collation or converter data. VoiceCLAP's NFC pass uses the compiled-in
+# norm2_nfc_data.h tables. Stubdata satisfies the ICU data
 # symbol without adding a runtime .dat file or data DLL dependency.
 add_library(clap-icu-data STATIC "${CLAP_ICU_SOURCE}/stubdata/stubdata.cpp")
 target_link_libraries(clap-icu-data PUBLIC clap-icu-options)

@@ -28,6 +28,7 @@ MODEL_MAP = {
     'mert2': 'mert2',
     'muq': 'muq',
     'muq_mulan': 'muq_mulan',
+    'voiceclap': 'voiceclap',
 }
 
 

@@ -28,3 +28,24 @@ endif()
 
 add_test(NAME test-clap COMMAND test-clap)
 set_tests_properties(test-clap PROPERTIES TIMEOUT 1800)
+
+# The official numerical oracle is opt-in; normal builds need no ML packages.
+add_executable(voiceclap-parity voiceclap-parity.cpp)
+target_compile_features(voiceclap-parity PRIVATE cxx_std_20)
+target_include_directories(voiceclap-parity PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(voiceclap-parity PRIVATE clap nlohmann_json::nlohmann_json ICU::uc ICU::i18n)
+set_target_properties(voiceclap-parity PROPERTIES CXX_EXTENSIONS OFF)
+
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME voiceclap-conversion
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_voiceclap_conversion.py")
+    option(CLAP_TEST_VOICECLAP_PARITY "Run the official Transformers VoiceCLAP numerical oracle" OFF)
+    if(CLAP_TEST_VOICECLAP_PARITY)
+        add_test(NAME voiceclap-parity
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/voiceclap_parity.py"
+                "${PROJECT_BINARY_DIR}" "${PROJECT_BINARY_DIR}/voiceclap-fixtures"
+                --helper "$<TARGET_FILE:voiceclap-parity>")
+        set_tests_properties(voiceclap-parity PROPERTIES TIMEOUT 600)
+    endif()
+endif()
