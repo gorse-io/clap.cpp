@@ -31,7 +31,7 @@ def convert(source, destination, dtype='f32', clamp3_config=None, tokenizer=None
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('source', type=Path, help='CLAP/CLAP2/MERT/MuQ/MuLan directory or CLaMP3 .pth checkpoint')
+    parser.add_argument('source', type=Path, help='CLAP/CLAP2/VoiceCLAP/MERT/MuQ/MuLan directory or CLaMP3 .pth checkpoint')
     parser.add_argument('destination', type=Path)
     parser.add_argument('--dtype', choices=['f32', 'f16'], default='f32')
     parser.add_argument('--clamp3-config', type=Path,

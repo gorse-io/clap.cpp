@@ -103,6 +103,11 @@ jobs:
             ${{ matrix.os == 'windows-11-arm' && '-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl' || '' }}
       - name: Test C++
         run: ctest --test-dir build/libraries -C Release --output-on-failure
+      - name: Test VoiceCLAP conversion
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python -m pip install tokenizers==0.22.2
+          python tests/test_voiceclap_conversion.py
       - name: Test native installation
         run: cmake --install build/libraries --config Release --prefix "${{ runner.temp }}/clap-install"
       - name: Install Python packaging and test dependencies

@@ -15,6 +15,7 @@
  */
 #include "model.h"
 #include "models/models.h"
+#include "models/voiceclap.h"
 #include "quant.h"
 #include "vocab.h"
 
@@ -229,6 +230,8 @@ clap::detail::Model::Model(const std::string &path, const clap::RuntimeOptions &
         architecture = std::make_unique<ClapModel>(initialize_weights());
     else if (name == "clap2")
         architecture = std::make_unique<Clap2Model>(initialize_weights());
+    else if (name == "voiceclap")
+        architecture = std::make_unique<VoiceClapModel>(initialize_weights());
     else if (name == "clamp3")
         architecture = std::make_unique<Clamp3Model>(initialize_weights());
     else if (name == "mert2")
@@ -249,6 +252,8 @@ clap::detail::Model::Model(const std::string &path, const clap::RuntimeOptions &
             vocabulary = std::make_unique<UnigramVocabulary>(tokenizer, text.bos, text.eos, 3, text.context_length);
         else if (name == "clap2")
             vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length, true);
+        else if (name == "voiceclap")
+            vocabulary = std::make_unique<VoiceClapVocabulary>(tokenizer, text.context_length);
         else
             vocabulary = std::make_unique<ByteBpeVocabulary>(tokenizer, text.bos, text.eos, text.context_length);
     }
@@ -270,6 +275,8 @@ TensorLoadPolicy select_loading_policy(const ModelLoader &loader) {
         return ClapModel::loading_policy(loader);
     if (architecture == "clap2")
         return Clap2Model::loading_policy(loader);
+    if (architecture == "voiceclap")
+        return VoiceClapModel::loading_policy(loader);
     if (architecture == "clamp3")
         return Clamp3Model::loading_policy(loader);
     if (architecture == "mert")

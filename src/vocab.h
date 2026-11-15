@@ -39,18 +39,29 @@ class Vocabulary {
 class ByteBpeVocabulary final : public Vocabulary {
   public:
     ByteBpeVocabulary(const nlohmann::json &tokenizer, int bos, int eos, size_t context_length,
-                      bool split_special_tokens = false);
+                      bool split_special_tokens = false, bool qwen = false);
     std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
 
   private:
     void encode_piece(const std::string &text, std::vector<int> &ids) const;
     int bos, eos;
     size_t context_length;
+    bool normalize_nfc;
     std::unordered_map<std::string, int> vocab;
     std::map<std::pair<std::string, std::string>, int> ranks;
     std::vector<nlohmann::json> special;
     std::string byte_chars[256];
     std::unique_ptr<icu::RegexPattern> pattern;
+};
+
+// VoiceCLAP's fixed SentenceTransformer conversation is part of its embedding.
+class VoiceClapVocabulary final : public Vocabulary {
+  public:
+    VoiceClapVocabulary(const nlohmann::json &tokenizer, size_t context_length);
+    std::vector<int> tokenize(const std::string &text, size_t max_length) const override;
+
+  private:
+    ByteBpeVocabulary vocabulary;
 };
 
 // XLM-R's tokenizer.json is a SentencePiece Unigram model represented by the

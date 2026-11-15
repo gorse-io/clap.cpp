@@ -15,6 +15,7 @@
  */
 #include "vocab.h"
 
+#include <unicode/normalizer2.h>
 #include <unicode/uchar.h>
 #include <unicode/unistr.h>
 
@@ -126,8 +127,8 @@ std::vector<int32_t> normalizer_boundaries(const icu::UnicodeString &text) {
 } // namespace
 
 ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, size_t context_length,
-                                     bool split_special_tokens)
-    : bos(bos), eos(eos), context_length(context_length) {
+                                     bool split_special_tokens, bool qwen)
+    : bos(bos), eos(eos), context_length(context_length), normalize_nfc(qwen) {
     if (tokenizer.at("model").at("type") != "BPE")
         throw std::runtime_error("CLAP: expected byte-level BPE");
     for (auto it = tokenizer["model"]["vocab"].begin(); it != tokenizer["model"]["vocab"].end(); ++it)
@@ -164,7 +165,9 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
     UErrorCode status = U_ZERO_ERROR;
     pattern.reset(icu::RegexPattern::compile(
         icu::UnicodeString::fromUTF8(
-            "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"),
+            qwen ? "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| "
+                   "?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+                 : "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+"),
         0, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: cannot compile tokenizer Unicode regex");
@@ -172,7 +175,17 @@ ByteBpeVocabulary::ByteBpeVocabulary(const json &tokenizer, int bos, int eos, si
 
 void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &ids) const {
     UErrorCode status = U_ZERO_ERROR;
-    const auto unicode = icu::UnicodeString::fromUTF8(text);
+    auto unicode = icu::UnicodeString::fromUTF8(text);
+    if (normalize_nfc) {
+        const auto *normalizer = icu::Normalizer2::getNFCInstance(status);
+        if (U_FAILURE(status))
+            throw std::runtime_error("CLAP: cannot initialize NFC normalization");
+        icu::UnicodeString normalized;
+        normalizer->normalize(unicode, normalized, status);
+        if (U_FAILURE(status))
+            throw std::runtime_error("CLAP: NFC normalization failed");
+        unicode = std::move(normalized);
+    }
     std::unique_ptr<icu::RegexMatcher> matcher(pattern->matcher(unicode, status));
     if (U_FAILURE(status))
         throw std::runtime_error("CLAP: tokenizer regex failed");
@@ -218,7 +231,9 @@ void ByteBpeVocabulary::encode_piece(const std::string &text, std::vector<int> &
 std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max_length) const {
     if (!(max_length >= 2 && max_length <= context_length))
         throw std::runtime_error("CLAP: invalid maximum text length");
-    std::vector<int> ids{bos};
+    std::vector<int> ids;
+    if (bos >= 0)
+        ids.push_back(bos);
     size_t pos = 0;
     while (pos < text.size()) {
         size_t next = std::string::npos;
@@ -256,10 +271,24 @@ std::vector<int> ByteBpeVocabulary::tokenize(const std::string &text, size_t max
                 ++pos;
         }
     }
-    if (ids.size() > max_length - 1)
-        ids.resize(max_length - 1);
-    ids.push_back(eos);
+    const auto limit = max_length - (eos >= 0 ? 1 : 0);
+    if (ids.size() > limit)
+        ids.resize(limit);
+    if (eos >= 0)
+        ids.push_back(eos);
     return ids;
+}
+
+VoiceClapVocabulary::VoiceClapVocabulary(const json &tokenizer, size_t context_length)
+    : vocabulary(tokenizer, -1, -1, context_length, false, true) {}
+
+std::vector<int> VoiceClapVocabulary::tokenize(const std::string &text, size_t max_length) const {
+    return vocabulary.tokenize("<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+                               "<|im_start|>user\n" +
+                                   text +
+                                   "\nSummarize the above text in one word:<|im_end|>\n"
+                                   "<|im_start|>assistant\n",
+                               max_length);
 }
 
 UnigramVocabulary::UnigramVocabulary(const json &tokenizer, int bos, int eos, int unk, size_t context_length)
