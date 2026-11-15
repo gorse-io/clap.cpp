@@ -210,13 +210,13 @@ class VoiceClapParityRunnerTest(unittest.TestCase):
             helper = build / 'custom output' / 'native helper.exe'
             helper.parent.mkdir()
             helper.touch()
-            self.assertEqual(self.runner.helper_path(build, helper), helper)
+            self.assertEqual(self.runner.helper_path(build, helper), helper.resolve())
             with patch.object(sys, 'argv', ['voiceclap_parity.py', str(build), '--helper',
                                             str(helper)]), \
                     patch.object(self.runner, 'generate', return_value={}), \
                     patch.object(self.runner, 'verify') as verify:
                 self.runner.main()
-            self.assertEqual(verify.call_args.kwargs['helper'], helper)
+            self.assertEqual(verify.call_args.kwargs['helper'], helper.resolve())
 
     def test_missing_helper_has_actionable_error(self):
         with tempfile.TemporaryDirectory() as directory:
