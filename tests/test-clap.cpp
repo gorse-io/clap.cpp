@@ -116,4 +116,27 @@ TEST(CLAP, AudioTextSimilarity) {
     const float score_2 = exp_2 / (exp_1 + exp_2);
     EXPECT_GT(score_1, 0.99f);
     EXPECT_LT(score_2, 0.01f);
+
+    // The public API must enforce the frontend limit after rate conversion too.
+    for (const int rate : {48000, 24000, 96000}) {
+        SCOPED_TRACE(rate);
+        std::vector<float> pcm(10 * rate, 0.1f);
+        ASSERT_EQ(clap_encode_audio(clap.get(), pcm.data(), pcm.size(), rate, 0, audio_embedding.data(),
+                                    audio_embedding.size()),
+                  CLAP_OK)
+            << clap_last_error();
+        EXPECT_EQ(clap_encode_audio(clap.get(), pcm.data(), pcm.size(), rate, 1, audio_embedding.data(),
+                                    audio_embedding.size()),
+                  CLAP_ERROR);
+        EXPECT_NE(std::string(clap_last_error()).find("unsupported"), std::string::npos);
+        pcm.push_back(0.1f);
+        for (const size_t offset : {size_t{0}, size_t{1}}) {
+            SCOPED_TRACE(offset);
+            EXPECT_EQ(clap_encode_audio(clap.get(), pcm.data(), pcm.size(), rate, offset, audio_embedding.data(),
+                                        audio_embedding.size()),
+                      CLAP_ERROR);
+            EXPECT_NE(std::string(clap_last_error()).find("480000"), std::string::npos);
+            EXPECT_NE(std::string(clap_last_error()).find("10 seconds"), std::string::npos);
+        }
+    }
 }

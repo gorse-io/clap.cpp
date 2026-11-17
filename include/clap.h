@@ -111,11 +111,13 @@ CLAP_API void clap_free_audio_frames(clap_audio_frames *frames); /* Also zeroes 
  * Applies to all three encoders. */
 CLAP_API clap_status clap_encode_text(CLAP *model, const char *utf8, float *values, size_t capacity);
 /* Mono PCM, positive sample rate; automatically resampled. Nonempty finite
- * samples required. crop_offset is measured at the model sample rate: CLAP uses
- * a crop in long audio; other models may reject nonzero offsets. */
+ * samples required. CLAP rejects audio exceeding 480000 samples at 48000 Hz
+ * (10 seconds) after resampling; it never truncates. Other architectures retain
+ * their full-waveform/chunked processing. crop_offset is retained for ABI
+ * compatibility and must be zero; nonzero offsets return CLAP_ERROR. */
 CLAP_API clap_status clap_encode_audio(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,
                                        size_t crop_offset, float *values, size_t capacity);
-/* Decode WAV/MP3/FLAC by contents, then encode with the same crop semantics. */
+/* Decode WAV/MP3/FLAC by contents, then encode with the same length/offset rules. */
 CLAP_API clap_status clap_encode_audio_file(CLAP *model, const char *path, size_t crop_offset, float *values,
                                             size_t capacity);
 CLAP_API clap_status clap_get_audio_frames(CLAP *model, const float *pcm, size_t sample_count, int sample_rate,

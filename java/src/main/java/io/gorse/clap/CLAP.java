@@ -85,8 +85,9 @@ public final class CLAP implements AutoCloseable {
     }
 
     /**
-     * Encode nonempty finite mono PCM. cropOffset is measured at the model sample
-     * rate, not the input rate; non-CLAP architectures may reject nonzero offsets.
+     * Encode nonempty finite mono PCM. cropOffset is retained for compatibility
+     * and must be zero. CLAP rejects audio over 10 seconds after resampling,
+     * without truncation.
      * Do not mutate pcm concurrently with this call.
      */
     public synchronized float[] encodeAudio(float[] pcm, int sampleRate, long cropOffset) {
@@ -105,7 +106,7 @@ public final class CLAP implements AutoCloseable {
     /** Decode and encode a WAV/MP3/FLAC file with zero crop offset. */
     public synchronized float[] encodeAudio(Path path) { return encodeAudio(path, 0); }
 
-    /** Decode WAV/MP3/FLAC by contents and encode with model-rate crop semantics. */
+    /** Decode WAV/MP3/FLAC by contents; the same length and zero-offset rules apply. */
     public synchronized float[] encodeAudio(Path path, long cropOffset) {
         String filename = pathString(path);
         NativeBindings.SizeT offset = NativeBindings.checkedSize(cropOffset);

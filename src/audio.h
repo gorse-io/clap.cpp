@@ -46,8 +46,8 @@ Audio resample_audio(const Audio &audio, int sample_rate = 48000);
 
 // 48 kHz mono float PCM -> [1001, 64] Slaney log-power mel features.
 // HF repeatpad: repeat whole short clips, then zero-pad the remainder.
-// Long clips use an explicit crop offset (default: first 10 s), making inference
-// reproducible rather than depending on NumPy's random state.
+// Rejects more than 480000 samples (10 seconds), without truncation.
+// crop_offset is retained for compatibility and must be zero.
 std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate = 48000, std::size_t crop_offset = 0);
 
 } // namespace clap
