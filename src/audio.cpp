@@ -146,18 +146,15 @@ std::vector<float> log_mel(const std::vector<float> &pcm, int sample_rate, size_
     if (!(std::all_of(pcm.begin(), pcm.end(), [](float x) { return std::isfinite(x); })))
         throw std::runtime_error("CLAP: non-finite waveform");
     constexpr size_t length = 480000;
+    if (pcm.size() > length)
+        throw std::runtime_error("CLAP: audio exceeds the model limit of 480000 samples at 48000 Hz (10 seconds); "
+                                 "automatic truncation is unsupported");
+    if (crop_offset != 0)
+        throw std::runtime_error("CLAP: crop offsets are unsupported; crop_offset must be zero");
     std::vector<double> wav(length, 0);
-    if (pcm.size() > length) {
-        if (!(crop_offset <= pcm.size() - length))
-            throw std::runtime_error("CLAP: crop offset out of range");
-        std::copy_n(pcm.data() + crop_offset, length, wav.data());
-    } else {
-        if (crop_offset != 0)
-            throw std::runtime_error("CLAP: crop offset requires audio longer than 10 seconds");
-        const size_t repeats = length / pcm.size();
-        for (size_t i = 0; i < repeats; ++i)
-            std::copy(pcm.begin(), pcm.end(), wav.begin() + i * pcm.size());
-    }
+    const size_t repeats = length / pcm.size();
+    for (size_t i = 0; i < repeats; ++i)
+        std::copy(pcm.begin(), pcm.end(), wav.begin() + i * pcm.size());
     double filters[64][513];
     double boundaries[66];
     const double low = hz_to_mel(50), high = hz_to_mel(14000);

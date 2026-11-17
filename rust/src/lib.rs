@@ -164,8 +164,8 @@ impl CLAP {
     }
     /// Encode a WAV, MP3 or FLAC file. Channels are averaged to mono and the
     /// source sample rate is converted internally to the model's input rate.
-    /// `crop_offset` counts model-rate samples (normally 0); architectures that
-    /// do not support cropping reject nonzero offsets.
+    /// `crop_offset` is retained for compatibility and must be zero. CLAP rejects
+    /// audio longer than 10 seconds after resampling, without truncation.
     pub fn encode_audio(&mut self, p: impl AsRef<Path>, crop_offset: usize) -> Result<Vec<f32>> {
         let s = path(p.as_ref())?;
         let dimension = unsafe { ffi::clap_projection_dimension(self.ptr.as_ptr()) };

@@ -8,6 +8,24 @@ set(gtest_force_shared_crt ON CACHE BOOL "Use the shared MSVC runtime" FORCE)
 add_subdirectory("${PROJECT_SOURCE_DIR}/thirdparty/googletest"
     "${PROJECT_BINARY_DIR}/thirdparty/googletest" EXCLUDE_FROM_ALL)
 
+add_executable(test-audio-limit test-audio-limit.cpp "${PROJECT_SOURCE_DIR}/src/audio.cpp")
+target_compile_features(test-audio-limit PRIVATE cxx_std_20)
+target_include_directories(test-audio-limit PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(test-audio-limit SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/thirdparty/miniaudio")
+target_link_libraries(test-audio-limit PRIVATE GTest::gtest_main)
+set_target_properties(test-audio-limit PROPERTIES CXX_EXTENSIONS OFF)
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(test-audio-limit PRIVATE GTEST_LINKED_AS_SHARED_LIBRARY=1)
+endif()
+if(WIN32 AND BUILD_SHARED_LIBS)
+    add_custom_command(TARGET test-audio-limit POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:gtest>" "$<TARGET_FILE:gtest_main>" "$<TARGET_FILE_DIR:test-audio-limit>"
+        VERBATIM)
+endif()
+add_test(NAME test-audio-limit COMMAND test-audio-limit)
+set_tests_properties(test-audio-limit PROPERTIES TIMEOUT 60)
+
 set(CLAP_TEST_MODEL "${PROJECT_SOURCE_DIR}/models/larger_clap_general-q4_k_m.gguf")
 add_executable(test-clap test-clap.cpp)
 target_compile_features(test-clap PRIVATE cxx_std_20)

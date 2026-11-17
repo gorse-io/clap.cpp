@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
             ->check(CLI::ExistingFile);
     auto *crop_option = embedding
                             ->add_option("--crop-offset", options.crop_offset,
-                                         "Sample offset at 48 kHz into CLAP audio longer than ten seconds")
+                                         "Compatibility option; must be zero (CLAP rejects audio over 10 seconds)")
                             ->check(CLI::NonNegativeNumber);
     embedding->add_flag("--frames", options.frames,
                         "Return final-layer waveform-encoder frames instead of mean pooling");
